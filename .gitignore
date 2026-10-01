@@ -1,0 +1,13 @@
+Budget.xcodeproj/
+.build/
+DerivedData/
+.swiftpm/
+xcuserdata/
+*.xcresult
+# SwiftPM / xcodebuild leftovers at the repo root
+_Users_*.lock
+TemporaryDirectory.*
+.DS_Store
+# Your own signing and deploy target (see Config/Local.xcconfig.example and docs/SETUP.md)
+Config/Local.xcconfig
+deploy/olares/budgetapi/deploy.env

@@ -1,0 +1,46 @@
+<!doctype html>
+<html lang="en">
+<head>
+<meta charset="utf-8">
+<meta name="viewport" content="width=device-width, initial-scale=1, viewport-fit=cover">
+<meta name="color-scheme" content="dark">
+<meta name="theme-color" content="#0F1011">
+<title>Budget dashboard</title>
+<link rel="icon" type="image/png" href="/dash/assets/icon-64.png">
+<link rel="apple-touch-icon" href="/dash/assets/icon-180.png">
+<meta name="apple-mobile-web-app-title" content="Budget">
+<link rel="stylesheet" href="/dash/assets/tokens.css">
+<link rel="stylesheet" href="/dash/assets/app.css">
+<script type="module" src="/dash/assets/app.js"></script>
+</head>
+<body>
+<a class="skip" href="#main">Skip to content</a>
+<div class="shell">
+  <aside class="rail">
+    <div class="rail-top">
+      <a class="wordmark" href="#/overview" aria-label="Budget, overview">budget.</a>
+      <span class="rail-status-compact" id="railStatusCompact"></span>
+    </div>
+    <nav class="nav" id="nav" aria-label="Dashboard">
+      <a href="#/overview" data-view="overview">Overview</a>
+      <a href="#/accounts" data-view="accounts">Accounts<span class="count" id="count-accounts"></span></a>
+      <a href="#/imports" data-view="imports">Imports<span class="count" id="count-imports"></span></a>
+      <a href="#/review" data-view="review">Review<span class="count" id="count-review"></span><span class="count watch" id="count-review-dupes" title="In the ledger twice"></span></a>
+      <a href="#/categories" data-view="categories">Categories &amp; rules<span class="count watch" id="count-categories" title="Rules to look at"></span></a>
+      <a href="#/settings" data-view="settings">Settings<span class="count" id="count-settings"></span></a>
+    </nav>
+    <div class="rail-foot" id="railFoot">
+      <span class="t-eyebrow status-eyebrow"><span class="dot"></span>Connecting</span>
+    </div>
+  </aside>
+  <main class="main" id="main" tabindex="-1">
+    <div class="offline-banner" id="offlineBanner" hidden></div>
+    <div id="view" class="view">
+      <div class="skeleton-page" aria-hidden="true"><span></span><span></span><span></span></div>
+    </div>
+  </main>
+</div>
+<div class="toast" id="toast" role="status" aria-live="polite" aria-atomic="true"></div>
+<noscript><p class="noscript">The dashboard needs JavaScript turned on.</p></noscript>
+</body>
+</html>

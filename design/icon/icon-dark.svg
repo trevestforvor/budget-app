@@ -1,0 +1,6 @@
+<svg xmlns="http://www.w3.org/2000/svg" width="1024" height="1024" viewBox="0 0 1024 1024"><defs>
+  <radialGradient id="bg" cx="30%" cy="22%" r="95%"><stop offset="0" stop-color="#1F2022"/><stop offset="0.55" stop-color="#0F1011"/><stop offset="1" stop-color="#050506"/></radialGradient>
+  <radialGradient id="glow" cx="50%" cy="50%" r="50%"><stop offset="0" stop-color="#847DFF" stop-opacity="0.55"/><stop offset="1" stop-color="#847DFF" stop-opacity="0"/></radialGradient>
+  <radialGradient id="cyanGlow" cx="50%" cy="50%" r="50%"><stop offset="0" stop-color="#00B3DD" stop-opacity="0.9"/><stop offset="1" stop-color="#00B3DD" stop-opacity="0"/></radialGradient>
+  <linearGradient id="stem" x1="0" y1="0" x2="0" y2="1"><stop offset="0" stop-color="#FFFFFF"/><stop offset="1" stop-color="#CACACA"/></linearGradient>
+</defs><rect width="1024" height="1024" fill="#000000"/><rect x="226" y="196" width="118" height="560" rx="59" fill="url(#stem)"/><circle cx="462" cy="590" r="168" fill="none" stroke="url(#stem)" stroke-width="118"/><circle cx="744" cy="700" r="120" fill="url(#cyanGlow)"/><circle cx="744" cy="700" r="58" fill="#00B3DD"/></svg>

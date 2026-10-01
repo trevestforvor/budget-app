@@ -1,0 +1,8 @@
+<svg xmlns="http://www.w3.org/2000/svg" width="1024" height="1024" viewBox="0 0 1024 1024"><defs>
+  <radialGradient id="bg" cx="30%" cy="22%" r="95%"><stop offset="0" stop-color="#1F2022"/><stop offset="0.55" stop-color="#0F1011"/><stop offset="1" stop-color="#050506"/></radialGradient>
+  <radialGradient id="glow" cx="50%" cy="50%" r="50%"><stop offset="0" stop-color="#847DFF" stop-opacity="0.55"/><stop offset="1" stop-color="#847DFF" stop-opacity="0"/></radialGradient>
+  <radialGradient id="cyanGlow" cx="50%" cy="50%" r="50%"><stop offset="0" stop-color="#00B3DD" stop-opacity="0.9"/><stop offset="1" stop-color="#00B3DD" stop-opacity="0"/></radialGradient>
+  <linearGradient id="stem" x1="0" y1="0" x2="0" y2="1"><stop offset="0" stop-color="#FFFFFF"/><stop offset="1" stop-color="#CACACA"/></linearGradient>
+  <linearGradient id="line" x1="0" y1="1" x2="1" y2="0"><stop offset="0" stop-color="#847DFF"/><stop offset="1" stop-color="#00B3DD"/></linearGradient>
+</defs>
+<rect width="1024" height="1024" fill="url(#bg)"/><circle cx="520" cy="600" r="340" fill="url(#glow)"/><rect x="250" y="190" width="112" height="566" rx="56" fill="url(#stem)"/><path d="M 570.6 416.7 A 176 176 0 0 1 640.9 734.2" fill="none" stroke="#00B3DD" stroke-width="112" stroke-linecap="round"/><path d="M 585.6 760.0 A 176 176 0 0 1 364.7 605.3" fill="none" stroke="#847DFF" stroke-width="112" stroke-linecap="round"/><path d="M 370.0 544.4 A 176 176 0 0 1 465.6 430.5" fill="none" stroke="#EF72E3" stroke-width="112" stroke-linecap="round"/><path d="M 518.6 415.3 A 176 176 0 0 1 558.4 415.0" fill="none" stroke="#FFB42E" stroke-width="112" stroke-linecap="round"/></svg>

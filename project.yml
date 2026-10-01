@@ -1,0 +1,86 @@
+name: Budget
+options:
+  bundleIdPrefix: com.example
+  deploymentTarget:
+    iOS: "26.0"
+  createIntermediateGroups: true
+packages:
+  BudgetCore:
+    path: Packages/BudgetCore
+settings:
+  base:
+    SWIFT_VERSION: "6.0"
+    SWIFT_STRICT_CONCURRENCY: complete
+targets:
+  Budget:
+    type: application
+    platform: iOS
+    sources:
+      - App
+    # The morning summary: APNs (Xcode's automatic signing turns development into production for TestFlight and the
+    # App Store), and a background refresh that tells the server the phone's time zone after a trip.
+    entitlements:
+      path: App/Budget.entitlements
+      properties:
+        aps-environment: development
+    info:
+      path: App/Info.plist
+      properties:
+        UIBackgroundModes: [fetch]
+        BGTaskSchedulerPermittedIdentifiers: [$(PRODUCT_BUNDLE_IDENTIFIER).morning-summary]
+        # The file would otherwise pin 1.0 (1) over MARKETING_VERSION and CURRENT_PROJECT_VERSION.
+        CFBundleShortVersionString: $(MARKETING_VERSION)
+        CFBundleVersion: $(CURRENT_PROJECT_VERSION)
+    # Signing comes from Config/Budget.xcconfig, which reads your own team and bundle prefix from Config/Local.xcconfig.
+    configFiles:
+      Debug: Config/Budget.xcconfig
+      Release: Config/Budget.xcconfig
+    dependencies:
+      - package: BudgetCore
+        product: DesignSystem
+      - package: BudgetCore
+        product: BudgetKit
+    settings:
+      base:
+        PRODUCT_BUNDLE_IDENTIFIER: $(BUDGET_BUNDLE_PREFIX).budget
+        PRODUCT_NAME: Budget
+        MARKETING_VERSION: "0.3.0"
+        CURRENT_PROJECT_VERSION: "1"
+        GENERATE_INFOPLIST_FILE: YES
+        INFOPLIST_KEY_CFBundleDisplayName: Budget
+        INFOPLIST_KEY_UILaunchScreen_Generation: YES
+        INFOPLIST_KEY_NSFaceIDUsageDescription: Budget uses Face ID to unlock your budget when the lock is on.
+        INFOPLIST_KEY_NSCameraUsageDescription: Budget reads prices through the camera to show what they cost in hours of work. It's read on your phone and nothing is recorded.
+        ASSETCATALOG_COMPILER_APPICON_NAME: AppIcon
+        ASSETCATALOG_COMPILER_GLOBAL_ACCENT_COLOR_NAME: AccentColor
+        INFOPLIST_KEY_UIUserInterfaceStyle: Dark
+        INFOPLIST_KEY_UISupportedInterfaceOrientations: UIInterfaceOrientationPortrait
+        TARGETED_DEVICE_FAMILY: "1"
+        CODE_SIGN_STYLE: Automatic
+        ENABLE_PREVIEWS: YES
+  BudgetUITests:
+    type: bundle.ui-testing
+    platform: iOS
+    sources:
+      - UITests
+    configFiles:
+      Debug: Config/Budget.xcconfig
+      Release: Config/Budget.xcconfig
+    dependencies:
+      - target: Budget
+    settings:
+      base:
+        PRODUCT_BUNDLE_IDENTIFIER: $(BUDGET_BUNDLE_PREFIX).budget.uitests
+        GENERATE_INFOPLIST_FILE: YES
+        TEST_TARGET_NAME: Budget
+        CODE_SIGN_STYLE: Automatic
+schemes:
+  Budget:
+    build:
+      targets:
+        Budget: all
+    test:
+      targets:
+        - BudgetUITests
+    run:
+      config: Debug

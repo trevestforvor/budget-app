@@ -1,0 +1,6 @@
+// Copy to Local.xcconfig (ignored by git) and fill in.
+
+// Your team ID: developer.apple.com → Account → Membership details.
+DEVELOPMENT_TEAM = ABCDE12345
+// A reverse-DNS prefix you own. The app is <prefix>.budget, and the server's APNs bundle ID (for the morning summary) must match it.
+BUDGET_BUNDLE_PREFIX = com.yourname

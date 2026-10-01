@@ -1,0 +1,95 @@
+/* Budget dashboard tokens: a one-to-one mirror of the app's DesignSystem
+   (Packages/BudgetCore/Sources/DesignSystem/Tokens). Views use the semantic names; raw hexes live only here.
+   Dark only, like the app. */
+:root {
+  color-scheme: dark;
+
+  /* Surfaces, back to front (DSColors ← Palette) */
+  --canvas-deep: #090A0B;      /* abyss    — input wells, code, drop zone */
+  --canvas: #0F1011;           /* obsidian — page background */
+  --surface: #161718;          /* carbon   — DSCard */
+  --surface-raised: #1F2022;   /* graphite — raised card, menus, hover */
+  --steel: #3F4041;            /* steel    — pressed, empty bar segment */
+  --hairline: rgb(255 255 255 / 0.08);
+  --hairline-strong: rgb(255 255 255 / 0.16);
+
+  /* Ink */
+  --ink: #FFFFFF;              /* pure  */
+  --ink-soft: #F5F5F7;         /* cloud */
+  --ink-secondary: #9F9FA0;    /* ash — subtitles, eyebrows */
+  --ink-tertiary: #808182;     /* fog — footnotes (AA on canvas and surface) */
+  --ink-inverse: #000000;      /* on white and cyan fills */
+
+  /* Accents (DSTone) — saturated, as shipped */
+  --cyan: #00B3DD;             /* cyanSignal */
+  --iris: #847DFF;             /* irisGleam */
+  --lilac: #D08FFF;
+  --iris-deep: #4B49AA;
+  --orchid: #EF72E3;           /* orchidBloom */
+  --azure: #5AA0FF;
+  --amber: #FFB42E;
+  /* Added with the DS branch (DSTone coral, rose, teal, lime, violet) */
+  --coral: #FF7A59;
+  --rose: #FF5C8A;
+  --teal: #14C7B4;
+  --lime: #B8E62E;
+  --violet: #9B5CFF;
+
+  /* Semantics. No green and no red: the app avoids them (Palette.swift, "Money signals"). */
+  --accent: var(--cyan);
+  --inflow: var(--cyan);
+  --caution: var(--orchid);
+  --status-ok: var(--cyan);        /* connected, fine, done */
+  --status-watch: var(--amber);    /* stale, warning, retrying */
+  --status-act: var(--orchid);     /* needs sign-in, failed, act on it */
+  --status-info: var(--iris);      /* the model, set here */
+  --status-neutral: var(--ink-secondary);
+
+  /* Washes: 12% = DSTag fill, 16% = DSTone.wash (glyphs), 28% = callout edge */
+  --wash-cyan: rgb(0 179 221 / 0.12);
+  --wash-iris: rgb(132 125 255 / 0.12);
+  --wash-orchid: rgb(239 114 227 / 0.12);
+  --wash-amber: rgb(255 180 46 / 0.12);
+  --wash-azure: rgb(90 160 255 / 0.12);
+  --wash-lilac: rgb(208 143 255 / 0.12);
+  --wash-neutral: rgb(159 159 160 / 0.12);
+  --edge-orchid: rgb(239 114 227 / 0.28);
+  --edge-amber: rgb(255 180 46 / 0.28);
+  --edge-iris: rgb(132 125 255 / 0.28);
+  --edge-cyan: rgb(0 179 221 / 0.28);
+
+  /* Type families (DSTextStyle: serif = New York, sans = SF Pro, mono = SF Mono) */
+  --font-serif: ui-serif, "New York", "Iowan Old Style", Georgia, serif;
+  --font-sans: -apple-system, BlinkMacSystemFont, "SF Pro Text", system-ui, "Segoe UI", Roboto, sans-serif;
+  --font-mono: ui-monospace, "SF Mono", SFMono-Regular, Menlo, Consolas, monospace;
+
+  /* Space (DSSpace, 4 pt base) */
+  --s-xxs: 4px; --s-xs: 8px; --s-sm: 12px; --s-md: 16px;
+  --s-lg: 24px; --s-xl: 32px; --s-xxl: 48px; --s-xxxl: 64px;
+  --gutter: 20px;              /* phone gutter (DSSpace.gutter) */
+
+  /* Radius (DSRadius) */
+  --r-tag: 4px; --r-control: 8px; --r-glyph: 10px; --r-card: 16px; --r-tile: 30px;
+
+  /* Controls: DSButtonStyle's 44 pt minimum everywhere */
+  --control-h: 44px;
+
+  /* Motion (DSMotion.standard ≈ snappy 0.28 s) */
+  --ease: cubic-bezier(0.2, 0.8, 0.2, 1);
+  --dur: 280ms;
+}
+
+/* DSTextStyle → classes. The app's base sizes, in rem so browser zoom and text size scale them. */
+.t-display-xl { font: 300 3.5rem/1.05 var(--font-serif); letter-spacing: -1.2px; }
+.t-display    { font: 300 2.5rem/1.1  var(--font-serif); letter-spacing: -0.8px; }
+.t-title      { font: 300 1.75rem/1.2 var(--font-serif); letter-spacing: -0.4px; }
+.t-headline   { font: 400 1.25rem/1.3 var(--font-serif); }
+.t-body       { font: 400 1rem/1.45 var(--font-sans); }
+.t-body-em    { font: 500 1rem/1.45 var(--font-sans); }
+.t-callout    { font: 400 0.875rem/1.45 var(--font-sans); }
+.t-caption    { font: 400 0.75rem/1.4 var(--font-sans); }
+.t-eyebrow    { font: 500 0.6875rem/1.2 var(--font-mono); letter-spacing: 1.1px; text-transform: uppercase; }
+.t-mono       { font: 500 0.75rem/1.4 var(--font-mono); letter-spacing: 0.2px; }
+.t-amount-xl  { font: 300 3.5rem/1.05 var(--font-serif); letter-spacing: -1.2px; font-variant-numeric: tabular-nums; }
+.t-amount     { font: 300 1.75rem/1.15 var(--font-serif); letter-spacing: -0.4px; font-variant-numeric: tabular-nums; }
+.t-amount-row { font: 500 1rem/1.3 var(--font-sans); font-variant-numeric: tabular-nums; }

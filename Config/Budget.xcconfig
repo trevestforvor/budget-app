@@ -1,0 +1,10 @@
+// Who signs the app. Your own values go in Local.xcconfig beside this file (it isn't checked in):
+//
+//     cp Config/Local.xcconfig.example Config/Local.xcconfig
+//
+// then set your Apple Developer team and a bundle id prefix you own. Without it the app builds for the simulator only.
+
+BUDGET_BUNDLE_PREFIX = com.example
+DEVELOPMENT_TEAM =
+
+#include? "Local.xcconfig"

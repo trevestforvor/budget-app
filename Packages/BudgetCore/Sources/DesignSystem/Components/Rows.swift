@@ -1,0 +1,302 @@
+import SwiftUI
+
+/// How loudly a line speaks. Muted is for rows that don't count toward spending — transfers,
+/// hidden rows — and uses quieter ink rather than lowered opacity: `inkSecondary` stays about
+/// 6.9:1 on a card, while a half-opacity row would fail AA.
+public enum DSEmphasis: Sendable, Equatable {
+    case normal
+    case muted
+}
+
+/// Rounded-square glyph with a tone wash — identifies a category at a glance.
+public struct DSGlyph: View {
+    private let systemImage: String
+    private let tone: DSTone
+    private let size: CGFloat
+    private let emphasis: DSEmphasis
+
+    public init(systemImage: String, tone: DSTone, size: CGFloat = 36, emphasis: DSEmphasis = .normal) {
+        self.systemImage = systemImage
+        self.tone = tone
+        self.size = size
+        self.emphasis = emphasis
+    }
+
+    public var body: some View {
+        RoundedRectangle(cornerRadius: DSRadius.control + 2, style: .continuous)
+            .fill(emphasis == .muted ? tone.fill.opacity(0.08) : tone.wash)
+            .frame(width: size, height: size)
+            .overlay {
+                Image(systemName: systemImage)
+                    .font(.system(size: size * 0.42, weight: .medium))
+                    .foregroundStyle(emphasis == .muted ? Color.ds.inkTertiary : tone.onCanvas)
+            }
+            .accessibilityHidden(true)
+    }
+}
+
+/// One ledger line.
+///
+/// Trailing, in order: an eye-slash tag when hidden, the amount, an orchid dot when it needs
+/// review. Hidden rows are always muted; pass `.muted` yourself for rows that don't count
+/// (transfers). VoiceOver reads the title, subtitle and amount, then the statuses.
+public struct DSTransactionRow: View {
+    private let title: String
+    private let subtitle: String
+    private let amount: Decimal
+    private let currencyCode: String
+    private let systemImage: String
+    private let tone: DSTone
+    private let confidence: DSConfidence?
+    private let isPending: Bool
+    private let emphasis: DSEmphasis
+    private let isHidden: Bool
+    private let needsReview: Bool
+    @Environment(\.dynamicTypeSize) private var dynamicTypeSize
+
+    /// - Parameters:
+    ///   - subtitle: the caller's line, e.g. "Groceries · Sapphire ••2864" or "Groceries · Today".
+    ///   - confidence: deprecated — review is now the `needsReview` dot, and the per-row badge is
+    ///     going away. Still rendered (except `.auto`) until call sites move off it.
+    ///   - emphasis: `.muted` for rows that don't count toward spending.
+    ///   - isHidden: the person hid it; mutes the row and adds the eye-slash tag.
+    ///   - needsReview: the server wants an answer; adds the 7pt orchid dot.
+    public init(title: String, subtitle: String, amount: Decimal, currencyCode: String = "USD", systemImage: String, tone: DSTone,
+                confidence: DSConfidence? = nil, isPending: Bool = false,
+                emphasis: DSEmphasis = .normal, isHidden: Bool = false, needsReview: Bool = false) {
+        self.title = title
+        self.subtitle = subtitle
+        self.amount = amount
+        self.currencyCode = currencyCode
+        self.systemImage = systemImage
+        self.tone = tone
+        self.confidence = confidence
+        self.isPending = isPending
+        self.emphasis = emphasis
+        self.isHidden = isHidden
+        self.needsReview = needsReview
+    }
+
+    /// Hidden implies muted.
+    private var effectiveEmphasis: DSEmphasis { isHidden ? .muted : emphasis }
+    private var isMuted: Bool { effectiveEmphasis == .muted }
+
+    /// What VoiceOver appends after the amount, in reading order.
+    nonisolated static func accessibilityStatuses(emphasis: DSEmphasis, isHidden: Bool, needsReview: Bool, isPending: Bool) -> [String] {
+        var statuses: [String] = []
+        if isHidden { statuses.append("hidden") }
+        else if emphasis == .muted { statuses.append("not counted") }
+        if needsReview { statuses.append("needs review") }
+        if isPending { statuses.append("pending") }
+        return statuses
+    }
+
+    private var accessibilityValue: String {
+        var parts = [DSAmountFormat.string(amount, currencyCode: currencyCode, sign: .inflowPlus)]
+        parts += Self.accessibilityStatuses(emphasis: emphasis, isHidden: isHidden, needsReview: needsReview, isPending: isPending)
+        if let confidence, confidence != .auto, !(needsReview && confidence == .review) {
+            parts.append("categorization: \(confidence.label)")
+        }
+        return parts.joined(separator: ", ")
+    }
+
+    public var body: some View {
+        Group {
+            if dynamicTypeSize.isAccessibilitySize { stacked } else { inline }
+        }
+        .padding(.vertical, DSSpace.sm)
+        .contentShape(Rectangle())
+        .accessibilityElement(children: .ignore)
+        .accessibilityLabel("\(title), \(subtitle)")
+        .accessibilityValue(accessibilityValue)
+    }
+
+    private var inline: some View {
+        HStack(spacing: DSSpace.sm) {
+            DSGlyph(systemImage: systemImage, tone: tone, emphasis: effectiveEmphasis)
+            VStack(alignment: .leading, spacing: 3) {
+                titleText.lineLimit(1)
+                // The subtitle gets the whole width (its account digits tell two cards apart); Pending sits under the amount.
+                subtitleText.lineLimit(1)
+            }
+            Spacer(minLength: DSSpace.xs)
+            if isHidden { hiddenTag }
+            VStack(alignment: .trailing, spacing: 4) {
+                amountText
+                if isPending { pendingTag }
+                if let confidence, confidence != .auto {
+                    DSConfidenceBadge(confidence)
+                }
+            }
+            if needsReview { reviewDot }
+        }
+    }
+
+    /// Accessibility sizes: the title and subtitle get the full width and wrap; the amount and
+    /// the status marks move to their own line beneath them.
+    private var stacked: some View {
+        HStack(alignment: .top, spacing: DSSpace.sm) {
+            DSGlyph(systemImage: systemImage, tone: tone, emphasis: effectiveEmphasis)
+            VStack(alignment: .leading, spacing: DSSpace.xxs) {
+                titleText.lineLimit(3)
+                subtitleText.lineLimit(3)
+                HStack(spacing: DSSpace.xs) {
+                    amountText
+                    if isPending { pendingTag }
+                    if isHidden { hiddenTag }
+                    if let confidence, confidence != .auto { DSConfidenceBadge(confidence) }
+                    if needsReview { reviewDot }
+                }
+            }
+            Spacer(minLength: 0)
+        }
+    }
+
+    private var titleText: some View {
+        Text(title)
+            .dsFont(.body)
+            .foregroundStyle(isMuted ? Color.ds.inkSecondary : Color.ds.ink)
+    }
+
+    private var subtitleText: some View {
+        Text(subtitle)
+            .dsFont(.caption)
+            .foregroundStyle(isMuted ? Color.ds.inkTertiary : Color.ds.inkSecondary)
+    }
+
+    private var amountText: some View {
+        DSAmountText(amount, currencyCode: currencyCode, sign: .inflowPlus, tintsInflow: true, emphasis: effectiveEmphasis)
+    }
+
+    /// Fixed so the tag never wraps letter by letter.
+    private var pendingTag: some View { DSTag("Pending").fixedSize() }
+
+    private var hiddenTag: some View { DSTag(systemImage: "eye.slash", tint: Color.ds.inkTertiary) }
+
+    private var reviewDot: some View {
+        Circle()
+            .fill(DSConfidence.review.tint)
+            .frame(width: 7, height: 7)
+    }
+}
+
+/// A chromatic category panel — the only place saturated color fills a surface.
+public struct DSCategoryTile: View {
+    private let title: String
+    private let systemImage: String
+    private let amount: Decimal
+    private let currencyCode: String
+    private let footnote: String?
+    private let tone: DSTone
+
+    public init(title: String, systemImage: String, amount: Decimal, currencyCode: String = "USD", footnote: String? = nil, tone: DSTone) {
+        self.title = title
+        self.systemImage = systemImage
+        self.amount = amount
+        self.currencyCode = currencyCode
+        self.footnote = footnote
+        self.tone = tone
+    }
+
+    public var body: some View {
+        VStack(alignment: .leading, spacing: DSSpace.sm) {
+            Image(systemName: systemImage)
+                .font(.system(size: 18, weight: .medium))
+                .frame(width: 36, height: 36)
+                .background(Circle().fill(tone.onFill.opacity(0.1)))
+                .accessibilityHidden(true)
+            Spacer(minLength: DSSpace.md)
+            Text(title)
+                .dsFont(.eyebrow)
+                .opacity(0.8)
+            Text(DSAmountFormat.string(amount, currencyCode: currencyCode, sign: .magnitude, fractionDigits: 0))
+                .dsFont(.amount)
+                .lineLimit(1)
+                .minimumScaleFactor(0.6)
+            if let footnote {
+                Text(footnote).dsFont(.caption).opacity(0.75).lineLimit(1)
+            }
+        }
+        .foregroundStyle(tone.onFill)
+        .padding(DSSpace.md + 2)
+        .frame(maxWidth: .infinity, minHeight: 164, alignment: .topLeading)
+        .background {
+            RoundedRectangle(cornerRadius: DSRadius.tile, style: .continuous).fill(tone.fill)
+        }
+        .accessibilityElement(children: .combine)
+    }
+}
+
+/// Origin-style action card: category eyebrow, serif headline, one line of why.
+/// The provenance footer names the ledger tool that produced the number.
+public struct DSInsightCard: View {
+    private let eyebrow: String
+    private let title: String
+    private let message: String
+    private let tone: DSTone
+    private let provenance: String?
+
+    public init(eyebrow: String, title: String, message: String, tone: DSTone, provenance: String? = nil) {
+        self.eyebrow = eyebrow
+        self.title = title
+        self.message = message
+        self.tone = tone
+        self.provenance = provenance
+    }
+
+    public var body: some View {
+        VStack(alignment: .leading, spacing: DSSpace.sm) {
+            DSEyebrow(eyebrow, dot: tone.onCanvas)
+            Text(title)
+                .dsFont(.headline)
+                .foregroundStyle(Color.ds.ink)
+                .fixedSize(horizontal: false, vertical: true)
+            Text(message)
+                .dsFont(.callout)
+                .foregroundStyle(Color.ds.inkSecondary)
+                .fixedSize(horizontal: false, vertical: true)
+            Spacer(minLength: 0)
+            if let provenance {
+                DSToolTrace(name: provenance)
+            }
+        }
+        .padding(DSSpace.lg - 4)
+        .frame(maxWidth: .infinity, maxHeight: .infinity, alignment: .topLeading)
+        .background {
+            RoundedRectangle(cornerRadius: DSRadius.card, style: .continuous)
+                .fill(Color.ds.surface)
+                .overlay(alignment: .topLeading) {
+                    // A faint wash of the tone in one corner, like light on a gallery wall.
+                    RadialGradient(colors: [tone.fill.opacity(0.18), .clear], center: .topLeading, startRadius: 0, endRadius: 220)
+                        .clipShape(RoundedRectangle(cornerRadius: DSRadius.card, style: .continuous))
+                }
+        }
+        .overlay {
+            RoundedRectangle(cornerRadius: DSRadius.card, style: .continuous).strokeBorder(Color.ds.hairline, lineWidth: 1)
+        }
+        .accessibilityElement(children: .combine)
+    }
+}
+
+/// Shows which deterministic tool computed a number: `sumByCategory(2026-Q3)`.
+public struct DSToolTrace: View {
+    private let name: String
+    private let arguments: String?
+
+    public init(name: String, arguments: String? = nil) {
+        self.name = name
+        self.arguments = arguments
+    }
+
+    public var body: some View {
+        HStack(spacing: 5) {
+            Image(systemName: "function").font(.system(size: 10, weight: .semibold)).accessibilityHidden(true)
+            Text(arguments.map { "\(name)(\($0))" } ?? name)
+                .dsFont(.mono)
+                .lineLimit(2)
+                .fixedSize(horizontal: false, vertical: true)
+        }
+        .foregroundStyle(Color.ds.inkTertiary)
+        .accessibilityLabel("Computed by the ledger tool \(name)")
+    }
+}

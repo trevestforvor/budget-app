@@ -1,0 +1,1217 @@
+[
+  {
+    "function" : {
+      "description" : "Find transactions. Returns rows newest first with id, date, merchant, amount, category, accountID, and the user's note if any; rows in a money-in category are marked moneyIn. Also returns spent (spending net of refunds, transfers aside) and income (everything filed under a money-in category: Income and any like card rewards) over every matching row — the same totals the Activity list shows. Rows the user hid are marked hidden and left out of both.",
+      "name" : "queryTransactions",
+      "parameters" : {
+        "additionalProperties" : false,
+        "properties" : {
+          "categoryID" : {
+            "description" : "A category id from the category list.",
+            "enum" : [
+              "groceries",
+              "dining",
+              "transport",
+              "housing",
+              "utilities",
+              "subscriptions",
+              "shopping",
+              "entertainment",
+              "health",
+              "travel",
+              "fees",
+              "income",
+              "card-rewards",
+              "transfer"
+            ],
+            "type" : "string"
+          },
+          "direction" : {
+            "description" : "Only money going out (\"out\": charges, purchases, bills) or only money coming in (\"in\").",
+            "enum" : [
+              "out",
+              "in"
+            ],
+            "type" : "string"
+          },
+          "limit" : {
+            "description" : "Maximum rows to return.",
+            "maximum" : 200,
+            "minimum" : 1,
+            "type" : "integer"
+          },
+          "maxAmount" : {
+            "description" : "Only rows at most this big, either way, digits only: \"20\" for \"under $20\".",
+            "pattern" : "^[0-9]{1,9}(\\.[0-9]{1,2})?$",
+            "type" : "string"
+          },
+          "minAmount" : {
+            "description" : "Only rows at least this big, either way (a charge or money in), digits only: \"500\" for \"over $500\".",
+            "pattern" : "^[0-9]{1,9}(\\.[0-9]{1,2})?$",
+            "type" : "string"
+          },
+          "needsReviewOnly" : {
+            "description" : "Only rows the categorizer flagged for review.",
+            "type" : "boolean"
+          },
+          "search" : {
+            "description" : "Text to match in the merchant name, bank descriptor or note, or one exact amount like 42.50. For more or less than an amount (\"over $500\"), use minAmount or maxAmount, not search.",
+            "maxLength" : 80,
+            "type" : "string"
+          },
+          "since" : {
+            "description" : "The first day to include, YYYY-MM-DD.",
+            "format" : "date",
+            "type" : "string"
+          },
+          "until" : {
+            "description" : "The last day to include, YYYY-MM-DD: \"2026-08-31\" for all of August.",
+            "format" : "date",
+            "type" : "string"
+          }
+        },
+        "type" : "object"
+      }
+    },
+    "type" : "function"
+  },
+  {
+    "function" : {
+      "description" : "Total spending for a period, per category or for one category, plus what each money-in category (Income, card rewards) received. For one money-in category it returns what that category received instead of spending. With compareTo, the ledger also returns the difference and percent change — use those instead of computing them.",
+      "name" : "sumByCategory",
+      "parameters" : {
+        "additionalProperties" : false,
+        "properties" : {
+          "categoryID" : {
+            "description" : "A category id from the category list.",
+            "enum" : [
+              "groceries",
+              "dining",
+              "transport",
+              "housing",
+              "utilities",
+              "subscriptions",
+              "shopping",
+              "entertainment",
+              "health",
+              "travel",
+              "fees",
+              "income",
+              "card-rewards",
+              "transfer"
+            ],
+            "type" : "string"
+          },
+          "compareTo" : {
+            "description" : "A period: this_month, last_month, last_7_days, last_90_days, year_to_date, a month like 2026-09, or a quarter like 2026-Q3.",
+            "pattern" : "^(this_month|last_month|last_7_days|last_90_days|year_to_date|[0-9]{4}-Q[1-4]|[0-9]{4}-(0[1-9]|1[0-2]))$",
+            "type" : "string"
+          },
+          "period" : {
+            "description" : "A period: this_month, last_month, last_7_days, last_90_days, year_to_date, a month like 2026-09, or a quarter like 2026-Q3.",
+            "pattern" : "^(this_month|last_month|last_7_days|last_90_days|year_to_date|[0-9]{4}-Q[1-4]|[0-9]{4}-(0[1-9]|1[0-2]))$",
+            "type" : "string"
+          }
+        },
+        "required" : [
+          "period"
+        ],
+        "type" : "object"
+      }
+    },
+    "type" : "function"
+  },
+  {
+    "function" : {
+      "description" : "Project cash after cards (cash less what's owed on cards) forward at the recent pace of income less spending — the last three complete months, a yearly charge counted a twelfth a month — optionally checking whether a savings goal fits.",
+      "name" : "projectBalance",
+      "parameters" : {
+        "additionalProperties" : false,
+        "properties" : {
+          "account" : {
+            "description" : "Which balance to project.",
+            "enum" : [
+              "cash"
+            ],
+            "type" : "string"
+          },
+          "goal" : {
+            "additionalProperties" : false,
+            "description" : "A goal to check against the projection.",
+            "properties" : {
+              "amount" : {
+                "description" : "A positive amount exactly as the user stated it, digits only, e.g. \"500\" or \"42.50\".",
+                "pattern" : "^[0-9]{1,9}(\\.[0-9]{1,2})?$",
+                "type" : "string"
+              },
+              "targetDate" : {
+                "description" : "A date, YYYY-MM-DD.",
+                "format" : "date",
+                "type" : "string"
+              }
+            },
+            "required" : [
+              "amount",
+              "targetDate"
+            ],
+            "type" : "object"
+          },
+          "horizonMonths" : {
+            "description" : "How many months ahead.",
+            "maximum" : 36,
+            "minimum" : 1,
+            "type" : "integer"
+          }
+        },
+        "required" : [
+          "account",
+          "horizonMonths"
+        ],
+        "type" : "object"
+      }
+    },
+    "type" : "function"
+  },
+  {
+    "function" : {
+      "description" : "Spending at one merchant (e.g. DoorDash) for a period, its monthly average over the last three months, and its cap if one is set. With compareTo, the ledger also returns the difference.",
+      "name" : "sumByMerchant",
+      "parameters" : {
+        "additionalProperties" : false,
+        "properties" : {
+          "compareTo" : {
+            "description" : "A period: this_month, last_month, last_7_days, last_90_days, year_to_date, a month like 2026-09, or a quarter like 2026-Q3.",
+            "pattern" : "^(this_month|last_month|last_7_days|last_90_days|year_to_date|[0-9]{4}-Q[1-4]|[0-9]{4}-(0[1-9]|1[0-2]))$",
+            "type" : "string"
+          },
+          "merchant" : {
+            "description" : "Merchant name as the user said it, e.g. \"DoorDash\".",
+            "maxLength" : 60,
+            "minLength" : 2,
+            "type" : "string"
+          },
+          "period" : {
+            "description" : "A period: this_month, last_month, last_7_days, last_90_days, year_to_date, a month like 2026-09, or a quarter like 2026-Q3.",
+            "pattern" : "^(this_month|last_month|last_7_days|last_90_days|year_to_date|[0-9]{4}-Q[1-4]|[0-9]{4}-(0[1-9]|1[0-2]))$",
+            "type" : "string"
+          }
+        },
+        "required" : [
+          "merchant",
+          "period"
+        ],
+        "type" : "object"
+      }
+    },
+    "type" : "function"
+  },
+  {
+    "function" : {
+      "description" : "This month's budget: expected income, a usual month of bills and of subscriptions (a charge spread over the year counts a twelfth), planned savings, the everyday budget that leaves, everyday spending so far, safe-to-spend and the days left (today included).",
+      "name" : "flexBudget",
+      "parameters" : {
+        "additionalProperties" : false,
+        "properties" : {
+
+        },
+        "type" : "object"
+      }
+    },
+    "type" : "function"
+  },
+  {
+    "function" : {
+      "description" : "Income against spending month by month: up to `months` complete months, then this month so far, oldest first — each month's income, spending (every category net of its refunds) and net. Use it for questions about cash flow, how income or spending changed, or what's driving cash up or down.",
+      "name" : "cashFlow",
+      "parameters" : {
+        "additionalProperties" : false,
+        "properties" : {
+          "months" : {
+            "description" : "How many complete months before this one.",
+            "maximum" : 12,
+            "minimum" : 1,
+            "type" : "integer"
+          }
+        },
+        "type" : "object"
+      }
+    },
+    "type" : "function"
+  },
+  {
+    "function" : {
+      "description" : "One spending category month by month, this month last, each against its current target, and its average over the complete months the ledger covers. Use it for how a category changed over time.",
+      "name" : "categoryHistory",
+      "parameters" : {
+        "additionalProperties" : false,
+        "properties" : {
+          "categoryID" : {
+            "description" : "A category id from the category list.",
+            "enum" : [
+              "groceries",
+              "dining",
+              "transport",
+              "housing",
+              "utilities",
+              "subscriptions",
+              "shopping",
+              "entertainment",
+              "health",
+              "travel",
+              "fees",
+              "income",
+              "card-rewards",
+              "transfer"
+            ],
+            "type" : "string"
+          },
+          "months" : {
+            "description" : "How many months, this one included.",
+            "maximum" : 36,
+            "minimum" : 2,
+            "type" : "integer"
+          }
+        },
+        "required" : [
+          "categoryID"
+        ],
+        "type" : "object"
+      }
+    },
+    "type" : "function"
+  },
+  {
+    "function" : {
+      "description" : "How much the user can save per month: average income minus bills, subscriptions and everyday spending over recent months, a stretch figure with everyday spending at its lowest recent month, what they already move to savings, and months of essentials their cash covers.",
+      "name" : "savingsCapacity",
+      "parameters" : {
+        "additionalProperties" : false,
+        "properties" : {
+          "months" : {
+            "description" : "How many recent complete months to average.",
+            "maximum" : 12,
+            "minimum" : 1,
+            "type" : "integer"
+          }
+        },
+        "type" : "object"
+      }
+    },
+    "type" : "function"
+  },
+  {
+    "function" : {
+      "description" : "Rules of thumb for how much the user should save, each with its source, computed against their numbers: emergency-fund target and gap, savings-rate targets, and the usual order of priorities.",
+      "name" : "savingsGuidance",
+      "parameters" : {
+        "additionalProperties" : false,
+        "properties" : {
+
+        },
+        "type" : "object"
+      }
+    },
+    "type" : "function"
+  },
+  {
+    "function" : {
+      "description" : "Every recurring charge found in the ledger: subscriptions (streaming, software, memberships) and bills (rent, utilities, fees), each with its cadence (weekly, monthly, quarterly, yearly), latest amount, cost per month and per year, last and next expected charge, price changes, and whether it missed its last expected charge (possibly cancelled). Use it for questions about subscriptions, recurring charges, or what the user is paying for regularly.",
+      "name" : "findSubscriptions",
+      "parameters" : {
+        "additionalProperties" : false,
+        "properties" : {
+
+        },
+        "type" : "object"
+      }
+    },
+    "type" : "function"
+  },
+  {
+    "function" : {
+      "description" : "A full checkup in one call: this month's pace and safe to spend, categories over or on pace to exceed their targets, merchant caps and top merchants, recurring charges and price increases, unusual transactions, saving and emergency cushion, the cash outlook, and data health. Each finding is good, watch or act. Use it when the user asks how they're doing overall, to check everything, or for a review — then lead with what needs action.",
+      "name" : "runCheckup",
+      "parameters" : {
+        "additionalProperties" : false,
+        "properties" : {
+
+        },
+        "type" : "object"
+      }
+    },
+    "type" : "function"
+  },
+  {
+    "function" : {
+      "description" : "Run the categorization pipeline on transactions and return ranked suggestions with confidence. Does not change anything.",
+      "name" : "categorize",
+      "parameters" : {
+        "additionalProperties" : false,
+        "properties" : {
+          "transactionIDs" : {
+            "description" : "Transaction ids returned by queryTransactions.",
+            "items" : {
+              "description" : "A transaction id.",
+              "type" : "string"
+            },
+            "maxItems" : 50,
+            "minItems" : 1,
+            "type" : "array"
+          }
+        },
+        "required" : [
+          "transactionIDs"
+        ],
+        "type" : "object"
+      }
+    },
+    "type" : "function"
+  },
+  {
+    "function" : {
+      "description" : "The user's categorization rules, newest first (the first that matches a transaction files it): each rule's id, what it matches, its category, whether it's on, how many transactions it filed and matches now, the rules it disagrees with, and whether its category is gone.",
+      "name" : "findRules",
+      "parameters" : {
+        "additionalProperties" : false,
+        "properties" : {
+
+        },
+        "type" : "object"
+      }
+    },
+    "type" : "function"
+  },
+  {
+    "function" : {
+      "description" : "Propose setting a category's monthly target to an exact amount the user stated.",
+      "name" : "setCategoryTarget",
+      "parameters" : {
+        "additionalProperties" : false,
+        "properties" : {
+          "categoryID" : {
+            "description" : "A category id from the category list.",
+            "enum" : [
+              "groceries",
+              "dining",
+              "transport",
+              "housing",
+              "utilities",
+              "subscriptions",
+              "shopping",
+              "entertainment",
+              "health",
+              "travel",
+              "fees"
+            ],
+            "type" : "string"
+          },
+          "monthlyAmount" : {
+            "description" : "A positive amount exactly as the user stated it, digits only, e.g. \"500\" or \"42.50\".",
+            "pattern" : "^[0-9]{1,9}(\\.[0-9]{1,2})?$",
+            "type" : "string"
+          }
+        },
+        "required" : [
+          "categoryID",
+          "monthlyAmount"
+        ],
+        "type" : "object"
+      }
+    },
+    "type" : "function"
+  },
+  {
+    "function" : {
+      "description" : "Propose raising or lowering a category's monthly target by an amount the user stated. The ledger computes the new target.",
+      "name" : "adjustCategoryTarget",
+      "parameters" : {
+        "additionalProperties" : false,
+        "properties" : {
+          "categoryID" : {
+            "description" : "A category id from the category list.",
+            "enum" : [
+              "groceries",
+              "dining",
+              "transport",
+              "housing",
+              "utilities",
+              "subscriptions",
+              "shopping",
+              "entertainment",
+              "health",
+              "travel",
+              "fees"
+            ],
+            "type" : "string"
+          },
+          "change" : {
+            "description" : "A signed change exactly as the user stated it, e.g. \"+50\" or \"-25\". Do not compute a new total.",
+            "pattern" : "^[+-]?[0-9]{1,9}(\\.[0-9]{1,2})?$",
+            "type" : "string"
+          }
+        },
+        "required" : [
+          "categoryID",
+          "change"
+        ],
+        "type" : "object"
+      }
+    },
+    "type" : "function"
+  },
+  {
+    "function" : {
+      "description" : "Propose removing a category's monthly target.",
+      "name" : "removeCategoryTarget",
+      "parameters" : {
+        "additionalProperties" : false,
+        "properties" : {
+          "categoryID" : {
+            "description" : "A category id from the category list.",
+            "enum" : [
+              "groceries",
+              "dining",
+              "transport",
+              "housing",
+              "utilities",
+              "subscriptions",
+              "shopping",
+              "entertainment",
+              "health",
+              "travel",
+              "fees"
+            ],
+            "type" : "string"
+          }
+        },
+        "required" : [
+          "categoryID"
+        ],
+        "type" : "object"
+      }
+    },
+    "type" : "function"
+  },
+  {
+    "function" : {
+      "description" : "Propose a monthly cap for one merchant, e.g. \"DoorDash: $150 a month\", at an amount the user stated.",
+      "name" : "setMerchantTarget",
+      "parameters" : {
+        "additionalProperties" : false,
+        "properties" : {
+          "merchant" : {
+            "description" : "Merchant name, e.g. \"DoorDash\".",
+            "maxLength" : 60,
+            "minLength" : 2,
+            "type" : "string"
+          },
+          "monthlyAmount" : {
+            "description" : "A positive amount exactly as the user stated it, digits only, e.g. \"500\" or \"42.50\".",
+            "pattern" : "^[0-9]{1,9}(\\.[0-9]{1,2})?$",
+            "type" : "string"
+          }
+        },
+        "required" : [
+          "merchant",
+          "monthlyAmount"
+        ],
+        "type" : "object"
+      }
+    },
+    "type" : "function"
+  },
+  {
+    "function" : {
+      "description" : "Propose the amount to set aside each month before anything else (pay yourself first). The flex number and safe-to-spend follow from it.",
+      "name" : "setMonthlySavings",
+      "parameters" : {
+        "additionalProperties" : false,
+        "properties" : {
+          "monthlyAmount" : {
+            "description" : "A positive amount exactly as the user stated it, digits only, e.g. \"500\" or \"42.50\".",
+            "pattern" : "^[0-9]{1,9}(\\.[0-9]{1,2})?$",
+            "type" : "string"
+          }
+        },
+        "required" : [
+          "monthlyAmount"
+        ],
+        "type" : "object"
+      }
+    },
+    "type" : "function"
+  },
+  {
+    "function" : {
+      "description" : "Propose removing a merchant's monthly cap.",
+      "name" : "removeMerchantTarget",
+      "parameters" : {
+        "additionalProperties" : false,
+        "properties" : {
+          "merchant" : {
+            "description" : "Merchant name.",
+            "maxLength" : 60,
+            "minLength" : 2,
+            "type" : "string"
+          }
+        },
+        "required" : [
+          "merchant"
+        ],
+        "type" : "object"
+      }
+    },
+    "type" : "function"
+  },
+  {
+    "function" : {
+      "description" : "Propose a new category: a spending one, optionally with a monthly target and a budget type, or (kind moneyIn) one for money coming in that counts like income, such as card rewards. Optionally a color and an icon.",
+      "name" : "createCategory",
+      "parameters" : {
+        "additionalProperties" : false,
+        "properties" : {
+          "color" : {
+            "description" : "One of the category colors.",
+            "enum" : [
+              "iris",
+              "lilac",
+              "orchid",
+              "azure",
+              "cyan",
+              "irisDeep",
+              "amber",
+              "coral",
+              "rose",
+              "teal",
+              "lime",
+              "violet"
+            ],
+            "type" : "string"
+          },
+          "group" : {
+            "description" : "Which part of the budget it counts in: bills (rent, utilities, insurance), subscriptions (streaming, apps, memberships) or everyday (groceries, dining, shopping, travel). A merchant on the recurring list counts as its own kind whatever its category.",
+            "enum" : [
+              "bills",
+              "subscriptions",
+              "everyday"
+            ],
+            "type" : "string"
+          },
+          "kind" : {
+            "description" : "spending (the default), or moneyIn for money coming in that counts like income, e.g. card rewards and statement credits. A money-in category has no budget type or target, and its kind never changes.",
+            "enum" : [
+              "spending",
+              "moneyIn"
+            ],
+            "type" : "string"
+          },
+          "monthlyTarget" : {
+            "description" : "A positive amount exactly as the user stated it, digits only, e.g. \"500\" or \"42.50\".",
+            "pattern" : "^[0-9]{1,9}(\\.[0-9]{1,2})?$",
+            "type" : "string"
+          },
+          "name" : {
+            "description" : "Display name, e.g. \"Pets\" or \"Card rewards\".",
+            "maxLength" : 32,
+            "minLength" : 1,
+            "type" : "string"
+          },
+          "symbol" : {
+            "description" : "An SF Symbol name, e.g. \"pawprint\".",
+            "pattern" : "^[a-z0-9.]{1,40}$",
+            "type" : "string"
+          }
+        },
+        "required" : [
+          "name"
+        ],
+        "type" : "object"
+      }
+    },
+    "type" : "function"
+  },
+  {
+    "function" : {
+      "description" : "Propose renaming a category or changing its icon, color or budget type. Income and Transfer can only change icon and color; a money-in category has no budget type. A category's kind never changes.",
+      "name" : "updateCategory",
+      "parameters" : {
+        "additionalProperties" : false,
+        "minProperties" : 2,
+        "properties" : {
+          "categoryID" : {
+            "description" : "A category id from the category list.",
+            "enum" : [
+              "groceries",
+              "dining",
+              "transport",
+              "housing",
+              "utilities",
+              "subscriptions",
+              "shopping",
+              "entertainment",
+              "health",
+              "travel",
+              "fees",
+              "income",
+              "card-rewards",
+              "transfer"
+            ],
+            "type" : "string"
+          },
+          "color" : {
+            "description" : "One of the category colors.",
+            "enum" : [
+              "iris",
+              "lilac",
+              "orchid",
+              "azure",
+              "cyan",
+              "irisDeep",
+              "amber",
+              "coral",
+              "rose",
+              "teal",
+              "lime",
+              "violet"
+            ],
+            "type" : "string"
+          },
+          "group" : {
+            "description" : "Which part of the budget it counts in: bills (rent, utilities, insurance), subscriptions (streaming, apps, memberships) or everyday (groceries, dining, shopping, travel). A merchant on the recurring list counts as its own kind whatever its category.",
+            "enum" : [
+              "bills",
+              "subscriptions",
+              "everyday"
+            ],
+            "type" : "string"
+          },
+          "name" : {
+            "description" : "New display name.",
+            "maxLength" : 32,
+            "minLength" : 1,
+            "type" : "string"
+          },
+          "symbol" : {
+            "description" : "An SF Symbol name, e.g. \"pawprint\".",
+            "pattern" : "^[a-z0-9.]{1,40}$",
+            "type" : "string"
+          }
+        },
+        "required" : [
+          "categoryID"
+        ],
+        "type" : "object"
+      }
+    },
+    "type" : "function"
+  },
+  {
+    "function" : {
+      "description" : "Propose folding one category into another of the same kind — spending into spending, or money in into money in: its transactions, rules and review suggestions move, and it goes away. Income and Transfer are never merged away.",
+      "name" : "mergeCategory",
+      "parameters" : {
+        "additionalProperties" : false,
+        "properties" : {
+          "combineTargets" : {
+            "description" : "Add the removed category's monthly target to the other's. Otherwise it's dropped.",
+            "type" : "boolean"
+          },
+          "from" : {
+            "description" : "The category id to fold in and remove.",
+            "enum" : [
+              "groceries",
+              "dining",
+              "transport",
+              "housing",
+              "utilities",
+              "subscriptions",
+              "shopping",
+              "entertainment",
+              "health",
+              "travel",
+              "fees",
+              "income",
+              "card-rewards"
+            ],
+            "type" : "string"
+          },
+          "into" : {
+            "description" : "The category id that takes everything.",
+            "enum" : [
+              "groceries",
+              "dining",
+              "transport",
+              "housing",
+              "utilities",
+              "subscriptions",
+              "shopping",
+              "entertainment",
+              "health",
+              "travel",
+              "fees",
+              "income",
+              "card-rewards"
+            ],
+            "type" : "string"
+          }
+        },
+        "required" : [
+          "from",
+          "into"
+        ],
+        "type" : "object"
+      }
+    },
+    "type" : "function"
+  },
+  {
+    "function" : {
+      "description" : "Propose a categorization rule: transactions matching the text, account, direction or amount given are filed under a category, now and in future. The newest matching rule wins.",
+      "name" : "createBudgetRule",
+      "parameters" : {
+        "additionalProperties" : false,
+        "properties" : {
+          "applyToExisting" : {
+            "description" : "Also re-file existing matching transactions.",
+            "type" : "boolean"
+          },
+          "categoryID" : {
+            "description" : "A category id from the category list.",
+            "enum" : [
+              "groceries",
+              "dining",
+              "transport",
+              "housing",
+              "utilities",
+              "subscriptions",
+              "shopping",
+              "entertainment",
+              "health",
+              "travel",
+              "fees",
+              "income",
+              "card-rewards",
+              "transfer"
+            ],
+            "type" : "string"
+          },
+          "match" : {
+            "additionalProperties" : false,
+            "description" : "What to match. Give text, an account, or both; every condition given must hold.",
+            "minProperties" : 1,
+            "properties" : {
+              "accountID" : {
+                "description" : "Only transactions on this account: an accountID from queryTransactions.",
+                "maxLength" : 120,
+                "minLength" : 1,
+                "type" : "string"
+              },
+              "descriptorContains" : {
+                "description" : "Text in the bank descriptor. Case and numbers are ignored.",
+                "maxLength" : 60,
+                "minLength" : 2,
+                "type" : "string"
+              },
+              "direction" : {
+                "description" : "Only money going out, or only money coming in.",
+                "enum" : [
+                  "out",
+                  "in"
+                ],
+                "type" : "string"
+              },
+              "maxAmount" : {
+                "description" : "Only amounts at most this big, digits only, e.g. \"50\".",
+                "pattern" : "^[0-9]{1,9}(\\.[0-9]{1,2})?$",
+                "type" : "string"
+              },
+              "merchantContains" : {
+                "description" : "Text in the merchant name. Case and numbers are ignored.",
+                "maxLength" : 60,
+                "minLength" : 2,
+                "type" : "string"
+              },
+              "minAmount" : {
+                "description" : "Only amounts at least this big, digits only, e.g. \"1000\".",
+                "pattern" : "^[0-9]{1,9}(\\.[0-9]{1,2})?$",
+                "type" : "string"
+              }
+            },
+            "type" : "object"
+          }
+        },
+        "required" : [
+          "applyToExisting",
+          "categoryID",
+          "match"
+        ],
+        "type" : "object"
+      }
+    },
+    "type" : "function"
+  },
+  {
+    "function" : {
+      "description" : "Propose changing a rule found with findRules: what it matches (replaced as a whole), its category, or turning it off or on.",
+      "name" : "updateBudgetRule",
+      "parameters" : {
+        "additionalProperties" : false,
+        "minProperties" : 2,
+        "properties" : {
+          "applyToExisting" : {
+            "description" : "Also re-file existing transactions the changed rule matches.",
+            "type" : "boolean"
+          },
+          "categoryID" : {
+            "description" : "A category id from the category list.",
+            "enum" : [
+              "groceries",
+              "dining",
+              "transport",
+              "housing",
+              "utilities",
+              "subscriptions",
+              "shopping",
+              "entertainment",
+              "health",
+              "travel",
+              "fees",
+              "income",
+              "card-rewards",
+              "transfer"
+            ],
+            "type" : "string"
+          },
+          "isEnabled" : {
+            "description" : "false turns the rule off; true turns it back on.",
+            "type" : "boolean"
+          },
+          "match" : {
+            "additionalProperties" : false,
+            "description" : "What to match. Give text, an account, or both; every condition given must hold.",
+            "minProperties" : 1,
+            "properties" : {
+              "accountID" : {
+                "description" : "Only transactions on this account: an accountID from queryTransactions.",
+                "maxLength" : 120,
+                "minLength" : 1,
+                "type" : "string"
+              },
+              "descriptorContains" : {
+                "description" : "Text in the bank descriptor. Case and numbers are ignored.",
+                "maxLength" : 60,
+                "minLength" : 2,
+                "type" : "string"
+              },
+              "direction" : {
+                "description" : "Only money going out, or only money coming in.",
+                "enum" : [
+                  "out",
+                  "in"
+                ],
+                "type" : "string"
+              },
+              "maxAmount" : {
+                "description" : "Only amounts at most this big, digits only, e.g. \"50\".",
+                "pattern" : "^[0-9]{1,9}(\\.[0-9]{1,2})?$",
+                "type" : "string"
+              },
+              "merchantContains" : {
+                "description" : "Text in the merchant name. Case and numbers are ignored.",
+                "maxLength" : 60,
+                "minLength" : 2,
+                "type" : "string"
+              },
+              "minAmount" : {
+                "description" : "Only amounts at least this big, digits only, e.g. \"1000\".",
+                "pattern" : "^[0-9]{1,9}(\\.[0-9]{1,2})?$",
+                "type" : "string"
+              }
+            },
+            "type" : "object"
+          },
+          "ruleID" : {
+            "description" : "A rule id returned by findRules.",
+            "maxLength" : 40,
+            "minLength" : 1,
+            "type" : "string"
+          }
+        },
+        "required" : [
+          "ruleID"
+        ],
+        "type" : "object"
+      }
+    },
+    "type" : "function"
+  },
+  {
+    "function" : {
+      "description" : "Propose deleting a rule found with findRules. Transactions it filed keep their category.",
+      "name" : "deleteBudgetRule",
+      "parameters" : {
+        "additionalProperties" : false,
+        "properties" : {
+          "ruleID" : {
+            "description" : "A rule id returned by findRules.",
+            "maxLength" : 40,
+            "minLength" : 1,
+            "type" : "string"
+          }
+        },
+        "required" : [
+          "ruleID"
+        ],
+        "type" : "object"
+      }
+    },
+    "type" : "function"
+  },
+  {
+    "function" : {
+      "description" : "Propose filing specific transactions under a category.",
+      "name" : "recategorize",
+      "parameters" : {
+        "additionalProperties" : false,
+        "properties" : {
+          "categoryID" : {
+            "description" : "A category id from the category list.",
+            "enum" : [
+              "groceries",
+              "dining",
+              "transport",
+              "housing",
+              "utilities",
+              "subscriptions",
+              "shopping",
+              "entertainment",
+              "health",
+              "travel",
+              "fees",
+              "income",
+              "card-rewards",
+              "transfer"
+            ],
+            "type" : "string"
+          },
+          "transactionIDs" : {
+            "description" : "Transaction ids returned by queryTransactions.",
+            "items" : {
+              "description" : "A transaction id.",
+              "type" : "string"
+            },
+            "maxItems" : 50,
+            "minItems" : 1,
+            "type" : "array"
+          }
+        },
+        "required" : [
+          "categoryID",
+          "transactionIDs"
+        ],
+        "type" : "object"
+      }
+    },
+    "type" : "function"
+  },
+  {
+    "function" : {
+      "description" : "Propose changes to specific transactions: file them under a category, keep the category they already have, hide them from spending and budget totals (or count them again), mark a yearly charge to spread it over the year (or not), add a note, or rename the merchant. Give only the fields to change.",
+      "name" : "editTransactions",
+      "parameters" : {
+        "additionalProperties" : false,
+        "minProperties" : 2,
+        "properties" : {
+          "acceptGuess" : {
+            "description" : "Keep the category each transaction already has, as the user's own choice.",
+            "type" : "boolean"
+          },
+          "categoryID" : {
+            "description" : "A category id from the category list.",
+            "enum" : [
+              "groceries",
+              "dining",
+              "transport",
+              "housing",
+              "utilities",
+              "subscriptions",
+              "shopping",
+              "entertainment",
+              "health",
+              "travel",
+              "fees",
+              "income",
+              "card-rewards",
+              "transfer"
+            ],
+            "type" : "string"
+          },
+          "isHidden" : {
+            "description" : "true leaves the transactions out of spending, income and budget totals (balances still include them); false counts them again.",
+            "type" : "boolean"
+          },
+          "isYearly" : {
+            "description" : "true: spread over the year (an annual fee, a yearly plan, a big trip): the budget counts a twelfth a month for twelve months instead of all in its month; it keeps its category. false: counted in its month.",
+            "type" : "boolean"
+          },
+          "merchant" : {
+            "description" : "A new merchant name, e.g. \"Blue Bottle\".",
+            "maxLength" : 60,
+            "minLength" : 1,
+            "type" : "string"
+          },
+          "note" : {
+            "description" : "A note to attach, in the user's words. An empty string removes the note.",
+            "maxLength" : 500,
+            "type" : "string"
+          },
+          "renameSimilar" : {
+            "description" : "With merchant: also rename every transaction with the same bank descriptor, and future ones.",
+            "type" : "boolean"
+          },
+          "transactionIDs" : {
+            "description" : "Transaction ids returned by queryTransactions.",
+            "items" : {
+              "description" : "A transaction id.",
+              "type" : "string"
+            },
+            "maxItems" : 50,
+            "minItems" : 1,
+            "type" : "array"
+          }
+        },
+        "required" : [
+          "transactionIDs"
+        ],
+        "type" : "object"
+      }
+    },
+    "type" : "function"
+  },
+  {
+    "function" : {
+      "description" : "Propose changing the decision model: which provider categorizes uncertain transactions, and the confidence percent at or above which its decisions are accepted without review.",
+      "name" : "updateDecisionPolicy",
+      "parameters" : {
+        "additionalProperties" : false,
+        "minProperties" : 1,
+        "properties" : {
+          "autoAcceptPercent" : {
+            "description" : "Auto-accept decisions at or above this confidence, as a whole percent the user stated, e.g. 80.",
+            "maximum" : 99,
+            "minimum" : 50,
+            "type" : "integer"
+          },
+          "escalateToJev" : {
+            "description" : "With a local provider, re-ask Jev about decisions below the threshold.",
+            "type" : "boolean"
+          },
+          "holdPending" : {
+            "description" : "true keeps pending charges out of review until they post.",
+            "type" : "boolean"
+          },
+          "provider" : {
+            "description" : "off, localDecide (Qwen Decide on the Olares), laya (on the Olares), or jev (TypeSafe; receives merchant, cleaned descriptor and amount band).",
+            "enum" : [
+              "off",
+              "localDecide",
+              "laya",
+              "jev"
+            ],
+            "type" : "string"
+          },
+          "rerunPending" : {
+            "description" : "Re-run the model on transactions waiting for review. Defaults to true when the provider, threshold or escalation changes.",
+            "type" : "boolean"
+          },
+          "reviewAbove" : {
+            "description" : "Send anything bigger than this to review unless a rule covers it, digits only; \"0\" turns it off.",
+            "pattern" : "^[0-9]{1,9}(\\.[0-9]{1,2})?$",
+            "type" : "string"
+          },
+          "reviewNewMerchants" : {
+            "description" : "true sends every new merchant to review, however sure the model is.",
+            "type" : "boolean"
+          }
+        },
+        "type" : "object"
+      }
+    },
+    "type" : "function"
+  },
+  {
+    "function" : {
+      "description" : "Offer to open a screen in the app, optionally focused on a category, budget month, period, search, or planning horizon. recurring lists subscriptions and bills.",
+      "name" : "navigate",
+      "parameters" : {
+        "additionalProperties" : false,
+        "properties" : {
+          "categoryID" : {
+            "description" : "A category id from the category list.",
+            "enum" : [
+              "groceries",
+              "dining",
+              "transport",
+              "housing",
+              "utilities",
+              "subscriptions",
+              "shopping",
+              "entertainment",
+              "health",
+              "travel",
+              "fees",
+              "income",
+              "card-rewards",
+              "transfer"
+            ],
+            "type" : "string"
+          },
+          "horizonMonths" : {
+            "description" : "Planning horizon for Plan.",
+            "maximum" : 36,
+            "minimum" : 1,
+            "type" : "integer"
+          },
+          "month" : {
+            "description" : "A budget month for Spending, like 2026-09.",
+            "pattern" : "^[0-9]{4}-(0[1-9]|1[0-2])$",
+            "type" : "string"
+          },
+          "range" : {
+            "description" : "Spending range to show.",
+            "enum" : [
+              "thisMonth",
+              "lastMonth",
+              "last90Days",
+              "yearToDate"
+            ],
+            "type" : "string"
+          },
+          "screen" : {
+            "description" : "The screen to open.",
+            "enum" : [
+              "home",
+              "spending",
+              "ask",
+              "plan",
+              "activity",
+              "settings",
+              "recurring"
+            ],
+            "type" : "string"
+          },
+          "search" : {
+            "description" : "Search text for Activity.",
+            "maxLength" : 80,
+            "type" : "string"
+          }
+        },
+        "required" : [
+          "screen"
+        ],
+        "type" : "object"
+      }
+    },
+    "type" : "function"
+  }
+]
