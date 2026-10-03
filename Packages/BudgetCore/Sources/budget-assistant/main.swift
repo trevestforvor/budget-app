@@ -41,7 +41,7 @@ case "ask":
     }
     print("   steps \(outcome.steps), schema repairs \(outcome.repairs), ungrounded \(outcome.ungrounded.isEmpty ? "none" : outcome.ungrounded.joined(separator: " ")), \(String(format: "%.1f", Date().timeIntervalSince(started)))s")
 case "decide":
-    // --shim URL routes decisions through a Jev-compatible /v1/systemone front door instead of /v1/decision.
+    // --shim URL points decisions at a different /v1/systemone server than the chat base.
     let api: DemoBudgetAPI
     if let shim = option("--shim").flatMap(URL.init(string:)) {
         let model = try DecisionModels.make(.localDecide, DecisionEndpoints(qwenDecide: shim))
@@ -49,7 +49,7 @@ case "decide":
         print("via /v1/systemone at \(shim.absoluteString)")
     } else {
         api = DemoBudgetAPI.live(baseURL: base)
-        print("via /v1/decision at \(base.absoluteString)")
+        print("via /v1/systemone at \(base.absoluteString)")
     }
     let pending = try await api.reviewQueue()
     let started = Date()
@@ -61,7 +61,7 @@ case "decide":
         print("   \(item.transaction.merchant.padding(toLength: 20, withPad: " ", startingAt: 0)) → \(c?.categoryID ?? "?") \(Int(((c?.confidence ?? 0) * 100).rounded()))%\(c?.needsReview == true ? "  (review)" : "  accepted")")
     }
 case "eval":
-    // Labeled categorization eval. --provider qwen (default, /v1/decision) | jev (needs OPENROUTER_API_KEY
+    // Labeled categorization eval. --provider qwen (default, /v1/systemone on the base URL) | jev (needs OPENROUTER_API_KEY
     // or TYPESAFE_API_KEY) | shim URL. --repeat N multiplies the set to measure throughput.
     let categories = try await offline.categories()
     let provider = option("--provider") ?? "qwen"
@@ -76,7 +76,7 @@ case "eval":
         } else {
             print("Set OPENROUTER_API_KEY or TYPESAFE_API_KEY to evaluate Jev."); exit(2)
         }
-    case "qwen": model = LlamaDecisionModel(baseURL: base, label: "qwen3.8-27b · /v1/decision")
+    case "qwen": model = SystemOneDecisionModel(transport: .selfHosted(baseURL: base, model: "clef", apiKey: nil))
     default:
         guard let url = URL(string: provider) else { print("unknown provider"); exit(2) }
         // --system2 off|auto|always is the jevshim's per-request switch for its think-then-rescore pass.

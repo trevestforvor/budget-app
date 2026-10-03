@@ -399,9 +399,6 @@ final class DecisionStub: URLProtocol {
             (status, reply) = (401, #"{"error":"invalid key"}"#)
         } else if text.contains("PAYPAL") {
             (status, reply) = (400, #"{"error":"rejected context"}"#)
-        } else if request.url?.path.hasSuffix("/v1/decision") == true {
-            let contexts = ((try? JSONSerialization.jsonObject(with: body)) as? [String: Any])?["contexts"] as? [Any] ?? []
-            reply = #"{"results":["# + contexts.map { _ in #"{"fields":{"category":{"value":"dining","probability":0.97}}}"# }.joined(separator: ",") + "]}"
         } else {
             reply = #"{"model":"m","answers":{"category":{"type":"choice","choice":"dining","probabilities":{"dining":0.97}}}}"#
         }
@@ -466,9 +463,9 @@ struct DecisionFailureTests {
         await #expect(throws: DecisionError.self) { try await model.decide(Self.requests(["SQ *TACO", "OUTAGE", "NETFLIX"])) }
     }
 
-    @Test("Qwen Decide: a batch it rejects is split until the refused context stands alone")
-    func llamaSplits() async throws {
-        let model = LlamaDecisionModel(baseURL: URL(string: "https://decide.test")!, session: Self.session)
+    @Test("Clef: the request it refuses comes back marked failed, the rest are answered, an outage stops the batch")
+    func selfHostedRefusal() async throws {
+        let model = SystemOneDecisionModel(transport: .selfHosted(baseURL: URL(string: "https://decide.test")!, model: "clef", apiKey: nil), session: Self.session)
         let out = try await model.decide(Self.requests(["SQ *TACO", "PAYPAL *XJ", "NETFLIX", "SHELL OIL"]))
         #expect(out.map { $0.failure != nil } == [false, true, false, false])
         #expect(out[3].answers["category"]?.value == "dining")

@@ -51,7 +51,7 @@ public enum BudgetServerApp {
         let name = await settings.modelName
         var routing = DecisionRouting()
         if let url = await settings.decisionBaseURL {
-            routing.local = LlamaDecisionModel(baseURL: url, label: "\(name) · /v1/decision", apiKey: await settings.decisionAPIKey)
+            routing.local = SystemOneDecisionModel(transport: .selfHosted(baseURL: url, model: "clef", apiKey: await settings.decisionAPIKey))
         }
         if let key = await settings.openRouterKey {
             routing.jev = SystemOneDecisionModel(transport: .openRouter(apiKey: key, zeroDataRetention: await settings.openRouterZeroRetention))

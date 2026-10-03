@@ -72,25 +72,13 @@ struct DecisionTests {
         #expect(yes.answers["r"]?.confidence == 0.8)
     }
 
-    @Test("Qwen Decide request and response match the /v1/decision wire shape, batched")
-    func llamaDecision() throws {
-        let model = LlamaDecisionModel(baseURL: URL(string: "https://decide.example.olares.com")!)
-        #expect(model.runsLocally)
-        let requests = [DecisionRequest(state: "a", questions: ["category": Self.question]), DecisionRequest(state: "b", questions: ["category": Self.question])]
-        guard case let .object(b) = model.body(for: requests), case let .object(schema)? = b["schema"], case let .object(field)? = schema["category"] else { Issue.record("shape"); return }
-        #expect(b["contexts"] == .array([.string("a"), .string("b")]))
-        #expect(b["cache_prompt"] == .bool(true))
-        #expect(field["type"] == .string("enum"))
-        #expect(field["choices"] == .array([.string("dining"), .string("groceries")]))
-        guard case let .string(description)? = field["description"] else { Issue.record("no description"); return }
-        #expect(description.contains("Options:\ndining: Dining"))
-
-        let wire = #"{"results":[{"fields":{"category":{"value":"dining","probability":0.88}}},{"fields":{"category":{"value":"groceries","probability":0.61}}}]}"#
-        let parsed = try LlamaDecisionModel.parse(try JSONValue.parse(Data(wire.utf8)), questions: ["category": Self.question], count: 2, label: "qwen")
-        #expect(parsed.map { $0.answers["category"]?.value } == ["dining", "groceries"])
-        #expect(parsed[1].answers["category"]?.confidence == 0.61)
-        #expect(throws: DecisionError.self) {
-            try LlamaDecisionModel.parse(try JSONValue.parse(Data(#"{"results":[]}"#.utf8)), questions: [:], count: 2, label: "q")
+    @Test("A self-hosted address saved as /v1/decision, /v1 or /v1/systemone still reaches /v1/systemone")
+    func selfHostedURLs() {
+        for saved in ["https://decide.example.olares.com", "https://decide.example.olares.com/", "https://decide.example.olares.com/v1",
+                      "https://decide.example.olares.com/v1/decision", "https://decide.example.olares.com/v1/systemone/"] {
+            let model = SystemOneDecisionModel(transport: .selfHosted(baseURL: URL(string: saved)!, model: "clef", apiKey: nil))
+            #expect(model.endpoint.url.absoluteString == "https://decide.example.olares.com/v1/systemone", "\(saved)")
+            #expect(model.runsLocally)
         }
     }
 
@@ -173,12 +161,10 @@ struct DecisionTests {
         #expect(qwen.endpoint.url.absoluteString == "https://jevshim.example.olares.com/v1/systemone")
         #expect(qwen.runsLocally)
         guard case let .object(qb) = qwen.body(for: DecisionRequest(state: "x", questions: ["category": Self.question])) else { Issue.record("shape"); return }
-        #expect(qb["system2"] == .string("off"))
+        #expect(qb["model"] == .string("clef"))
+        #expect(qb["system2"] == nil)
         guard case let .object(jb) = jev.body(for: DecisionRequest(state: "x", questions: ["category": Self.question])) else { Issue.record("shape"); return }
         #expect(jb["system2"] == nil) // never sent to Jev
-        var direct = endpoints
-        direct.qwenDecideDirect = true
-        #expect(try DecisionModels.make(.localDecide, direct) is LlamaDecisionModel)
         #expect(throws: DecisionError.missingKey) { try DecisionModels.make(.jev, DecisionEndpoints()) }
     }
 

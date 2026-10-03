@@ -132,7 +132,7 @@ After that, linked accounts sync every 6 hours (`BUDGET_SYNC_INTERVAL_HOURS`), a
 With no model set, Ask gives built-in answers computed from the ledger, and anything rules and merchant memory can't file waits in Review. To add models, go to the dashboard → Settings → Models (each has a **Test** button):
 
 - **Ask (chat):** any OpenAI-compatible endpoint, model id and key. That can be OpenAI, a router like OpenRouter or LiteLLM, or a model you host.
-- **Categorizing:** off by default. It can be Jev through their own OpenRouter key (it sees only the merchant name and the category list), or a self-hosted llama.cpp server with `/v1/decision`.
+- **Categorizing:** off by default. It can be Jev through their own OpenRouter key (it sees only the merchant name and the category list), or a self-hosted decision server (Cloudflare Clef on your Olares) that serves `/v1/systemone`. An address saved as `.../v1/decision` or `.../v1` still works.
 
 Bank data goes to a model only if one is configured. In the app, Settings → Decision model → "What the decision model sees" shows the exact request.
 

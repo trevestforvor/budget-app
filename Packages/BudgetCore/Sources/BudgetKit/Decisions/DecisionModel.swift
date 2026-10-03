@@ -5,7 +5,7 @@ import FoundationNetworking // URLSession/URLRequest on Linux
 
 // A decision model reads a state and answers typed questions with probabilities, without
 // writing text. Shapes follow the ones measured in ~/Developer/Olares/decision-bench:
-// Jev / Laya `/v1/systemone` and the llama.cpp fork's `/v1/decision` (Qwen Decide).
+// Jev / Laya / Clef `/v1/systemone`.
 
 public enum DecisionQuestion: Hashable, Sendable {
     /// Pick one option. `options` maps option id → description (may be empty).
@@ -54,7 +54,7 @@ public struct DecisionRequest: Hashable, Sendable {
 public struct DecisionAnswer: Hashable, Sendable, Codable {
     public var value: String
     public var confidence: Double?
-    /// Full distribution when the backend returns one (Jev/Laya do; /v1/decision doesn't).
+    /// Full distribution when the backend returns one (Jev/Laya/Clef do).
     public var distribution: [String: Double]?
 
     public init(value: String, confidence: Double?, distribution: [String: Double]? = nil) {
@@ -156,11 +156,23 @@ public struct SystemOneDecisionModel: DecisionModel {
         return false
     }
 
+    /// A saved address may still end in the old `/v1/decision`, in `/v1`, or already in `/v1/systemone`: all name the same server.
+    public static func serverRoot(_ url: URL) -> URL {
+        var text = url.absoluteString
+        while text.hasSuffix("/") { text.removeLast() }
+        for suffix in ["/v1/systemone", "/v1/decision", "/v1"] where text.lowercased().hasSuffix(suffix) {
+            text.removeLast(suffix.count)
+            break
+        }
+        while text.hasSuffix("/") { text.removeLast() }
+        return URL(string: text) ?? url
+    }
+
     var endpoint: (url: URL, model: String, key: String?) {
         switch transport {
         case let .openRouter(key, _): (URL(string: "https://openrouter.ai/api/alpha/decisions")!, "typesafe/jev-1.13", key)
         case let .typeSafe(key): (URL(string: "https://api.typesafe.ai/v1/systemone")!, "jev-latest", key)
-        case let .selfHosted(base, model, key): (base.appending(path: "v1/systemone"), model, key)
+        case let .selfHosted(base, model, key): (Self.serverRoot(base).appending(path: "v1/systemone"), model, key)
         }
     }
 
@@ -256,150 +268,21 @@ public struct SystemOneDecisionModel: DecisionModel {
     }
 }
 
-// MARK: - Qwen Decide: POST /v1/decision (llama.cpp fork)
-
-public struct LlamaDecisionModel: DecisionModel {
-    public let baseURL: URL
-    public let model: String?
-    public let label: String
-    /// Sent as a bearer token, for a decision server behind a router that asks for one.
-    public let apiKey: String?
-    /// The endpoint accepts up to 256 contexts sharing one schema.
-    public let maxBatch: Int
-    private let session: URLSession
-
-    public init(baseURL: URL, model: String? = nil, label: String = "qwen3.8-27b-decide", maxBatch: Int = 256, apiKey: String? = nil,
-                session: URLSession = .shared) {
-        self.baseURL = baseURL
-        self.model = model
-        self.label = label
-        self.apiKey = apiKey
-        self.maxBatch = maxBatch
-        self.session = session
-    }
-
-    public var runsLocally: Bool { true }
-
-    /// Field description = instructions plus the option catalog (the endpoint requires one).
-    static func description(_ q: DecisionQuestion) -> String {
-        switch q {
-        case let .choice(instructions, options):
-            return instructions + "\nOptions:\n" + options.map { $0.description.isEmpty ? $0.id : "\($0.id): \($0.description)" }.joined(separator: "\n")
-        case let .noul(instructions, whenTrue, whenFalse):
-            return ([instructions] + [whenTrue.map { "true: \($0)" }, whenFalse.map { "false: \($0)" }].compactMap { $0 }).joined(separator: "\n")
-        case let .score(instructions, levels):
-            return instructions + "\nLevels:\n" + levels.enumerated().map { "\($0.offset): \($0.element)" }.joined(separator: "\n")
-        }
-    }
-
-    /// `{fieldId: {type: enum|boolean|integer, choices?, minimum?, maximum?, description}}`
-    static func schema(_ questions: [String: DecisionQuestion]) -> JSONValue {
-        .object(questions.mapValues { q in
-            switch q {
-            case let .choice(_, options):
-                return .object(["type": .string("enum"), "choices": .array(options.map { .string($0.id) }), "description": .string(description(q))])
-            case .noul:
-                return .object(["type": .string("boolean"), "description": .string(description(q))])
-            case let .score(_, levels):
-                return .object(["type": .string("integer"), "minimum": .number(0), "maximum": .number(Double(levels.count - 1)), "description": .string(description(q))])
-            }
-        })
-    }
-
-    /// Requests in one batch must share questions and instructions.
-    func body(for batch: [DecisionRequest]) -> JSONValue {
-        var o: [String: JSONValue] = [
-            "instructions": .string(batch[0].instructions),
-            "schema": Self.schema(batch[0].questions),
-            "contexts": .array(batch.map { .string($0.state) }),
-            "cache_prompt": .bool(true),
-        ]
-        if let model { o["model"] = .string(model) }
-        return .object(o)
-    }
-
-    /// `{"results": [{"fields": {id: {value, probability, probabilities?}}}]}`. Stock engines return the
-    /// winner's probability only; the patched engine on the Olares also returns the full distribution.
-    static func parse(_ json: JSONValue, questions: [String: DecisionQuestion], count: Int, label: String) throws -> [DecisionResponse] {
-        guard case let .object(root) = json, case let .array(results)? = root["results"], results.count == count else {
-            throw DecisionError.malformed("expected \(count) results")
-        }
-        return results.map { result in
-            var answers: [String: DecisionAnswer] = [:]
-            if case let .object(r) = result, case let .object(fields)? = r["fields"] {
-                for (id, question) in questions {
-                    guard case let .object(f)? = fields[id] else { continue }
-                    let p: Double? = if case let .number(n)? = f["probability"] { n } else { nil }
-                    let distribution: [String: Double]? = {
-                        guard case let .object(all)? = f["probabilities"] else { return nil }
-                        return all.compactMapValues { if case let .number(n) = $0 { n } else { nil } }
-                    }()
-                    switch (question, f["value"]) {
-                    case let (.choice, .string(v)?): answers[id] = DecisionAnswer(value: v, confidence: p, distribution: distribution)
-                    case let (.noul, .bool(v)?): answers[id] = DecisionAnswer(value: v ? "true" : "false", confidence: p)
-                    case let (.score, .number(v)?): answers[id] = DecisionAnswer(value: String(Int(v)), confidence: p)
-                    default: break
-                    }
-                }
-            }
-            return DecisionResponse(answers: answers, model: label)
-        }
-    }
-
-    public func decide(_ requests: [DecisionRequest]) async throws -> [DecisionResponse] {
-        var out: [DecisionResponse] = []
-        // Group consecutive requests that share a schema, then chunk to maxBatch.
-        var index = 0
-        while index < requests.count {
-            var end = index + 1
-            while end < requests.count, end - index < maxBatch,
-                  requests[end].questions == requests[index].questions, requests[end].instructions == requests[index].instructions { end += 1 }
-            let batch = Array(requests[index..<end])
-            out += try await decideBatch(batch)
-            index = end
-        }
-        return out
-    }
-
-    /// One POST for `batch`. When the engine rejects it for its content, it's split in half until the request it refuses
-    /// stands alone and comes back marked `failure`; an outage throws.
-    func decideBatch(_ batch: [DecisionRequest]) async throws -> [DecisionResponse] {
-        var urlRequest = URLRequest(url: baseURL.appending(path: "v1/decision"))
-        urlRequest.httpMethod = "POST"
-        urlRequest.setValue("application/json", forHTTPHeaderField: "Content-Type")
-        if let apiKey { urlRequest.setValue("Bearer \(apiKey)", forHTTPHeaderField: "Authorization") }
-        urlRequest.httpBody = try body(for: batch).data()
-        urlRequest.timeoutInterval = 120
-        do {
-            let (data, response) = try await session.data(for: urlRequest)
-            let status = (response as? HTTPURLResponse)?.statusCode ?? 0
-            guard (200..<300).contains(status) else { throw DecisionError.http(status, String(decoding: data, as: UTF8.self)) }
-            return try Self.parse(try JSONValue.parse(data), questions: batch[0].questions, count: batch.count, label: label)
-        } catch where DecisionError.isAboutTheRequest(error) {
-            guard batch.count > 1 else { return [DecisionResponse(answers: [:], model: label, failure: error.localizedDescription)] }
-            let half = batch.count / 2
-            return try await decideBatch(Array(batch[..<half])) + decideBatch(Array(batch[half...]))
-        }
-    }
-}
-
 // MARK: - Factory
 
-/// Where each provider lives. Jev's `/v1/systemone` is the one protocol: Qwen Decide is reached
-/// through `decision-bench/jevshim` (a Jev-compatible front door for `/v1/decision`) and Laya
-/// speaks it natively, so switching providers only changes the base URL, model and key.
+/// Where each provider lives. Jev's `/v1/systemone` is the one protocol: the self-hosted Clef server and Laya
+/// speak it natively, so switching providers only changes the base URL, model and key.
 public struct DecisionEndpoints: Sendable {
     public var jev: SystemOneDecisionModel.Transport?
-    /// Base URL of the jevshim in front of Qwen Decide (or of the engine, when `qwenDecideDirect`).
+    /// Base URL of the self-hosted decision server (Clef on the Olares), which serves `/v1/systemone`.
     public var qwenDecide: URL?
-    /// Call the engine's batched `/v1/decision` directly instead of the shim — faster for bulk.
-    public var qwenDecideDirect: Bool
+    public var qwenDecideKey: String?
     public var laya: URL?
 
-    public init(jev: SystemOneDecisionModel.Transport? = nil, qwenDecide: URL? = nil, qwenDecideDirect: Bool = false, laya: URL? = nil) {
+    public init(jev: SystemOneDecisionModel.Transport? = nil, qwenDecide: URL? = nil, qwenDecideKey: String? = nil, laya: URL? = nil) {
         self.jev = jev
         self.qwenDecide = qwenDecide
-        self.qwenDecideDirect = qwenDecideDirect
+        self.qwenDecideKey = qwenDecideKey
         self.laya = laya
     }
 }
@@ -415,12 +298,7 @@ public enum DecisionModels {
             return SystemOneDecisionModel(transport: transport, session: session)
         case .localDecide:
             guard let url = endpoints.qwenDecide else { throw DecisionError.notConfigured("Qwen Decide") }
-            return endpoints.qwenDecideDirect
-                ? LlamaDecisionModel(baseURL: url, session: session)
-                // system2 off: the shim's think-then-rescore pass pushes ambiguous categories to ~98%
-                // (docs/assistant/eval.md), hiding exactly the items the review queue exists for.
-                : SystemOneDecisionModel(transport: .selfHosted(baseURL: url, model: "qwen3.8-27b-decide", apiKey: nil),
-                                         extraFields: ["system2": .string("off")], session: session)
+            return SystemOneDecisionModel(transport: .selfHosted(baseURL: url, model: "clef", apiKey: endpoints.qwenDecideKey), session: session)
         case .laya:
             guard let url = endpoints.laya else { throw DecisionError.notConfigured("Laya") }
             return SystemOneDecisionModel(transport: .selfHosted(baseURL: url, model: "jev-latest", apiKey: nil), session: session)

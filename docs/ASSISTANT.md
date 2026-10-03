@@ -55,13 +55,13 @@ The app can run "demo ledger + live model" (Settings → Assistant model, or lau
 
 A decision model reads a state and answers typed questions with probabilities, without writing text (`choice`, `noul` = yes/no, `score`).
 
-**One pathway: Jev's `/v1/systemone`.** A small shim (jevshim, kept outside this repo) is a Jev-compatible front door for Qwen Decide's `/v1/decision`, and Laya speaks `/v1/systemone` natively. So Jev, Qwen Decide and Laya differ only by base URL, model and key. `DecisionModels.make(provider, endpoints)` builds the client. Qwen Decide can also be called directly on `/v1/decision` (`qwenDecideDirect`), which batches up to 256 states per request; it's the faster path for a bulk backfill. Point `budget-assistant decide --shim <its URL>` at a shim to compare it with direct `/v1/decision`. The shim adds its own "system 2" step: below 0.8 it re-asks the chat model to reason, then re-scores.
+**One pathway: Jev's `/v1/systemone`.** The self-hosted decision server on the Olares (Cloudflare Clef, the `llamacppqwen3827bdecide` app) serves it natively, as does Laya. So Jev, Clef and Laya differ only by base URL, model and key. `DecisionModels.make(provider, endpoints)` builds the client. The server ignores the `model` field (the app sends `clef`), answers all of a request's questions jointly in one pass, takes one state per call (the client runs several in parallel), and rejects input over about 4096 tokens with a 413, which the client marks as a failed item rather than stopping the batch. The old `/v1/decision` endpoint is gone; saved addresses ending in `/v1/decision` or `/v1` are normalized to the server root.
 
 Wire formats, as measured in a separate decision-model benchmark:
 
 | Provider | Endpoint | Where it runs | Notes from the benchmark |
 |---|---|---|---|
-| `localDecide` | Qwen3.8-27B Decide, llama.cpp fork `POST /v1/decision` `{instructions, schema, contexts[]}`, batched up to 256 | Olares GPU | Ties Jev on classification; returns only the winner's probability; $0 |
+| `localDecide` | Cloudflare Clef, `POST /v1/systemone` (Jev shape), one state per call | Olares GPU | Returns the full distribution; $0. Earlier measurements below were taken on Qwen Decide's retired `/v1/decision` |
 | `laya` | `POST /v1/systemone` | Olares CPU | Collapses past about 20 options; not recommended for categories |
 | `jev` | OpenRouter `https://openrouter.ai/api/alpha/decisions` (`typesafe/jev-1.13`) or TypeSafe `https://api.typesafe.ai/v1/systemone` (`jev-latest`) | Cloud | Full distribution; about $0.04 per 1,000 decisions |
 

@@ -9,7 +9,7 @@ const LABELS = {
   modelBaseURL: ["Address", "The OpenAI-compatible server Ask and planning use, like your switchboard or llama.cpp on the Olares. Just the address: Budget adds /v1/… itself. Empty gives simple built-in answers."],
   modelAPIKey: ["API key", "Sent as a bearer token, for a server that asks for one. It stays on this server."],
   modelName: ["Model", "The name that server knows the model by. Test lists the names it offers."],
-  decisionBaseURL: ["Address", "The server with /v1/decision, like the llama.cpp decision server on your Olares."],
+  decisionBaseURL: ["Address", "The server with /v1/systemone, like the Clef decision server on your Olares."],
   decisionAPIKey: ["API key", "For that server, if it asks for one."],
   openRouterKey: ["OpenRouter key", "Jev runs in the cloud through OpenRouter. It sees only merchant names and your category list, never amounts, balances or accounts."],
   openRouterZeroRetention: ["Only providers that keep nothing", "Asks OpenRouter to route only to providers with zero data retention."],

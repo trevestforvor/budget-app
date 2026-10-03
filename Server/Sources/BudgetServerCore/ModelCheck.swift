@@ -5,16 +5,16 @@ import FoundationNetworking
 #endif
 
 /// The Models section's Test: tries each job's model the way the job uses it — Ask's chat completion with a one-word
-/// question, categorizing's `/v1/decision` (or Jev) with a made-up coffee charge — and lists the models the chat server
+/// question, categorizing's `/v1/systemone` (or Jev) with a made-up coffee charge — and lists the models the chat server
 /// offers. Nothing from the ledger is sent. Each check gives up after `timeout` seconds.
 enum ModelCheck {
     /// Where categorizing runs, as the Models section offers it.
     enum Categorizing: String, Decodable, Sendable {
         /// Nothing files transactions: everything waits for the person.
         case off
-        /// `/v1/decision` on the chat model's server.
+        /// `/v1/systemone` on the chat model's server.
         case chat
-        /// `/v1/decision` on a server of its own.
+        /// `/v1/systemone` on a server of its own.
         case own
         /// Jev, in the cloud through OpenRouter.
         case jev
@@ -58,7 +58,7 @@ enum ModelCheck {
     static func base(_ url: URL) -> URL {
         var text = url.absoluteString
         while text.hasSuffix("/") { text.removeLast() }
-        for suffix in ["/v1/chat/completions", "/chat/completions", "/v1/decision", "/v1"] where text.lowercased().hasSuffix(suffix) {
+        for suffix in ["/v1/chat/completions", "/chat/completions", "/v1/systemone", "/v1/decision", "/v1"] where text.lowercased().hasSuffix(suffix) {
             text.removeLast(suffix.count)
             break
         }
@@ -118,7 +118,7 @@ enum ModelCheck {
                                                                             : "Add the categorizing model's address.")
             }
             address = decisionBase.absoluteString
-            model = LlamaDecisionModel(baseURL: decisionBase, label: "test", apiKey: setup.decisionKey)
+            model = SystemOneDecisionModel(transport: .selfHosted(baseURL: decisionBase, model: "clef", apiKey: setup.decisionKey))
         case .jev:
             guard let key = setup.openRouterKey else { return Outcome(ok: false, detail: "Jev needs an OpenRouter key.") }
             address = "OpenRouter"
@@ -136,7 +136,7 @@ enum ModelCheck {
                            detail: value.map { "It filed a test coffee charge under “\($0)”." } ?? "It answered, but without a category.")
         } catch {
             return Outcome(ok: false, address: address, milliseconds: ms(since: started),
-                           detail: explain(error, path: setup.categorizing == .jev ? "OpenRouter" : "/v1/decision", key: setup.categorizing == .jev ? setup.openRouterKey : setup.decisionKey,
+                           detail: explain(error, path: setup.categorizing == .jev ? "OpenRouter" : "/v1/systemone", key: setup.categorizing == .jev ? setup.openRouterKey : setup.decisionKey,
                                            decision: setup.categorizing != .jev))
         }
     }
@@ -182,7 +182,7 @@ enum ModelCheck {
             case 401, 403:
                 return key == nil ? "It wants an API key (\(status)). Add one above." : "It turned the API key down (\(status)). Check the key."
             case 404 where decision:
-                return "This server has no /v1/decision (404). Categorizing needs the decision server (the llama.cpp one on your Olares): choose Its own server and put that address in."
+                return "This server has no /v1/systemone (404). Categorizing needs the decision server (the Clef one on your Olares): choose Its own server and put that address in."
             case 404:
                 return "Nothing at \(path) on this server (404). Check the address." + (said.isEmpty ? "" : " It said: \(said)")
             default:

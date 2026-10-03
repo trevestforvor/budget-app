@@ -52,7 +52,7 @@ What stays environment-only: `HOST`, `PORT`, `DASHBOARD_PORT`, `BUDGET_API_TOKEN
 | `POSTGRES_HOST` / `PORT` / `USER` / `PASSWORD` / `DB` | —, 5432, `budget`, —, `budget` | No host = in-memory |
 | `BUDGET_TOKEN_KEY` | — | Base64, 32 bytes. Seals provider access tokens (AES-GCM). No key = linking disabled. **Losing it means relinking every account** |
 | `MODEL_BASE_URL` | — | OpenAI-compatible endpoint for Ask (Qwen on the Olares) |
-| `DECISION_BASE_URL` | `MODEL_BASE_URL` | `/v1/decision` endpoint for categorization |
+| `DECISION_BASE_URL` | `MODEL_BASE_URL` | server with `/v1/systemone` (Clef) for categorization; a trailing `/v1` or `/v1/decision` is ignored |
 | `MODEL_API_KEY` | — | Bearer token for the chat model's server (a router like switchboard or LiteLLM) |
 | `DECISION_API_KEY` | `MODEL_API_KEY` when there's no `DECISION_BASE_URL` of its own | Bearer token for the decision endpoint |
 | `MODEL_NAME` | `qwen3.8-27b` | |

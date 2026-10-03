@@ -129,10 +129,10 @@ public actor LedgerBudgetAPI: BudgetAPI {
     /// The demo connection that waits for a sign-in (balance-only, so no spending figure depends on it).
     static let demoExpiredLinkID = "tidewater"
 
-    /// Demo ledger + live models on the Olares (Qwen serves both chat and /v1/decision).
+    /// Demo ledger + live models on the Olares (chat on `baseURL`, categorizing via /v1/systemone on the same server).
     public static func live(baseURL: URL, model: String = "qwen3.8-27b") -> LedgerBudgetAPI {
         LedgerBudgetAPI(latency: .zero, chatModel: OpenAIChatModel(baseURL: baseURL, model: model),
-                        decisionModel: LlamaDecisionModel(baseURL: baseURL, label: "\(model) · /v1/decision"))
+                        decisionModel: SystemOneDecisionModel(transport: .selfHosted(baseURL: baseURL, model: "clef", apiKey: nil)))
     }
 
     public var state: LedgerState { ledger.state }

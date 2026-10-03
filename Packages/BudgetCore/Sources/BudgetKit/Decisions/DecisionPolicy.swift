@@ -2,7 +2,7 @@ import Foundation
 
 public enum DecisionProvider: String, Hashable, Sendable, Codable, CaseIterable {
     case off
-    /// Qwen3.8-27B Decide on the llama.cpp fork's /v1/decision, on the Olares.
+    /// The self-hosted decision server on the Olares: Cloudflare Clef, POST /v1/systemone.
     case localDecide
     /// Laya on the Olares, /v1/systemone. Weak past ~20 options (see decision-bench).
     case laya

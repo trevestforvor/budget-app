@@ -49,7 +49,7 @@ public actor ServerSettings {
         .init(key: "modelName", group: "Models", label: "Model name", kind: .text, environmentVariable: "MODEL_NAME",
               help: "Sent as `model` to the chat endpoint.", configValue: { $0.modelName }, builtInDefault: "qwen3.8-27b"),
         .init(key: "decisionBaseURL", group: "Models", label: "Decision endpoint", kind: .url, environmentVariable: "DECISION_BASE_URL",
-              help: "Server with /v1/decision for categorizing. Empty = the chat endpoint.",
+              help: "Server with /v1/systemone for categorizing. Empty = the chat endpoint.",
               configValue: { $0.decisionBaseURL == $0.modelBaseURL ? nil : $0.decisionBaseURL?.absoluteString }, builtInDefault: nil),
         .init(key: "decisionAPIKey", group: "Models", label: "Decision endpoint API key", kind: .secret, environmentVariable: "DECISION_API_KEY",
               help: "Sent as a bearer token to the decision endpoint. Empty with no decision endpoint of its own = the chat model's key.",

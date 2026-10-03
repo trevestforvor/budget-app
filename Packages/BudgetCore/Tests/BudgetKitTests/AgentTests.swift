@@ -173,12 +173,4 @@ struct PlanningTests {
     func periods(period: String, label: String) {
         #expect(Fixture.ledger().interval(forPeriod: period)?.label == label)
     }
-
-    @Test("The patched /v1/decision returns full distributions and they're kept")
-    func decisionDistribution() throws {
-        let q = DecisionQuestion.choice(instructions: "?", options: [("dining", ""), ("groceries", "")])
-        let wire = #"{"results":[{"fields":{"category":{"value":"dining","probability":0.99,"probabilities":{"dining":0.99,"groceries":0.01}}}}]}"#
-        let parsed = try LlamaDecisionModel.parse(try JSONValue.parse(Data(wire.utf8)), questions: ["category": q], count: 1, label: "q")
-        #expect(parsed[0].answers["category"]?.distribution == ["dining": 0.99, "groceries": 0.01])
-    }
 }
