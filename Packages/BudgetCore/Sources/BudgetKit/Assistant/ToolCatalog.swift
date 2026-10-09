@@ -194,7 +194,7 @@ public enum ToolCatalog {
                      "note": .string("A note to attach, in the user's words. An empty string removes the note.", maxLength: 500),
                      "merchant": .string("A new merchant name, e.g. \"Blue Bottle\".", minLength: 1, maxLength: 60),
                      "renameSimilar": .boolean("With merchant: also rename every transaction with the same bank descriptor, and future ones."),
-                     "fileSimilar": .boolean("With categoryID: also file every other transaction from the same merchant or with the same bank descriptor, going the same way, under it. Ones the user filed themselves keep their category."),
+                     "fileSimilar": .boolean("With categoryID: also file every other transaction from the same merchant or with the same bank descriptor, going the same way (a purchase's refunds go with it), under it. Ones the user filed themselves keep their category."),
                      "addTags": .array("Tags to add, in the user's words.", of: tag, minItems: 1, maxItems: TransactionTags.maxPerTransaction),
                      "removeTags": .array("Tags to take off.", of: tag, minItems: 1, maxItems: TransactionTags.maxPerTransaction),
                  ], required: ["transactionIDs"], minProperties: 2)),

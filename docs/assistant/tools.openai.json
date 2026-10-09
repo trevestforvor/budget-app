@@ -1089,7 +1089,7 @@
             "type" : "string"
           },
           "fileSimilar" : {
-            "description" : "With categoryID: also file every other transaction from the same merchant or with the same bank descriptor, going the same way, under it. Ones the user filed themselves keep their category.",
+            "description" : "With categoryID: also file every other transaction from the same merchant or with the same bank descriptor, going the same way (a purchase's refunds go with it), under it. Ones the user filed themselves keep their category.",
             "type" : "boolean"
           },
           "isHidden" : {

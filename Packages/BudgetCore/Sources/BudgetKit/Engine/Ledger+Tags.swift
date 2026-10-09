@@ -59,7 +59,10 @@ extension Ledger {
     // MARK: Similar rows
 
     /// Rows like `chosen` that filing them under `categoryID` would also reach (`EditTransactions.fileSimilar`): the same
-    /// merchant or the same bank descriptor, money going the same way. A descriptor that names no merchant ("Withdrawal")
+    /// merchant or the same bank descriptor, money going the same way — plus, when a purchase goes to a spending category,
+    /// that merchant's refunds filed under spending, so each category stays net of its own refunds (a refund left behind
+    /// would shrink the old category and overstate the new one). Money in under a money-in category never follows a
+    /// purchase, and money out never follows money in. A descriptor that names no merchant ("Withdrawal")
     /// and a payment app ("Venmo", "PayPal", where the merchant is a person or hidden) reach nothing; a matched transfer
     /// stays one unless it's being filed as a transfer; rows already filed there and settled are left alone, and rows the
     /// person filed themselves keep their category (`yours` counts those that would otherwise move).
@@ -77,14 +80,19 @@ extension Ledger {
         }
         guard !descriptors.isEmpty || !merchants.isEmpty else { return ([], 0) }
         let skip = Set(chosen)
+        let targetIsSpending = category(categoryID)?.countsAsSpending == true
+        func alike(_ row: LedgerTransaction, isOutflow: Bool) -> Bool {
+            merchants.contains(Key(text: RecurringChoice.key(row.merchant), isOutflow: isOutflow))
+                || (!Descriptor.isGeneric(row.rawDescription)
+                    && descriptors.contains(Key(text: Descriptor.normalize(row.rawDescription).trimmingCharacters(in: .whitespaces), isOutflow: isOutflow)))
+        }
         var reached: [Int] = [], yours = 0
         for index in transactions.indices where !skip.contains(index) {
             let row = transactions[index], out = row.amount.isNegative
-            guard row.amount.minorUnits != 0, !Self.isPaymentApp(row),
-                  merchants.contains(Key(text: RecurringChoice.key(row.merchant), isOutflow: out))
-                    || (!Descriptor.isGeneric(row.rawDescription)
-                        && descriptors.contains(Key(text: Descriptor.normalize(row.rawDescription).trimmingCharacters(in: .whitespaces), isOutflow: out)))
-            else { continue }
+            guard row.amount.minorUnits != 0, !Self.isPaymentApp(row) else { continue }
+            // A refund: money back from a merchant whose purchases are going to a spending category, filed under spending now.
+            let isRefund = !out && targetIsSpending && row.categorization.flatMap { category($0.categoryID) }?.countsAsSpending == true
+            guard alike(row, isOutflow: out) || (isRefund && alike(row, isOutflow: true)) else { continue }
             if row.transferPeerID != nil, categoryID != "transfer" { continue }
             switch Self.refiling(row, under: categoryID) {
             case .moves?, .leavesReview?: reached.append(index)

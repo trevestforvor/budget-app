@@ -176,7 +176,7 @@ public struct DSTransactionRow: View {
     /// The person's tags, marked with the tag glyph so they never read as a status: two, then how many more, on one line.
     /// Neutral ink (a label, not data), a tier quieter on a muted row.
     private var tagLine: some View {
-        HStack(spacing: 4) {
+        HStack(spacing: DSSpace.xxs) {
             ForEach(tags.prefix(2), id: \.self) { DSTag($0, systemImage: "tag", tint: isMuted ? Color.ds.inkTertiary : Color.ds.inkSecondary).lineLimit(1) }
             if tags.count > 2 { DSTag("+\(tags.count - 2)", tint: Color.ds.inkTertiary).fixedSize() }
         }

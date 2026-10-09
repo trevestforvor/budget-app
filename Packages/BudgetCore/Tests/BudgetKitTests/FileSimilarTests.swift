@@ -26,16 +26,17 @@ struct FileSimilarTests {
         ]
     }
 
-    @Test("Re-filing one row offers the rest from its merchant or descriptor, going the same way; the person's own answers stay")
+    @Test("Re-filing one row offers the rest from its merchant or descriptor, going the same way, with its refunds; the person's own answers stay")
     func preview() throws {
         let ledger = Rows.ledger(Self.rows)
         let similar = ledger.similarRows(to: [0], under: "dining")
-        #expect(Set(similar.rows.map { ledger.transactions[$0].id }) == ["b", "waiting", "online"])
+        // The refund follows the purchases, so Dining stays net of it and Shopping isn't left holding it.
+        #expect(Set(similar.rows.map { ledger.transactions[$0].id }) == ["b", "waiting", "online", "refund"])
         #expect(similar.yours == 1)
         let preview = try ledger.preview(Rows.fileSimilar(["a"], "dining"))
-        #expect(preview.title == "File 4 transactions under Dining")
-        #expect(preview.matchCount == 4 && preview.changeCount == 3) // "waiting" is already under Dining; it leaves review
-        #expect(preview.detail?.contains("That includes 3 more like it: the same merchant or bank description.") == true)
+        #expect(preview.title == "File 5 transactions under Dining")
+        #expect(preview.matchCount == 5 && preview.changeCount == 4) // "waiting" is already under Dining; it leaves review
+        #expect(preview.detail?.contains("That includes 4 more like it, 1 of them a refund: the same merchant or bank description.") == true)
         #expect(preview.detail?.contains("The 1 you filed yourself keeps its category.") == true)
         // Without fileSimilar, only the row named.
         #expect(try ledger.preview(Rows.edit(["a"], categoryID: "dining")).matchCount == 1)
@@ -46,13 +47,12 @@ struct FileSimilarTests {
         var ledger = Rows.ledger(Self.rows, suggestions: ["waiting": [CategorySuggestion(categoryID: "dining", confidence: 0.4)]])
         let before = ledger.transactions
         let result = try ledger.perform(Rows.fileSimilar(["a"], "dining"))
-        #expect(result.message == "Filed 4 transactions under Dining.")
-        #expect(result.affectedTransactions == 4)
-        for id in ["a", "b", "waiting", "online"] {
+        #expect(result.message == "Filed 5 transactions under Dining.")
+        #expect(result.affectedTransactions == 5)
+        for id in ["a", "b", "waiting", "online", "refund"] {
             #expect(ledger.row(id)?.categorization == Categorization(categoryID: "dining", confidence: 1, tier: .user, needsReview: false))
         }
         #expect(ledger.row("mine")?.categorization?.categoryID == "groceries")
-        #expect(ledger.row("refund")?.categorization?.categoryID == "shopping")
         #expect(ledger.row("other")?.categorization?.categoryID == "shopping")
         #expect(ledger.reviewItems.isEmpty)
         _ = try ledger.perform(try #require(result.undo))
@@ -82,6 +82,25 @@ struct FileSimilarTests {
         #expect(throws: BudgetAPIError.rejected("Filing similar transactions needs a category.")) {
             try ledger.preview(.editTransactions(EditTransactions(transactionIDs: ["v1"], isHidden: true, fileSimilar: true)))
         }
+    }
+
+    @Test("Money in follows a purchase only as a refund under spending; nothing follows into a money-in category")
+    func directions() throws {
+        let rows = [
+            Rows.row("buy", "card", 1, -40, "ACME STORE 0101", "shopping"),
+            Rows.row("buy2", "card", 2, -25, "ACME STORE 0102", "shopping"),
+            Rows.row("back", "card", 3, 15, "ACME STORE 0103", "shopping"),
+            Rows.row("pay", "chk", 4, 2000, "ACME STORE 0104", "income"),
+            Rows.row("odd", "card", 5, 5, "ACME STORE 0105", nil),
+        ]
+        let ledger = Rows.ledger(rows)
+        func ids(_ s: (rows: [Int], yours: Int)) -> Set<String> { Set(s.rows.map { ledger.transactions[$0].id }) }
+        // A purchase to Groceries: the other purchase and the refund under Shopping; not the paycheck, not the unfiled credit.
+        #expect(ids(ledger.similarRows(to: [0], under: "groceries")) == ["buy2", "back"])
+        // Filing money in under Income reaches other money in only, never the purchases.
+        #expect(ids(ledger.similarRows(to: [3], under: "income")) == ["back", "odd"])
+        // A purchase filed as a transfer (not spending) takes no refunds along.
+        #expect(ids(ledger.similarRows(to: [0], under: "transfer")) == ["buy2"])
     }
 
     @Test("The demo has rows to file together: a Blue Bottle visit reaches the others")

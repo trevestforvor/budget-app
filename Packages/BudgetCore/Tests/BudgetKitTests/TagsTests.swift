@@ -207,6 +207,20 @@ struct TagAskTests {
         #expect(Grounding.ungroundedAmounts(in: reply.text, allowed: reply.figures.map(\.value)).isEmpty, "\(reply.text)")
     }
 
+    @Test("A tag answers only as its own words, and a tag spelled like a category leaves the question to the category")
+    func tagIntentScope() async throws {
+        #expect(DemoAskEngine.containsWords("how much for the work trip?", "work"))
+        #expect(!DemoAskEngine.containsWords("what's my network bill?", "work"))
+        #expect(DemoAskEngine.containsWords("work", "work") && !DemoAskEngine.containsWords("work2", "work"))
+        let api = Fixture.api()
+        let travel = try #require(Fixture.ledger().transactions.first { $0.categorization?.categoryID == "dining" && !$0.isPending })
+        _ = try await api.perform(Rows.tag([travel.id], add: ["Travel", "Work"]))
+        #expect(try await api.ask("How much did I spend on travel last month?", conversationID: nil).toolCalls.map(\.name) != ["sumByTag"])
+        #expect(try await api.ask("What's my network spending?", conversationID: nil).toolCalls.map(\.name) != ["sumByTag"])
+        #expect(try await api.ask("What did the Travel tag cost?", conversationID: nil).toolCalls.map(\.name) == ["sumByTag"])
+        #expect(try await api.ask("How much went on work?", conversationID: nil).toolCalls.map(\.name) == ["sumByTag"])
+    }
+
     @Test("Tag edits round-trip as tool calls", arguments: [
         AppAction.editTransactions(EditTransactions(transactionIDs: ["tx-1", "tx-2"], addTags: ["Austin trip"])),
         AppAction.editTransactions(EditTransactions(transactionIDs: ["tx-3"], removeTags: ["Work"])),
@@ -215,5 +229,8 @@ struct TagAskTests {
     func roundTrip(action: AppAction) throws {
         let decoded = try AppAction(toolName: action.toolName, arguments: try action.argumentsJSON(), categoryIDs: DemoLedger.categoryList.map(\.id))
         #expect(decoded == action)
+        // The wire form the app posts to /v1/actions carries the new fields too.
+        let wire = try JSONEncoder().encode(action)
+        #expect(try JSONDecoder().decode(AppAction.self, from: wire) == action)
     }
 }

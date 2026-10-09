@@ -49,8 +49,7 @@ struct FileSimilarSheet: View {
             List {
                 DSListSection(footer: "Undo puts every one back.") {
                     DSToggleRow("Also file \(others) as \(offer.category.name)",
-                                detail: ["\(row.merchant), \(row.amount.isNegative ? "money out" : "money in"), filed some other way now. Same merchant or bank description.",
-                                         offer.note].compactMap { $0 }.joined(separator: " "),
+                                detail: [similarText, offer.note].compactMap { $0 }.joined(separator: " "),
                                 isOn: $filesSimilar)
                         .accessibilityIdentifier("filesSimilar")
                     DSToggleRow("Always file these this way",
@@ -87,6 +86,12 @@ struct FileSimilarSheet: View {
         }
         .presentationDetents([.medium, .large])
         .presentationBackground(Color.ds.canvas)
+    }
+
+    /// Which rows those are: a purchase filed as spending takes its refunds along, so the category stays net of them.
+    private var similarText: String {
+        let refunds = row.amount.isNegative && offer.category.countsAsSpending
+        return "\(row.merchant), \(row.amount.isNegative ? "money out" : "money in")\(refunds ? " and its refunds" : ""), filed some other way now. Same merchant or bank description."
     }
 
     private var title: String {

@@ -34,6 +34,8 @@ struct ActivityView: View {
     /// One row re-filed from its menu, filed (or offered with the rows like it) once the picker has gone.
     @State private var pendingPick: (row: LedgerTransaction, category: BudgetCategory)?
     @State private var similarOffer: SimilarOffer?
+    /// The server can write the CSV (0.5.0 on); an older one has no export to offer.
+    @State private var canExport = false
     @State private var toast: DSToastMessage?
     @State private var workingGroups: Set<String> = []
     @State private var isWorking = false
@@ -150,7 +152,7 @@ struct ActivityView: View {
                 }
             }
             .toolbar {
-                if !isSelecting, let tools = app.transactionTools {
+                if !isSelecting, canExport, let tools = app.transactionTools {
                     ToolbarItem(placement: .topBarTrailing) {
                         ShareLink(item: TransactionsCSV(filter: effectiveFilter, tools: tools),
                                   preview: SharePreview(effectiveFilter.narrows ? "Transactions (filtered).csv" : "Transactions.csv")) {
@@ -196,6 +198,7 @@ struct ActivityView: View {
             app.opensFirstReview = false
             triage = TriageStart()
         }
+        .task(id: app.revision) { canExport = await app.serverSupports(ServerStatus.transactionExportSince) }
         .task(id: "\(effectiveFilter.hashValue)|\(app.revision)") {
             if !query.isEmpty, loadedFilter?.search != effectiveFilter.search { try? await Task.sleep(for: .milliseconds(250)) }
             guard !Task.isCancelled else { return }

@@ -1,10 +1,18 @@
 import Foundation
 
 extension DemoAskEngine {
-    /// "How much did the Austin trip cost?": a question naming one of the ledger's tags answers from `sumByTag`.
+    /// "How much did the Austin trip cost?": a question naming one of the ledger's tags answers from `sumByTag`. The tag
+    /// has to stand as its own words ("work" is not in "network"), and one spelled like a category ("Travel") leaves the
+    /// question to the category unless it says "tag".
     func tagIntent(_ q: String, _ cid: String) -> AskReply? {
         guard let tags = try? ledger.tagSummaries() else { return nil }
-        guard let match = tags.filter({ $0.tag.count >= 3 && q.contains($0.tag.lowercased()) }).max(by: { $0.tag.count < $1.tag.count }),
+        let saysTag = q.contains("tag")
+        let categoryNames = Set(ledger.activeCategories.map { $0.name.lowercased() })
+        let named = tags.filter { summary in
+            let key = summary.tag.lowercased()
+            return key.count >= 3 && Self.containsWords(q, key) && (saysTag || !categoryNames.contains(key))
+        }
+        guard let match = named.max(by: { $0.tag.count < $1.tag.count }),
               let summary = try? ledger.tagSummary(match.tag) else {
             return q.contains("tagged") || q.contains("my tags") ? allTags(tags, cid) : nil
         }
@@ -20,6 +28,18 @@ extension DemoAskEngine {
         if summary.income.minorUnits != 0 { figures.append(Figure(id: "tag-income", label: "Income", detail: nil, value: summary.income)) }
         return reply(cid, text: text, figures: figures, tools: [call("sumByTag", ["tag": .string(summary.tag)])],
                      followUps: ["What have I tagged?"])
+    }
+
+    /// Whether `phrase` appears in `text` with no letter or digit right before or after it.
+    static func containsWords(_ text: String, _ phrase: String) -> Bool {
+        var start = text.startIndex
+        while let range = text.range(of: phrase, range: start..<text.endIndex) {
+            let before = range.lowerBound == text.startIndex ? nil : text[text.index(before: range.lowerBound)]
+            let after = range.upperBound == text.endIndex ? nil : text[range.upperBound]
+            if !(before?.isLetter ?? false), !(before?.isNumber ?? false), !(after?.isLetter ?? false), !(after?.isNumber ?? false) { return true }
+            start = text.index(after: range.lowerBound)
+        }
+        return false
     }
 
     /// "What have I tagged?": every tag with its spending.

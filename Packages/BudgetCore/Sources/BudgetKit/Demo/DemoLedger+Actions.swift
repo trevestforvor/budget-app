@@ -674,7 +674,12 @@ extension DemoLedger {
         }
         var notes: [String] = []
         if !plan.similar.isEmpty {
-            notes.append("That includes \(plan.similar.count == 1 ? "1 more like \(rows.count == 1 ? "it" : "them")" : "\(plan.similar.count) more like \(rows.count == 1 ? "it" : "them")"): the same merchant or bank description.")
+            // Refunds that follow the purchases (money going the other way from every chosen row).
+            let refunds = plan.similar.filter { index in !rows.contains { $0.amount.isNegative == transactions[index].amount.isNegative } }.count
+            let more = "\(plan.similar.count) more like \(rows.count == 1 ? "it" : "them")"
+            let refundNote = refunds == 0 ? "" : refunds == plan.similar.count ? (refunds == 1 ? ", a refund" : ", all refunds")
+                : refunds == 1 ? ", 1 of them a refund" : ", \(refunds) of them refunds"
+            notes.append("That includes \(more)\(refundNote): the same merchant or bank description.")
         }
         if plan.similarYours > 0 {
             notes.append(plan.similarYours == 1 ? "The 1 you filed yourself keeps its category." : "The \(plan.similarYours) you filed yourself keep their category.")

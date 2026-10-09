@@ -225,9 +225,9 @@ public struct EditTransactions: Hashable, Sendable, Codable {
     /// Tags to take off every row that has them. Server 0.5.0.
     public var removeTags: [String]?
     /// With `categoryID`: also file every other row like these — the same merchant or the same bank descriptor, money
-    /// going the same way — under it. Rows the person filed themselves keep their category, a matched transfer stays
-    /// one unless it's being filed as a transfer, and a generic descriptor ("Withdrawal") or a payment app's name
-    /// ("Venmo") reaches nothing on its own. Server 0.5.0.
+    /// going the same way (and a purchase's refunds, when it goes to a spending category) — under it. Rows the person
+    /// filed themselves keep their category, a matched transfer stays one unless it's being filed as a transfer, and a
+    /// generic descriptor ("Withdrawal") or a payment app's name ("Venmo") reaches nothing on its own. Server 0.5.0.
     public var fileSimilar: Bool?
 
     public init(transactionIDs: [String], categoryID: String? = nil, acceptGuess: Bool? = nil, isHidden: Bool? = nil,

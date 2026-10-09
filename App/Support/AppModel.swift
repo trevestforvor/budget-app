@@ -198,6 +198,14 @@ final class AppModel {
         }
     }
 
+    /// Whether the server is `minimum` or newer, for showing a feature an older one can't answer (always in the demo;
+    /// false while the server can't be asked).
+    func serverSupports(_ minimum: String) async -> Bool {
+        guard !isDemo else { return true }
+        if serverVersion == nil { serverVersion = try? await api.serverStatus().version }
+        return serverVersion.map { ServerStatus.version($0, isAtLeast: minimum) } ?? false
+    }
+
     /// Opportunity cost from anywhere (the Home button, the Check a Price shortcut). Settings is closed first: it's
     /// a sheet too, and two can't be up at once.
     func openOpportunity() {

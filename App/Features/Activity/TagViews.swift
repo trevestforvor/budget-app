@@ -335,7 +335,8 @@ struct TransactionsCSV: Transferable {
     static var transferRepresentation: some TransferRepresentation {
         FileRepresentation(exportedContentType: .commaSeparatedText) { export in
             let data = try await export.tools.exportCSV(export.filter)
-            let day = Date.now.formatted(.iso8601.year().month().day())
+            // Today where the person is (the ISO style alone would date it in UTC, a day ahead on a US evening).
+            let day = Date.now.formatted(Date.ISO8601FormatStyle(timeZone: .current).year().month().day())
             let url = FileManager.default.temporaryDirectory.appending(path: "Budget transactions \(day).csv")
             try data.write(to: url, options: .atomic)
             return SentTransferredFile(url)
