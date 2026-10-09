@@ -125,16 +125,25 @@ public struct DSTransactionRow: View {
             }
             Spacer(minLength: DSSpace.xs)
             if isHidden { hiddenTag }
-            VStack(alignment: .trailing, spacing: 4) {
-                amountText
-                if isPending { pendingTag }
-                if let confidence, confidence != .auto {
-                    DSConfidenceBadge(confidence)
+            // Every row keeps the dot's slot, so amounts and Pending line up down a list whether or not a row asks.
+            HStack(spacing: Self.reviewSlotGap) {
+                VStack(alignment: .trailing, spacing: 4) {
+                    amountText
+                    if isPending { pendingTag }
+                    if let confidence, confidence != .auto {
+                        DSConfidenceBadge(confidence)
+                    }
                 }
+                reviewDot
+                    .opacity(needsReview ? 1 : 0)
+                    .frame(width: Self.reviewSlot)
             }
-            if needsReview { reviewDot }
         }
     }
+
+    /// The review dot's slot at the row's trailing edge, and its gap from the amount.
+    static let reviewSlot: CGFloat = 6
+    static let reviewSlotGap: CGFloat = 6
 
     /// Accessibility sizes: the title and subtitle get the full width and wrap; the amount and
     /// the status marks move to their own line beneath them.
@@ -306,5 +315,76 @@ public struct DSToolTrace: View {
         }
         .foregroundStyle(Color.ds.inkTertiary)
         .accessibilityLabel("Computed by the ledger tool \(name)")
+    }
+}
+
+/// A category's money in a breakdown: its wash glyph, its name and a line under it, and the amount in ink — with an
+/// optional line under the amount (a change, an arrow delta). The one row for "by category" lists (a recap's biggest
+/// changes, a tag's categories), so they never mix a settings row's filled tile and grey value with transaction rows.
+/// At accessibility sizes the amount moves under the name.
+public struct DSCategoryAmountRow<Below: View>: View {
+    private let title: String
+    private let detail: String?
+    private let systemImage: String
+    private let tone: DSTone
+    private let amount: Decimal
+    private let currencyCode: String
+    private let below: Below
+    @Environment(\.dynamicTypeSize) private var dynamicTypeSize
+
+    public init(_ title: String, detail: String? = nil, systemImage: String, tone: DSTone, amount: Decimal, currencyCode: String = "USD",
+                @ViewBuilder below: () -> Below) {
+        self.title = title
+        self.detail = detail
+        self.systemImage = systemImage
+        self.tone = tone
+        self.amount = amount
+        self.currencyCode = currencyCode
+        self.below = below()
+    }
+
+    public var body: some View {
+        HStack(alignment: dynamicTypeSize.isAccessibilitySize ? .top : .center, spacing: DSSpace.sm) {
+            DSGlyph(systemImage: systemImage, tone: tone)
+            if dynamicTypeSize.isAccessibilitySize {
+                VStack(alignment: .leading, spacing: 3) {
+                    label
+                    figure(alignment: .leading)
+                }
+                Spacer(minLength: 0)
+            } else {
+                label
+                Spacer(minLength: DSSpace.xs)
+                figure(alignment: .trailing)
+            }
+        }
+        .padding(.vertical, DSSpace.xs)
+        .frame(minHeight: DSSize.listRow)
+        .contentShape(Rectangle())
+        .accessibilityElement(children: .combine)
+    }
+
+    private var label: some View {
+        VStack(alignment: .leading, spacing: 3) {
+            Text(title).dsFont(.body).foregroundStyle(Color.ds.ink)
+                .fixedSize(horizontal: false, vertical: true)
+            if let detail {
+                Text(detail).dsFont(.caption).foregroundStyle(Color.ds.inkSecondary)
+                    .fixedSize(horizontal: false, vertical: true)
+            }
+        }
+    }
+
+    private func figure(alignment: HorizontalAlignment) -> some View {
+        VStack(alignment: alignment, spacing: 3) {
+            DSAmountText(amount, currencyCode: currencyCode, sign: .magnitude)
+            below
+        }
+    }
+}
+
+extension DSCategoryAmountRow where Below == EmptyView {
+    public init(_ title: String, detail: String? = nil, systemImage: String, tone: DSTone, amount: Decimal, currencyCode: String = "USD") {
+        self.init(title, detail: detail, systemImage: systemImage, tone: tone, amount: amount, currencyCode: currencyCode) { EmptyView() }
     }
 }

@@ -264,7 +264,7 @@ struct SettingsView: View {
                     connectionTag
                 }
             }
-            .listRowBackground(Color.ds.surface)
+            .listRowBackground(DSListRowChrome(position: .only))
             .listRowInsets(EdgeInsets(top: 0, leading: DSSpace.md, bottom: 0, trailing: DSSpace.md))
             .accessibilityIdentifier("settingsAdvanced")
         } footer: {

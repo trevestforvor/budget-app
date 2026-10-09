@@ -75,6 +75,13 @@ struct ComponentLogicTests {
         #expect(DSMonthBars.isOver(451, target: 450))
     }
 
+    @Test("Month bars stay full strength until a month is picked; then only the others step back")
+    func monthBarOpacity() {
+        #expect(DSMonthBars.opacity(selected: false, hasSelection: false) == 1)
+        #expect(DSMonthBars.opacity(selected: true, hasSelection: true) == 1)
+        #expect(DSMonthBars.opacity(selected: false, hasSelection: true) == 0.55)
+    }
+
     @Test("A tap anywhere in a month picks that month's bar, else the nearest")
     func monthBarNearest() throws {
         let calendar = Self.calendar

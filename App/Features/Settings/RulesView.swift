@@ -346,7 +346,7 @@ struct RuleEditorSheet: View {
 
     @ViewBuilder
     private var previewSection: some View {
-        Section {
+        DSListSection(previewHeader) {
             if let previewProblem {
                 SettingsNote(text: previewProblem, tint: Color.ds.amber, systemImage: "info.circle")
             } else if let preview {
@@ -369,11 +369,7 @@ struct RuleEditorSheet: View {
             } else {
                 SettingsNote(text: isPreviewing ? "Checking the ledger…" : "Add some text or an account to match, and a category, to see what it catches.")
             }
-        } header: {
-            DSEyebrow(previewHeader)
         }
-        .listRowBackground(Color.ds.surface)
-        .listRowInsets(EdgeInsets(top: 0, leading: DSSpace.md, bottom: 0, trailing: DSSpace.md))
     }
 
     private var saveBar: some View {

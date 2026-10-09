@@ -419,13 +419,16 @@ public struct DSTag: View {
 
     /// "Over" said in words. Caution is also a category tone (orchid), so an over-target state
     /// never relies on colour alone: pair the caution tint with this tag or a marker.
+    /// The space between a tag's glyph and its words.
+    static let glyphGap: CGFloat = 6
+
     public static func over(_ text: String = "Over") -> DSTag {
         DSTag(text, systemImage: "exclamationmark", tint: Color.ds.caution)
     }
 
     public var body: some View {
         if let text, dynamicTypeSize.isAccessibilitySize {
-            HStack(alignment: .firstTextBaseline, spacing: 4) {
+            HStack(alignment: .firstTextBaseline, spacing: DSTag.glyphGap) {
                 if let systemImage {
                     Image(systemName: systemImage).fontWeight(.semibold).accessibilityHidden(true)
                 }
@@ -437,7 +440,8 @@ public struct DSTag: View {
             .padding(.vertical, 4)
             .background { RoundedRectangle(cornerRadius: DSRadius.tag, style: .continuous).fill(tint.opacity(0.12)) }
         } else {
-            HStack(spacing: 4) {
+            // A glyph next to words gets a clear gap: at 4pt a narrow one ("!") read as part of the label ("!1 TO ACT ON").
+            HStack(spacing: DSTag.glyphGap) {
                 if let systemImage {
                     Image(systemName: systemImage)
                         .font(.system(size: text == nil ? 10 : 9, weight: .semibold))

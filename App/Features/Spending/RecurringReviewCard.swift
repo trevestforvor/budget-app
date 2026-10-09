@@ -27,7 +27,6 @@ struct RecurringReviewCard: View {
                                 .accessibilityLabel("\(candidates.count + stopped.count) to review")
                         }
                     }
-                    .padding(.horizontal, DSSpace.md)
                     .padding(.top, DSSpace.md)
                     .padding(.bottom, DSSpace.xs)
                     ForEach(stopped) { item in
@@ -60,9 +59,10 @@ struct RecurringReviewCard: View {
                                 .accessibilityIdentifier("recurringPutBackStopped")
                                 .accessibilityLabel("Put \(merchant) back on recurring")
                         }
-                        .padding(.horizontal, DSSpace.md)
                     }
                 }
+                // Padding on the stack, not each row, so the dividers are inset like the text (as Home's Recent).
+                .padding(.horizontal, DSSpace.md)
                 .padding(.bottom, DSSpace.xs)
             }
             .accessibilityElement(children: .contain)
@@ -95,7 +95,6 @@ struct RecurringReviewCard: View {
                 VStack(alignment: .leading, spacing: DSSpace.xs) { buttons() }
             }
         }
-        .padding(.horizontal, DSSpace.md)
         .padding(.vertical, DSSpace.md)
     }
 

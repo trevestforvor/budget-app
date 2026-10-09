@@ -136,28 +136,19 @@ struct MonthlyRecapSheet: View {
                 VStack(spacing: 0) {
                     ForEach(Array(recap.categoryChanges.enumerated()), id: \.element.id) { index, change in
                         let category = app.category(change.categoryID)
-                        HStack(spacing: DSSpace.sm) {
-                            DSGlyph(systemImage: category?.symbol ?? "circle", tone: CategoryStyle.tone(for: category))
-                            VStack(alignment: .leading, spacing: 3) {
-                                Text(change.name).dsFont(.body).foregroundStyle(Color.ds.ink)
-                                Text("\(change.previous.formatted(fractionDigits: 0)) the month before")
-                                    .dsFont(.caption).foregroundStyle(Color.ds.inkSecondary)
-                            }
-                            Spacer(minLength: DSSpace.xs)
-                            VStack(alignment: .trailing, spacing: 3) {
-                                DSAmountText(change.spent.decimal, currencyCode: change.spent.currencyCode, sign: .magnitude)
-                                Label(change.change.magnitude.formatted(fractionDigits: 0),
-                                      systemImage: change.change.isNegative ? "arrow.down" : "arrow.up")
-                                    .dsFont(.caption).foregroundStyle(Color.ds.inkSecondary)
-                            }
+                        DSCategoryAmountRow(change.name, detail: "\(change.previous.formatted(fractionDigits: 0)) the month before",
+                                            systemImage: category?.symbol ?? "circle", tone: CategoryStyle.tone(for: category),
+                                            amount: change.spent.decimal, currencyCode: change.spent.currencyCode) {
+                            Label(change.change.magnitude.formatted(fractionDigits: 0),
+                                  systemImage: change.change.isNegative ? "arrow.down" : "arrow.up")
+                                .dsFont(.caption).foregroundStyle(Color.ds.inkSecondary)
                         }
-                        .padding(.horizontal, DSSpace.md)
-                        .frame(minHeight: DSSize.listRow)
-                        .accessibilityElement(children: .combine)
                         .accessibilityLabel("\(change.name): \(change.spent.formatted()), \(change.change.isNegative ? "down" : "up") \(change.change.magnitude.formatted()) on the month before")
                         if index < recap.categoryChanges.count - 1 { DSDivider() }
                     }
                 }
+                // Padding on the stack, not the rows, so the dividers are inset like the text (as Home's Recent).
+                .padding(.horizontal, DSSpace.md)
                 .padding(.vertical, DSSpace.xxs)
             }
         }

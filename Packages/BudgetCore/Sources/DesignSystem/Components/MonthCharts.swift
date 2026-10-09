@@ -73,11 +73,17 @@ public struct DSMonthBars: View {
     }
 
     private func color(for bar: DSMonthBar) -> Color {
-        let selected = isSelected(bar.month)
-        if Self.isOver(bar.value, target: target) { return Color.ds.caution.opacity(selected ? 1 : 0.55) }
+        let opacity = Self.opacity(selected: isSelected(bar.month), hasSelection: selection != nil)
+        if Self.isOver(bar.value, target: target) { return Color.ds.caution.opacity(opacity) }
         if bar.value <= 0 { return Palette.steel.color }
-        // Every month keeps its tone; the selected one is full strength (opacity is fine on a mark that isn't text).
-        return tone.onCanvas.opacity(selected ? 1 : 0.55)
+        // Every month keeps its tone at full strength; only once a month is picked do the others step back
+        // (opacity is fine on a mark that isn't text). Nothing picked, nothing dims: the tone stays saturated.
+        return tone.onCanvas.opacity(opacity)
+    }
+
+    /// Full strength unless another month is selected.
+    nonisolated static func opacity(selected: Bool, hasSelection: Bool) -> Double {
+        hasSelection && !selected ? 0.55 : 1
     }
 
     private var domain: ClosedRange<Double> {

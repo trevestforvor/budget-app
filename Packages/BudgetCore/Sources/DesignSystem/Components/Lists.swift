@@ -178,10 +178,14 @@ public struct DSToggleRow: View {
     }
 }
 
-/// A section of a `.dsGroupedList()`: a `DSEyebrow` header, rows on `surface` (flat: a gradient
-/// would band down a long list) with quiet 5% separators and 16pt side insets, and an optional caption footer. Row backgrounds, separators
-/// and insets only reach rows through their section, which is why this exists rather than the
-/// list modifier doing it. Plain content (a `Text`, a `TextField`) still gets the 52pt minimum.
+/// A section of a `.dsGroupedList()`: a `DSEyebrow` header, rows on a card like `DSCard`'s — `surface` (flat: a
+/// gradient would band down a long list) at `DSRadius.card` with the lit edge (G1) — quiet 5% separators and 16pt side
+/// insets, and an optional caption footer. Row backgrounds, separators and insets only reach rows through their
+/// section, which is why this exists rather than the list modifier doing it. Plain content (a `Text`, a `TextField`)
+/// still gets the 52pt minimum.
+///
+/// A list draws each row's background on its own, so the card is drawn a row at a time (`DSListRowChrome`): the first
+/// row carries the top corners and the brightest edge, the last the bottom corners, and every row its share of the sides.
 public struct DSListSection<Content: View>: View {
     private let title: String?
     private let footer: String?
@@ -195,11 +199,15 @@ public struct DSListSection<Content: View>: View {
 
     public var body: some View {
         Section {
-            content
-                .listRowBackground(Color.ds.surface)
-                .listRowSeparatorTint(Color.ds.divider)
-                // Rows bring their own 52pt height and padding; the list's vertical insets would double it.
-                .listRowInsets(EdgeInsets(top: 0, leading: DSSpace.md, bottom: 0, trailing: DSSpace.md))
+            Group(subviews: content) { rows in
+                ForEach(Array(rows.enumerated()), id: \.element.id) { index, row in
+                    row
+                        .listRowBackground(DSListRowChrome(position: .init(index: index, count: rows.count)))
+                        .listRowSeparatorTint(Color.ds.divider)
+                        // Rows bring their own 52pt height and padding; the list's vertical insets would double it.
+                        .listRowInsets(EdgeInsets(top: 0, leading: DSSpace.md, bottom: 0, trailing: DSSpace.md))
+                }
+            }
         } header: {
             if let title { DSEyebrow(title) }
         } footer: {
@@ -212,14 +220,65 @@ public struct DSListSection<Content: View>: View {
     }
 }
 
+/// One row's share of a `DSListSection` card.
+public struct DSListRowChrome: View {
+    public enum Position: Equatable, Sendable {
+        case only, first, middle, last
+
+        public init(index: Int, count: Int) {
+            self = count <= 1 ? .only : index == 0 ? .first : index == count - 1 ? .last : .middle
+        }
+
+        var roundsTop: Bool { self == .only || self == .first }
+        var roundsBottom: Bool { self == .only || self == .last }
+
+        /// The lit edge's opacity at this row's top and bottom: the card's G1 gradient, bright along its top and
+        /// settling down the sides.
+        var edgeOpacity: (top: Double, bottom: Double) {
+            switch self {
+            case .only: (0.12, 0.04)
+            case .first: (0.12, 0.05)
+            case .middle: (0.05, 0.05)
+            case .last: (0.05, 0.04)
+            }
+        }
+    }
+
+    let position: Position
+
+    public init(position: Position) { self.position = position }
+
+    public var body: some View {
+        // The card's shape, run past the row's open ends and clipped to the row, so the sides meet the next row's
+        // with no seam and no line across the card.
+        let overrun: CGFloat = DSRadius.card * 2
+        let shape = RoundedRectangle(cornerRadius: DSRadius.card, style: .continuous)
+        let edge = position.edgeOpacity
+        Color.clear
+            .overlay {
+                ZStack {
+                    shape.fill(Color.ds.surface)
+                    shape.strokeBorder(LinearGradient(colors: [.white.opacity(edge.top), .white.opacity(edge.bottom)],
+                                                      startPoint: .top, endPoint: .bottom), lineWidth: 1)
+                }
+                .padding(.top, position.roundsTop ? 0 : -overrun)
+                .padding(.bottom, position.roundsBottom ? 0 : -overrun)
+            }
+            .clipped()
+            .allowsHitTesting(false)
+    }
+}
+
 extension View {
     /// The one skin for settings-style `List`s — in place of mixing `Form` and cards in a
-    /// `ScrollView`. Inset grouped on the canvas with 52pt rows.
-    /// Build sections with `DSListSection` so rows sit on `surface` under eyebrow headers.
+    /// `ScrollView`. Inset grouped on the canvas with 52pt rows, its sections on the page gutter like every card.
+    /// Build sections with `DSListSection` so rows sit on the card under eyebrow headers.
     public func dsGroupedList() -> some View {
         #if os(iOS)
         listStyle(.insetGrouped)
             .listSectionSpacing(DSSpace.lg)
+            // The cards on a ScrollView screen sit on the 20pt gutter; the system's inset is 16.
+            .contentMargins(.horizontal, DSSpace.gutter, for: .scrollContent)
             .modifier(DSListSkin())
         #else
         // macOS only builds the package for tests; it has no inset-grouped style.

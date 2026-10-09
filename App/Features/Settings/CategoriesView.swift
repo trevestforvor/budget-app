@@ -62,7 +62,7 @@ struct CategoriesView: View {
         return List {
             if let problem {
                 Section { SettingsNote(text: problem, tint: Color.ds.caution, systemImage: "exclamationmark.triangle.fill") }
-                    .listRowBackground(Color.ds.surface)
+                    .listRowBackground(DSListRowChrome(position: .only))
             }
             DSListSection {
                 Button { editing = .new } label: {
@@ -93,7 +93,7 @@ struct CategoriesView: View {
             }
             if active.isEmpty, !q.isEmpty {
                 Section { SettingsNote(text: "No category called “\(q)”. Add it with the row above.") }
-                    .listRowBackground(Color.ds.surface)
+                    .listRowBackground(DSListRowChrome(position: .only))
             }
             if !categories.filter(\.isArchived).isEmpty {
                 DSListSection(footer: "Merged and deleted categories stay out of every picker. Bring one back to file under it again.") {
