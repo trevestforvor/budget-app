@@ -288,6 +288,7 @@ extension AppAction {
         case .rememberFact: ServerStatus.assistantSince
         case .saveManualAsset, .removeManualAsset: ServerStatus.netWorthSince
         case .savePlanScenario, .deletePlanScenario: ServerStatus.planScenariosSince
+        case .reviewRecurring: ServerStatus.recurringReviewSince
         default: nil
         }
     }

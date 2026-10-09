@@ -433,6 +433,34 @@
     }
   },
   {
+    "description" : "Questions waiting on the Recurring screen: repeat charges that might be recurring but aren't on the list yet (mightBeRecurring), and recurring charges with no charge for about a cycle and a half that might have stopped (mightHaveStopped), each with its amount, cadence and last charge; plus ones the user marked as stopped. Only the user answers these, in the app. Use it when the user asks what might have stopped, whether they still pay for something, or what's new among their recurring charges.",
+    "kind" : "read",
+    "name" : "recurringReview",
+    "parameters" : {
+      "additionalProperties" : false,
+      "properties" : {
+
+      },
+      "type" : "object"
+    }
+  },
+  {
+    "description" : "A finished month in review: income, spending (every category net of its refunds) and what was left over, money moved to savings, bills, subscriptions and everyday each against that month's budget, the categories that changed most against the month before, and the change in cash. Use it for how a past month went, or a recap of last month.",
+    "kind" : "read",
+    "name" : "monthlyRecap",
+    "parameters" : {
+      "additionalProperties" : false,
+      "properties" : {
+        "month" : {
+          "description" : "A finished month like 2026-08. Leave it out for last month.",
+          "pattern" : "^[0-9]{4}-(0[1-9]|1[0-2])$",
+          "type" : "string"
+        }
+      },
+      "type" : "object"
+    }
+  },
+  {
     "description" : "A full checkup in one call: this month's pace and safe to spend, categories over or on pace to exceed their targets, merchant caps and top merchants, recurring charges and price increases, unusual transactions, saving and emergency cushion, the cash outlook, and data health. Each finding is good, watch or act. Use it when the user asks how they're doing overall, to check everything, or for a review — then lead with what needs action.",
     "kind" : "read",
     "name" : "runCheckup",

@@ -283,6 +283,7 @@ public func buildRouter(_ service: BudgetService, surface: Surface = .api) -> Ro
     addPaceAlertRoutes(router, service)
     addNetWorthRoutes(router, service)
     addPlanRoutes(router, service)
+    addRecapRoutes(router, service)
     return router
 }
 

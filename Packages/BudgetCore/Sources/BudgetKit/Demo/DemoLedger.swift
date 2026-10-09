@@ -47,6 +47,8 @@ public struct LedgerState: Hashable, Codable, Sendable {
     public var manualAssets: [ManualAsset]
     /// Plan's "what if" scenarios, in the order they were made.
     public var planScenarios: [PlanScenario]
+    /// The person's answers to "Did this stop?", keyed by `RecurringChoice.key`.
+    public var recurringReviews: [String: RecurringReviewMark]
 
     public init(categories: [BudgetCategory], monthlyTargets: [String: Money] = [:], rules: [BudgetRule] = [],
                 decisionPolicy: DecisionPolicy = .default, merchantTargets: [String: Money] = [:], monthlySavings: Money? = nil,
@@ -55,7 +57,8 @@ public struct LedgerState: Hashable, Codable, Sendable {
                 forgottenMerchants: [String] = [], upgrades: [String] = [], recurringChoices: [String: RecurringChoice] = [:],
                 assistantMemories: [AssistantMemory] = [],
                 manualAssets: [ManualAsset] = [],
-                planScenarios: [PlanScenario] = []) {
+                planScenarios: [PlanScenario] = [],
+                recurringReviews: [String: RecurringReviewMark] = [:]) {
         self.categories = categories; self.monthlyTargets = monthlyTargets; self.rules = rules; self.decisionPolicy = decisionPolicy
         self.merchantTargets = merchantTargets; self.monthlySavings = monthlySavings; self.accounts = accounts
         self.openingBalances = openingBalances; self.transactions = transactions; self.suggestions = suggestions; self.reviewReasons = reviewReasons
@@ -64,6 +67,7 @@ public struct LedgerState: Hashable, Codable, Sendable {
         self.assistantMemories = assistantMemories
         self.manualAssets = manualAssets
         self.planScenarios = planScenarios
+        self.recurringReviews = recurringReviews
     }
 
     enum CodingKeys: String, CodingKey {
@@ -72,6 +76,7 @@ public struct LedgerState: Hashable, Codable, Sendable {
         case assistantMemories
         case manualAssets
         case planScenarios
+        case recurringReviews
     }
 
     /// Fields added after a ledger was first saved decode as empty; rules saved before they had ids get them.
@@ -94,7 +99,8 @@ public struct LedgerState: Hashable, Codable, Sendable {
                   recurringChoices: try c.decodeIfPresent([String: RecurringChoice].self, forKey: .recurringChoices) ?? [:],
                   assistantMemories: try c.decodeIfPresent([AssistantMemory].self, forKey: .assistantMemories) ?? [],
                   manualAssets: try c.decodeIfPresent([ManualAsset].self, forKey: .manualAssets) ?? [],
-                  planScenarios: try c.decodeIfPresent([PlanScenario].self, forKey: .planScenarios) ?? [])
+                  planScenarios: try c.decodeIfPresent([PlanScenario].self, forKey: .planScenarios) ?? [],
+                  recurringReviews: try c.decodeIfPresent([String: RecurringReviewMark].self, forKey: .recurringReviews) ?? [:])
     }
 
     /// A fresh ledger for a new install: the standard categories, no targets, no data. It lists no upgrades: the server
@@ -150,6 +156,9 @@ public struct Ledger: Sendable {
     var manualAssets: [ManualAsset] = []
     /// Plan's "what if" scenarios (`LedgerState.planScenarios`).
     var planScenarios: [PlanScenario] = []
+    /// The person's answers to "Did this stop?" (`LedgerState.recurringReviews`). An ended series leaves the usual month
+    /// of bills and subscriptions, so a change is a change to what's worked out from the rows.
+    var recurringReviews: [String: RecurringReviewMark] = [:] { didSet { rowsToken = RowsToken.next() } }
 
     public init(state: LedgerState, now: Date, calendar: Calendar = .current) {
         self.now = now
@@ -172,6 +181,7 @@ public struct Ledger: Sendable {
         assistantMemories = state.assistantMemories
         manualAssets = state.manualAssets
         planScenarios = state.planScenarios
+        recurringReviews = state.recurringReviews
         pairLegacyTransfers()
         upgradeLegacyProvenance()
         applyOneTimeUpgrades()
@@ -192,7 +202,8 @@ public struct Ledger: Sendable {
                     openingBalances: openingBalances, transactions: transactions, suggestions: suggestions, reviewReasons: reviewReasons,
                     merchantAliases: merchantAliases, forgottenMerchants: forgottenMerchants.sorted(), upgrades: upgrades.sorted(),
                     recurringChoices: recurringChoices, assistantMemories: assistantMemories,
-                    manualAssets: manualAssets, planScenarios: planScenarios)
+                    manualAssets: manualAssets, planScenarios: planScenarios,
+                    recurringReviews: recurringReviews)
     }
 
     /// Makes an account's replayed balance end at its reported balance (providers report the
@@ -385,6 +396,7 @@ public struct Ledger: Sendable {
         assistantMemories = Self.demoAssistantMemories(now: now)
         addManualAssetExamples(today: today)
         addPlanScenarios()
+        addRecurringExamples(today: today)
         // The demo's rows include answers the model filed, so its settings say the model is on (Qwen Decide at 80%).
         decisionPolicy = DecisionPolicy(provider: .localDecide, autoAcceptPercent: 80, kinds: [.category])
     }
@@ -688,7 +700,9 @@ public struct Ledger: Sendable {
             return (start, calendar.date(byAdding: .month, value: 1, to: start)!)
         }
         let flows = windows.map { flow(from: $0.0, to: $0.1) }
-        let buckets = windows.map { budgetTotals(from: $0.0, to: $0.1) }
+        // A series the person said they canceled is out of the usual month at once, not after it ages out.
+        let ended = recurringIndex.endedIDs(asOf: now)
+        let buckets = windows.map { budgetTotals(from: $0.0, to: $0.1, leavingOut: ended) }
         func usual(_ group: CategoryGroup) -> [Money] { buckets.map { ($0[group] ?? []).map(\.spent).sum() } }
         let income = Self.average(flows.map(\.income))
         let bills = Self.average(usual(.bills))
@@ -697,10 +711,7 @@ public struct Ledger: Sendable {
         // The average of the months' nets, so Plan's cash flow history reconciles with it to the cent.
         let typical = Self.average(flows.map(\.net))
         let stretch = typical + everyday - (usual(.everyday).min() ?? everyday)
-        let saving = Self.average(windows.map { w in
-            transactions(from: w.0, to: w.1).filter { savingsAccountIDs.contains($0.accountID) && $0.categorization?.categoryID == "transfer" && !$0.amount.isNegative }
-                .map(\.amount).sum()
-        })
+        let saving = Self.average(windows.map { movedToSavings(from: $0.0, to: $0.1) })
         // Essentials: bills and subscriptions, plus everyday groceries and transport (a transit pass on the recurring list
         // is already a subscription).
         let essentials = bills + subscriptions

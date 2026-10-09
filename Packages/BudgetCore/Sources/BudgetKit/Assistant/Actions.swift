@@ -352,6 +352,8 @@ public enum AppAction: Hashable, Sendable {
     /// From Plan's scenario editor; not a tool the assistant can call.
     case savePlanScenario(SavePlanScenario)
     case deletePlanScenario(DeletePlanScenario)
+    /// "Did this stop?" from the recurring review; not a tool the assistant can call.
+    case reviewRecurring(ReviewRecurring)
     case navigate(Navigate)
 
     public var toolName: String {
@@ -379,6 +381,7 @@ public enum AppAction: Hashable, Sendable {
         case .removeManualAsset: "removeManualAsset"
         case .savePlanScenario: "savePlanScenario"
         case .deletePlanScenario: "deletePlanScenario"
+        case .reviewRecurring: "reviewRecurring"
         case .navigate: "navigate"
         }
     }
@@ -451,6 +454,7 @@ public enum AppAction: Hashable, Sendable {
         case let .removeManualAsset(p): return try e.encode(p)
         case let .savePlanScenario(p): return try e.encode(p)
         case let .deletePlanScenario(p): return try e.encode(p)
+        case let .reviewRecurring(p): return try e.encode(p)
         case let .navigate(p): return try e.encode(p)
         }
     }
@@ -485,6 +489,7 @@ extension AppAction: Codable {
         case "removeManualAsset": self = .removeManualAsset(try RemoveManualAsset(from: decoder))
         case "savePlanScenario": self = .savePlanScenario(try SavePlanScenario(from: decoder))
         case "deletePlanScenario": self = .deletePlanScenario(try DeletePlanScenario(from: decoder))
+        case "reviewRecurring": self = .reviewRecurring(try ReviewRecurring(from: decoder))
         case "navigate": self = .navigate(try Navigate(from: decoder))
         default:
             throw DecodingError.dataCorruptedError(forKey: .type, in: try decoder.container(keyedBy: Keys.self), debugDescription: "Unknown action \(type)")
@@ -518,6 +523,7 @@ extension AppAction: Codable {
         case let .removeManualAsset(p): try p.encode(to: encoder)
         case let .savePlanScenario(p): try p.encode(to: encoder)
         case let .deletePlanScenario(p): try p.encode(to: encoder)
+        case let .reviewRecurring(p): try p.encode(to: encoder)
         case let .navigate(p): try p.encode(to: encoder)
         }
     }

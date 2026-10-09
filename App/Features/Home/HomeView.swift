@@ -15,6 +15,11 @@ struct HomeView: View {
     @State private var detail: LedgerTransaction?
     /// The week ("2026-39") whose recap was put away.
     @AppStorage("home.recapDismissedWeek") private var dismissedRecapWeek = ""
+    /// Last month's recap, in the first week of a month (`MonthlyRecap.isFresh`) until put away.
+    @State private var monthlyRecap: MonthlyRecap?
+    @State private var showsMonthlyRecap = false
+    /// The month ("2026-09") whose recap was put away.
+    @AppStorage("home.monthlyRecapDismissed") private var dismissedMonthlyRecap = ""
 
     var body: some View {
         @Bindable var app = app
@@ -45,6 +50,9 @@ struct HomeView: View {
             .navigationDestination(isPresented: $showsAccounts) { AccountsView() }
             .navigationDestination(isPresented: $app.showsNetWorth) { NetWorthView() }
             .sheet(isPresented: $app.showsSettings) { SettingsView() }
+            .sheet(isPresented: $showsMonthlyRecap) {
+                if let monthlyRecap { MonthlyRecapSheet(recap: monthlyRecap) }
+            }
         }
         .task(id: app.revision) { await load() }
     }
@@ -62,6 +70,7 @@ struct HomeView: View {
         if let overview = next.value, showsRecap(overview) {
             recap = (try? await api.checkup()) ?? recap
         }
+        await loadMonthlyRecap()
         return error
     }
 
@@ -105,6 +114,25 @@ struct HomeView: View {
 
     private func showsRecap(_ overview: Overview) -> Bool { dismissedRecapWeek != week(of: overview) }
 
+    // MARK: Monthly recap
+
+    /// Asked for only in the first days of a month; a server without it (404) shows nothing.
+    private func loadMonthlyRecap() async {
+        guard Calendar.current.component(.day, from: AppClock.now) <= 8, let api = app.api as? any MonthlyRecapAPI else {
+            monthlyRecap = nil
+            return
+        }
+        if let fresh = try? await api.monthlyRecap(month: nil) { monthlyRecap = fresh }
+    }
+
+    /// Fresh by the clock, not by when it was worked out: a saved copy read offline weeks later is old news.
+    private var shownMonthlyRecap: MonthlyRecap? {
+        monthlyRecap.flatMap { recap in
+            guard let until = recap.showsUntil, AppClock.now < until, recap.month != dismissedMonthlyRecap else { return nil }
+            return recap
+        }
+    }
+
     // MARK: Content
 
     @ViewBuilder
@@ -115,6 +143,15 @@ struct HomeView: View {
                 app.showsCheckup = true
             } onDismiss: {
                 withAnimation(DSMotion.standard) { dismissedRecapWeek = week(of: overview) }
+            }
+            .transition(.opacity)
+        }
+
+        if let monthly = shownMonthlyRecap {
+            MonthlyRecapCard(recap: monthly) {
+                showsMonthlyRecap = true
+            } onDismiss: {
+                withAnimation(DSMotion.standard) { dismissedMonthlyRecap = monthly.month }
             }
             .transition(.opacity)
         }
