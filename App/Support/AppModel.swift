@@ -55,6 +55,8 @@ final class AppModel {
     /// A day for Activity to show (a tap on Home's week strip); consumed by ActivityView.
     var activityDay: Date?
     var planHorizon: Int?
+    /// A page for Ask to push (`-open conversations`, `-open assistantMemory`); consumed by AskView.
+    var askRoute: AskRoute?
     private var configuration: (url: String?, token: String?, demo: Bool, live: String?)?
     private(set) var liveModel: String?
     /// The server's version, read the first time a write needs it (an older server drops parts of a new rule).
@@ -281,6 +283,7 @@ extension AppAction {
         case let .editTransactions(p) where p.fileSimilar == true: ServerStatus.fileSimilarSince
         case let .editTransactions(p) where p.isYearly != nil: ServerStatus.yearlyAndRecurringSince
         case .setRecurring: ServerStatus.yearlyAndRecurringSince
+        case .rememberFact: ServerStatus.assistantSince
         default: nil
         }
     }

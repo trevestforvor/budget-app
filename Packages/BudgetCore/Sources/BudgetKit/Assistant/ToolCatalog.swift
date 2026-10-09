@@ -209,6 +209,9 @@ public enum ToolCatalog {
                      "removeTags": .array("Tags to take off.", of: tag, minItems: 1, maxItems: TransactionTags.maxPerTransaction),
                  ], required: ["transactionIDs"], minProperties: 2)),
 
+        ToolSpec(name: "rememberFact", description: "Propose keeping one fact about the user in assistant memory, for later conversations: a plan, a person, a preference, in their words (\"Saving for a trip to Lisbon in March\"). Not for figures from tool results, and not for budget changes, which have their own tools.", kind: .write,
+                 schema: .object(nil, ["fact": .string("One short sentence in the user's words.", minLength: 3, maxLength: AssistantMemory.maxLength)],
+                                 required: ["fact"])),
         ToolSpec(name: "updateDecisionPolicy", description: "Propose changing the decision model: which provider categorizes uncertain transactions, and the confidence percent at or above which its decisions are accepted without review.", kind: .write,
                  schema: .object(nil, [
                      "provider": .string("off, localDecide (Qwen Decide on the Olares), laya (on the Olares), or jev (TypeSafe; receives merchant, cleaned descriptor and amount band).", enum: DecisionProvider.allCases.map(\.rawValue)),

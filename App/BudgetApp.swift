@@ -99,7 +99,7 @@ struct BudgetApp: App {
             model.pendingQuestion = question
         }
         // `-open recurring`, `-open spending/2026-08`, `-open category/dining[/2026-08]` — the same routes Ask's
-        // navigate proposals take.
+        // navigate proposals take. `-open conversations` and `-open assistantMemory` push Ask's own pages.
         if let open = value(after: "-open") {
             let parts = open.split(separator: "/").map(String.init)
             switch parts.first {
@@ -107,6 +107,8 @@ struct BudgetApp: App {
             case "spending": model.route(Navigate(screen: .spending, month: parts.dropFirst().first))
             case "category" where parts.count > 1:
                 model.route(Navigate(screen: .spending, categoryID: parts[1], month: parts.dropFirst(2).first))
+            case "conversations": (model.selectedTab, model.askRoute) = (.ask, .conversations)
+            case "assistantMemory": (model.selectedTab, model.askRoute) = (.ask, .memory)
             default: break
             }
         }

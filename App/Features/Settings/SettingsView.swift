@@ -59,6 +59,7 @@ struct SettingsView: View {
         case .pay: EarningsSettingsView()
         case .accounts: AccountsView()
         case .memory: MemoryView()
+        case .assistantMemory: AssistantMemoryView()
         case .privacy: PrivacyView()
         case .advanced: AdvancedSettingsView(draft: draft) { dismiss() }
         }
@@ -153,6 +154,10 @@ struct SettingsView: View {
                           systemImage: "brain", tone: .lilac)
             }
             .accessibilityIdentifier("settingsMemory")
+            NavigationLink(value: SettingsRoute.assistantMemory) {
+                DSListRow("Assistant memory", detail: "What Ask keeps in mind about you", systemImage: "sparkles", tone: .iris)
+            }
+            .accessibilityIdentifier("settingsAssistantMemory")
         }
     }
 

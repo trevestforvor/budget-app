@@ -10,9 +10,7 @@ struct DemoToolbox: AgentToolbox {
     /// What the model may file under: categories merged away are left out.
     var categories: [BudgetCategory] { ledger.activeCategories }
 
-    var assistantContext: AssistantContext {
-        AssistantContext(now: ledger.now, timeZone: ledger.calendar.timeZone, categories: categories, monthlyTargets: ledger.monthlyTargets)
-    }
+    var assistantContext: AssistantContext { ledger.assistantContext }
 
     func propose(_ action: AppAction) async throws -> ProposedAction {
         let action = action.proposedByAssistant()

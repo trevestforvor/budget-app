@@ -5,6 +5,8 @@ import SwiftUI
 public struct DSActionCard: View {
     public enum Phase: Equatable, Sendable {
         case proposed, applying, applied(String), dismissed, failed(String)
+        /// From a conversation reopened later: shown for the record, no longer offered.
+        case earlier
     }
 
     public struct Effect: Identifiable, Hashable, Sendable {
@@ -93,7 +95,7 @@ public struct DSActionCard: View {
                 Color.clear.dsLitEdge(radius: DSRadius.card)
             }
         }
-        .opacity(phase == .dismissed ? 0.55 : 1)
+        .opacity(phase == .dismissed || phase == .earlier ? 0.55 : 1)
         .animation(DSMotion.standard, value: phase)
     }
 
@@ -104,6 +106,7 @@ public struct DSActionCard: View {
         case .applying: ProgressView().controlSize(.small).tint(Color.ds.iris)
         case .applied: DSTag("Applied", systemImage: "checkmark", tint: Color.ds.accent)
         case .dismissed: DSTag("Dismissed", tint: Color.ds.inkTertiary)
+        case .earlier: DSTag("Earlier", tint: Color.ds.inkTertiary)
         case .failed: DSTag("Didn't apply", systemImage: "exclamationmark", tint: Color.ds.caution)
         }
     }
@@ -132,6 +135,8 @@ public struct DSActionCard: View {
             }
         case .dismissed:
             EmptyView()
+        case .earlier:
+            Text("From an earlier visit. Ask again if you still want it.").dsFont(.callout).foregroundStyle(Color.ds.inkSecondary)
         }
     }
 }

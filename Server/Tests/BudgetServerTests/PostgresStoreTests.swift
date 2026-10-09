@@ -22,7 +22,7 @@ struct PostgresStoreTests {
             group.addTask { await store.client.run() }
             try await store.migrate()
             try await store.migrate() // idempotent
-            for table in ["budget_rows", "budget_docs", "budget_links", "budget_imports", "budget_settings"] {
+            for table in ["budget_rows", "budget_docs", "budget_links", "budget_imports", "budget_settings", "budget_chats"] {
                 try await store.client.query(PostgresQuery(unsafeSQL: "DELETE FROM \(table)"))
             }
             try await body(store)
@@ -110,6 +110,27 @@ struct PostgresStoreTests {
             let record = ImportRecord(batchID: "b1", kind: .file, linkID: nil, label: "summit.csv", report: IngestReport(batchID: "b1", source: .fileImport), createdAt: Date(), rolledBack: false)
             try await store.upsertImport(record)
             #expect(try await store.imports().map(\.batchID) == ["b1"])
+        }
+    }
+
+    @Test("Conversations save, list newest first by their summary, load whole and delete")
+    func chats() async throws {
+        try await withStore { store in
+            let api = LedgerBudgetAPI(now: Date(), calendar: .current, latency: .zero)
+            await api.setChatSessionStore(store)
+            let first = try await api.ask("Where did my money go this month?", conversationID: nil)
+            let second = try await api.ask("How much do subscriptions cost me?", conversationID: nil)
+            _ = try await api.ask("How is groceries doing?", conversationID: first.conversationID)
+            let list = try await store.chatSummaries()
+            // The demo's clock stands still, so both share a time; each keeps its own turns.
+            #expect(Dictionary(uniqueKeysWithValues: list.map { ($0.id, $0.turnCount) }) == [first.conversationID: 2, second.conversationID: 1])
+            let record = try #require(try await store.chatRecord(id: first.conversationID))
+            #expect(record.session.turns.map(\.reply.id).first == first.id)
+            #expect(try await store.chatRecord(id: "nope") == nil)
+            try await store.deleteChatRecord(id: second.conversationID)
+            #expect(try await store.chatSummaries().count == 1)
+            try await store.deleteAllChatRecords()
+            #expect(try await store.chatSummaries().isEmpty)
         }
     }
 }

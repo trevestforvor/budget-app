@@ -344,6 +344,8 @@ public enum AppAction: Hashable, Sendable {
     case forgetMerchant(ForgetMerchant)
     /// From the recurring list and a transaction's details; not a tool the assistant can call.
     case setRecurring(SetRecurring)
+    /// Keeps a fact in assistant memory (server 0.5.0).
+    case rememberFact(RememberFact)
     case navigate(Navigate)
 
     public var toolName: String {
@@ -366,6 +368,7 @@ public enum AppAction: Hashable, Sendable {
         case .updateDecisionPolicy: "updateDecisionPolicy"
         case .forgetMerchant: "forgetMerchant"
         case .setRecurring: "setRecurring"
+        case .rememberFact: "rememberFact"
         case .navigate: "navigate"
         }
     }
@@ -404,6 +407,7 @@ public enum AppAction: Hashable, Sendable {
         case "recategorize": self = .recategorize(try d.decode(Recategorize.self, from: arguments))
         case "editTransactions": self = .editTransactions(try d.decode(EditTransactions.self, from: arguments))
         case "updateDecisionPolicy": self = .updateDecisionPolicy(try d.decode(UpdateDecisionPolicy.self, from: arguments))
+        case "rememberFact": self = .rememberFact(try d.decode(RememberFact.self, from: arguments))
         case "navigate": self = .navigate(try d.decode(Navigate.self, from: arguments))
         default: throw ToolArgumentError(tool: toolName, problems: ["\(toolName) is not a write or client tool"])
         }
@@ -432,6 +436,7 @@ public enum AppAction: Hashable, Sendable {
         case let .updateDecisionPolicy(p): return try e.encode(p)
         case let .forgetMerchant(p): return try e.encode(p)
         case let .setRecurring(p): return try e.encode(p)
+        case let .rememberFact(p): return try e.encode(p)
         case let .navigate(p): return try e.encode(p)
         }
     }
@@ -461,6 +466,7 @@ extension AppAction: Codable {
         case "updateDecisionPolicy": self = .updateDecisionPolicy(try UpdateDecisionPolicy(from: decoder))
         case "forgetMerchant": self = .forgetMerchant(try ForgetMerchant(from: decoder))
         case "setRecurring": self = .setRecurring(try SetRecurring(from: decoder))
+        case "rememberFact": self = .rememberFact(try RememberFact(from: decoder))
         case "navigate": self = .navigate(try Navigate(from: decoder))
         default:
             throw DecodingError.dataCorruptedError(forKey: .type, in: try decoder.container(keyedBy: Keys.self), debugDescription: "Unknown action \(type)")
@@ -489,6 +495,7 @@ extension AppAction: Codable {
         case let .updateDecisionPolicy(p): try p.encode(to: encoder)
         case let .forgetMerchant(p): try p.encode(to: encoder)
         case let .setRecurring(p): try p.encode(to: encoder)
+        case let .rememberFact(p): try p.encode(to: encoder)
         case let .navigate(p): try p.encode(to: encoder)
         }
     }

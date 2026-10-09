@@ -130,7 +130,7 @@ public struct RemoteBudgetAPI: BudgetAPI, MorningSummaryAPI {
         try decode(try await load(try request(method, path, body: body), timeout: timeout))
     }
 
-    private func request(_ method: String, _ path: String, id: String? = nil, body: some Encodable) throws -> URLRequest {
+    func request(_ method: String, _ path: String, id: String? = nil, body: some Encodable) throws -> URLRequest {
         var request = URLRequest(url: endpoint(path, id: id))
         request.httpMethod = method
         request.setValue("application/json", forHTTPHeaderField: "Content-Type")
@@ -173,7 +173,7 @@ public struct RemoteBudgetAPI: BudgetAPI, MorningSummaryAPI {
         }
     }
 
-    private func decode<T: Decodable>(_ data: Data) throws -> T {
+    func decode<T: Decodable>(_ data: Data) throws -> T {
         do {
             return try Self.decoder.decode(T.self, from: data)
         } catch {

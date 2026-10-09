@@ -12,6 +12,7 @@ let dashboardAssets = [
     "index.html", "tokens.css", "app.css",
     "app.js", "core.js", "providers.js", "overview.js", "accounts.js", "imports.js", "review.js", "groups.js", "rules.js", "categories.js", "settings.js", "transactions.js",
     "orders.js",
+    "assistant.js",
     "icon-64.png", "icon-180.png",
 ]
 

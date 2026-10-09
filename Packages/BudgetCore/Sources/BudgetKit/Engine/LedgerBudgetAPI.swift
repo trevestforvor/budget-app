@@ -85,9 +85,18 @@ public actor LedgerBudgetAPI: BudgetAPI {
     private var chatModel: (any ChatModel)?
     private var decisions: DecisionRouting
     private let persistence: (any LedgerPersistence)?
-    private var deployment: DeploymentInfo
+    var deployment: DeploymentInfo
     private var escalatedAccepts = 0
     private var escalationNote: String?
+    /// Ask's conversations (`ChatSessionStore`): in memory unless the server hands over its own.
+    var chatStore: any ChatSessionStore = InMemoryChatSessionStore()
+    /// The demo fills its chat history with a few conversations the first time it's read.
+    var seedsDemoChats = false
+    /// The demo's seeding under way; every chat read waits for it, so none sees half of it.
+    var demoChatSeeding: Task<Void, Never>?
+    /// Chat turns are recorded one at a time (`recordingTurn`).
+    var recordingChat = false
+    var waitingChatRecorders: [CheckedContinuation<Void, Never>] = []
 
     /// Server: persisted state, the wall clock, configured models.
     public init(state: LedgerState, calendar: Calendar = .current, clock: @escaping @Sendable () -> Date = { .now },
@@ -124,6 +133,7 @@ public actor LedgerBudgetAPI: BudgetAPI {
             return link
         }
         deployment = DeploymentInfo(endpoint: "demo://ledger", version: "demo", sources: [.teller, .plaid, .fileImport], institutions: institutions)
+        seedsDemoChats = true
     }
 
     /// The demo connection that waits for a sign-in (balance-only, so no spending figure depends on it).
@@ -197,7 +207,7 @@ public actor LedgerBudgetAPI: BudgetAPI {
         }
     }
 
-    private var toolbox: DemoToolbox {
+    var toolbox: DemoToolbox {
         DemoToolbox(ledger: ledger, decisions: try? decisions.model(for: ledger.decisionPolicy.isActive ? ledger.decisionPolicy.provider : .localDecide),
                     institutions: deployment.institutions)
     }
@@ -318,14 +328,30 @@ public actor LedgerBudgetAPI: BudgetAPI {
         return results
     }
 
+    /// Answers within a conversation: a known `conversationID` continues it (the model sees the turns before), a new one
+    /// or none starts one. Either way the turn is kept in chat history (`LedgerBudgetAPI+Assistant.swift`).
     public func ask(_ question: String, conversationID: String?) async throws -> AskReply {
         tick()
-        let id = conversationID ?? UUID().uuidString
-        if let chatModel {
-            return try await AgentLoop(model: chatModel, toolbox: toolbox).run(question, conversationID: id).reply
+        // The id names a kept conversation (and a path segment), so it's short and not blank; apps send a UUID.
+        let given = conversationID?.trimmingCharacters(in: .whitespacesAndNewlines)
+        if let given, given.count > ChatSession.maxIDLength {
+            throw BudgetAPIError.rejected("A conversation id is at most \(ChatSession.maxIDLength) characters.")
         }
-        await pause(2.5)
-        return DemoAskEngine(ledger: ledger, institutions: deployment.institutions).answer(question, conversationID: id)
+        let id = given.flatMap { $0.isEmpty ? nil : $0 } ?? UUID().uuidString
+        let history = await chatHistory(for: id)
+        let reply: AskReply
+        let transcript: [ChatMessage]
+        if let chatModel {
+            let outcome = try await AgentLoop(model: chatModel, toolbox: toolbox).run(question, conversationID: id, history: history)
+            reply = outcome.reply
+            transcript = Array(outcome.transcript.dropFirst(1 + history.count))
+        } else {
+            await pause(2.5)
+            reply = DemoAskEngine(ledger: ledger, institutions: deployment.institutions).answer(question, conversationID: id)
+            transcript = []
+        }
+        await recordTurn(question, reply: reply, transcript: transcript, in: id)
+        return reply
     }
 
     /// Runs the agent loop and returns the full outcome (steps, repairs, grounding) — for tools and tests.
@@ -409,8 +435,7 @@ public actor LedgerBudgetAPI: BudgetAPI {
 
     public func assistantConfig() async throws -> AssistantConfig {
         tick()
-        let context = AssistantContext(now: ledger.now, timeZone: ledger.calendar.timeZone, categories: ledger.activeCategories, monthlyTargets: ledger.monthlyTargets)
-        return AssistantConfig(promptVersion: AssistantPrompt.version, systemPrompt: AssistantPrompt.system(context),
+        return AssistantConfig(promptVersion: AssistantPrompt.version, systemPrompt: AssistantPrompt.system(ledger.assistantContext),
                                tools: ToolCatalog.definitions(for: ledger.activeCategories))
     }
 

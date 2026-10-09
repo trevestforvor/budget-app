@@ -1,4 +1,4 @@
-// The shell: boots the data, routes #/overview · #/accounts · #/imports · #/review · #/transactions · #/categories · #/settings, keeps the rail
+// The shell: boots the data, routes #/overview · #/accounts · #/imports · #/review · #/transactions · #/categories · #/assistant · #/settings, keeps the rail
 // current, and refreshes lightly every 30 s without ever redrawing something the person is working in.
 import { fill, $, h, store, loadCore, heavy, cached, callout, button, busy, dot, tag, ago, duration, nextSyncIn, institutionGroups, plural, ApiError } from "./core.js";
 import { attentionItems } from "./overview.js";
@@ -10,9 +10,10 @@ import review from "./review.js";
 import categories from "./categories.js";
 import settings from "./settings.js";
 import transactions from "./transactions.js";
+import assistant from "./assistant.js";
 import { needsLook } from "./rules.js";
 
-const VIEWS = { overview, accounts, imports, review, transactions, categories, settings };
+const VIEWS = { overview, accounts, imports, review, transactions, categories, assistant, settings };
 let current = null, currentName = null, booted = false, firstRoute = true;
 
 function parseHash() {
