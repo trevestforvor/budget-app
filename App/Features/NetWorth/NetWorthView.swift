@@ -45,6 +45,7 @@ struct NetWorthView: View {
             ToolbarItem(placement: .primaryAction) {
                 Button { editing = .new } label: { Image(systemName: "plus") }
                     .accessibilityLabel("Add an asset or debt")
+                    .accessibilityIdentifier("addManualAssetToolbar")
                     .disabled(unavailable || state.value == nil)
             }
         }
@@ -59,11 +60,15 @@ struct NetWorthView: View {
             unavailable = true
             return nil
         }
+        let wanted = range
         let first = state.isLoading
-        state = await state.orSaved(.netWorth(range: range.rawValue), app)
+        state = await state.orSaved(.netWorth(range: wanted.rawValue), app)
+        // Another range on screen: show this one's saved copy, if the phone has one, while the fresh one comes.
+        if state.value.map({ $0.range != wanted.rawValue }) == true, let saved: NetWorth = await app.saved(.netWorth(range: wanted.rawValue)) {
+            state = .loaded(saved)
+        }
         let updating = app.beginUpdating(showingSaved: first && state.value != nil)
         defer { app.endUpdating(updating) }
-        let wanted = range
         do {
             let worth = try await api.netWorth(range: wanted)
             unavailable = false
@@ -75,7 +80,8 @@ struct NetWorthView: View {
             return nil
         } catch {
             if Task.isCancelled { return nil }
-            if state.value == nil { state = .failed(error.localizedDescription) }
+            // Keep what's on screen only when it's this range's: another range's figures under this one's label would mislead.
+            if wanted == range, state.value.map({ $0.range != wanted.rawValue }) ?? true { state = .failed(error.localizedDescription) }
             return error.localizedDescription
         }
     }
@@ -85,7 +91,9 @@ struct NetWorthView: View {
     @ViewBuilder
     private func content(_ worth: NetWorth) -> some View {
         hero(worth)
+            .accessibilityIdentifier("netWorthHero")
         DSSegmented("Range", selection: $range, options: NetWorthRange.allCases) { $0.label }
+            .accessibilityIdentifier("netWorthRange")
         chart(worth)
         breakdown(title: "What you own", total: worth.assets, lines: worth.assetLines, since: worth.start)
         breakdown(title: "What you owe", total: worth.liabilities, lines: worth.liabilityLines, since: worth.start)
@@ -94,6 +102,7 @@ struct NetWorthView: View {
         }
         .buttonStyle(.ds(.secondary, fullWidth: true))
         .accessibilityHint("A home, a car or a loan that no bank reports")
+        .accessibilityIdentifier("addManualAsset")
         Text("Cash and cards are traced back through their transactions. Investments hold the balance recorded at each sync. Assets and debts you add count from the day you add them.")
             .dsFont(.caption)
             .foregroundStyle(Color.ds.inkTertiary)
@@ -178,6 +187,7 @@ struct NetWorthView: View {
             Button { editing = .edit(item) } label: { label }
                 .buttonStyle(.plain)
                 .accessibilityHint("Edit \(line.name)")
+                .accessibilityIdentifier("manualAsset-\(line.id)")
         } else {
             label
         }

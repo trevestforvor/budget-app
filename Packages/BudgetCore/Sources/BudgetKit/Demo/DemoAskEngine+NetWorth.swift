@@ -1,8 +1,8 @@
 import Foundation
 
 extension DemoAskEngine {
-    /// "What's my net worth?": today's figure and what it's made of, from the ledger alone. (Its history needs the
-    /// recorded balances, which the `netWorth` tool reads on the server.)
+    /// "What's my net worth?": today's figure, what it's made of, and how it moved over the last three months — the
+    /// same history the Net worth screen draws, from the recorded balances.
     func netWorthIntent(_ q: String, _ cid: String) -> AskReply? {
         guard ["net worth", "networth", "what am i worth", "what i'm worth", "own and owe", "owe and own"].contains(where: q.contains) else { return nil }
         let b = ledger.balances()
@@ -26,8 +26,21 @@ extension DemoAskEngine {
             figures.append(Figure(id: "other-debts", label: "Kept by hand", detail: "Debts", value: other))
             owes.append("\(other.formatted()) in loans you keep track of yourself")
         }
-        let text = "Your net worth is \(b.netWorth.formatted()): \(owned.formatted()) you own (\(owns.spokenList)), less \(owed.formatted()) you owe (\(owes.spokenList))."
-        return reply(cid, text: text, figures: figures, tools: [call("netWorth", ["range": .string(NetWorthRange.threeMonths.rawValue)])],
+        var text = "Your net worth is \(b.netWorth.formatted()): \(owned.formatted()) you own (\(owns.spokenList)), less \(owed.formatted()) you owe (\(owes.spokenList))."
+
+        // How it moved: the history over the last three months, as the screen shows it.
+        let range = NetWorthRange.threeMonths
+        let worth = ledger.netWorth(range: range, snapshots: balanceSnapshots)
+        if worth.points.count > 1 {
+            var dayStyle = Date.FormatStyle.dateTime.month(.abbreviated).day()
+            dayStyle.timeZone = ledger.calendar.timeZone
+            let since = worth.start.formatted(dayStyle)
+            figures.append(Figure(id: "net-worth-change", label: "Change", detail: "Since \(since)", value: worth.change))
+            text += worth.change == .zero ? " It's where it was on \(since)."
+                : " That's \(worth.change.isNegative ? "down" : "up") \(worth.change.magnitude.formatted()) since \(since)."
+            if worth.estimatedThrough != nil { text += " Part of that stretch is estimated: investments before their first recorded balance are held at it." }
+        }
+        return reply(cid, text: text, figures: figures, tools: [call("netWorth", ["range": .string(range.rawValue)])],
                      followUps: ["How much can I save?", "Where did my money go this month?"])
     }
 }

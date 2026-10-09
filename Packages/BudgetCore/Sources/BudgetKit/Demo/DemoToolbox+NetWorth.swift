@@ -4,7 +4,7 @@ import Foundation
 /// Net worth screen shows, formatted with `Money.display` so the model quotes them exactly.
 extension DemoToolbox {
     func netWorth(range raw: String?) async throws -> (result: JSONValue, figures: [Figure]) {
-        let range = raw.flatMap(NetWorthRange.init(rawValue:)) ?? .threeMonths
+        let range = raw.flatMap { NetWorthRange(rawValue: $0.uppercased()) } ?? .threeMonths
         let snapshots = try await balanceHistory?.balanceSnapshots() ?? []
         let worth = ledger.netWorth(range: range, snapshots: snapshots)
         var dayStyle = Date.FormatStyle.dateTime.month(.abbreviated).day().year()
@@ -25,7 +25,11 @@ extension DemoToolbox {
             "assetBreakdown": .array(worth.assetLines.map(line)), "debtBreakdown": .array(worth.liabilityLines.map(line)),
             "howItsCounted": .string("Cash and cards are traced back through their transactions; investments hold their latest recorded balance; assets and debts kept by hand count from the day they were added."),
         ]
-        if let percent = worth.changePercent { o["changePercent"] = .number((percent * 10).rounded() / 10) }
+        // As text with its sign and "%", so a percent the model quotes is found in the result (grounding).
+        if let percent = worth.changePercent {
+            let tenths = (percent * 10).rounded() / 10
+            o["changePercent"] = .string("\(tenths < 0 ? "-" : "+")\(String(format: "%.1f", Swift.abs(tenths)))%")
+        }
         if let note = worth.note { o["estimated"] = .string(note) }
         var figures = [
             Figure(id: "net-worth", label: "Net worth", detail: "Today", value: worth.netWorth),

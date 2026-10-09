@@ -6,6 +6,8 @@ import Foundation
 struct DemoAskEngine {
     let ledger: DemoLedger
     var institutions: [InstitutionLink] = []
+    /// Recorded daily balances, for net worth's change over time.
+    var balanceSnapshots: [BalanceSnapshot] = []
     static let modelLabel = "demo · templated, no model"
 
     private var calendar: Calendar { ledger.calendar }

@@ -49,6 +49,7 @@ struct ManualAssetSheet: View {
                     }
                     DSSegmented("Asset or debt", selection: $kind, options: ManualAssetKind.allCases) { $0 == .asset ? "I own it" : "I owe it" }
                     DSField("Name", text: $name, prompt: kind == .asset ? "Home, car, art" : "Car loan, student loan")
+                        .accessibilityIdentifier("manualAssetName")
                     VStack(alignment: .leading, spacing: DSSpace.xs) {
                         Text("Type").dsFont(.label).foregroundStyle(Color.ds.inkSecondary).accessibilityHidden(true)
                         DSSegmented("Type", selection: $category, options: Self.categories(for: kind)) { $0.label }
@@ -94,12 +95,14 @@ struct ManualAssetSheet: View {
             Button(isSaving ? "Saving…" : existing == nil ? "Add" : "Save") { Task { await save() } }
                 .buttonStyle(.ds(.primary, size: .large, fullWidth: true, isLoading: isSaving))
                 .disabled(isSaving || trimmedName.isEmpty || amount == nil || (amount ?? 0) < 0)
+                .accessibilityIdentifier("saveManualAsset")
             if let existing {
                 Button(removeArmed ? "Tap again to remove \(existing.name)" : "Remove") {
                     if removeArmed { Task { await remove(existing) } } else { removeArmed = true }
                 }
                 .buttonStyle(.ds(removeArmed ? .destructiveArmed : .destructive, fullWidth: true))
                 .disabled(isSaving)
+                .accessibilityIdentifier("removeManualAsset")
             }
         }
         .padding(.horizontal, DSSpace.gutter)

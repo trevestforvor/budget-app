@@ -8,13 +8,18 @@ const RANGES = ["1M", "3M", "YTD", "1Y", "ALL"];
 const CATEGORIES = { asset: [["realEstate", "Real estate"], ["vehicle", "Vehicle"], ["other", "Other"]], liability: [["loan", "Loan"], ["other", "Other"]] };
 const GROUP_TONE = { cash: "azure", investments: "teal", realEstate: "amber", vehicles: "coral", otherAssets: "lime", cards: "rose", loans: "violet", otherDebts: "irisDeep" };
 
-const view = { range: "3M", data: null, error: null, el: null, editing: null, loading: null, missing: false };
+const view = { range: "3M", data: null, error: null, el: null, editing: null, loading: null, missing: false, fetchedAt: 0 };
+/// The figures are fetched again when the page redraws after this long (a sync elsewhere moves them).
+const FRESH_MS = 25000;
 
-/// The section, built once and kept, so a form being filled in survives the page's light refreshes.
+/// The section, built once and kept, so a form being filled in survives the page's light refreshes. Coming back to the
+/// page, or its light refresh, fetches the figures again once they're older than `FRESH_MS`.
 export function netWorthSection() {
   if (!view.el) {
     view.el = h("section", { class: "networth", "aria-labelledby": "networth-title" });
     document.addEventListener("budget:write", () => load());
+    load();
+  } else if (Date.now() - view.fetchedAt > FRESH_MS) {
     load();
   }
   return view.el;
@@ -22,11 +27,14 @@ export function netWorthSection() {
 
 async function load() {
   const range = view.range;
+  view.fetchedAt = Date.now();
   if (!view.data) render();
   const request = api(`/v1/networth?range=${encodeURIComponent(range)}`).then((data) => {
     if (range === view.range) { view.data = data; view.error = null; view.missing = false; }
   }, (error) => {
-    if (error && error.status === 404) view.missing = true; else view.error = error;
+    if (range !== view.range) return;
+    if (error && error.status === 404) view.missing = true;
+    else { view.error = error; if (view.data && view.data.range !== range) view.data = null; }
   });
   view.loading = request;
   await request;

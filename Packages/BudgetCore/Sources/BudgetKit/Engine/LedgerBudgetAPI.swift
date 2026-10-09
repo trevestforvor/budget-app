@@ -329,7 +329,8 @@ public actor LedgerBudgetAPI: BudgetAPI {
             return try await AgentLoop(model: chatModel, toolbox: toolbox).run(question, conversationID: id).reply
         }
         await pause(2.5)
-        return DemoAskEngine(ledger: ledger, institutions: deployment.institutions).answer(question, conversationID: id)
+        let recorded = (try? await balanceHistory.balanceSnapshots()) ?? []
+        return DemoAskEngine(ledger: ledger, institutions: deployment.institutions, balanceSnapshots: recorded).answer(question, conversationID: id)
     }
 
     /// Runs the agent loop and returns the full outcome (steps, repairs, grounding) — for tools and tests.

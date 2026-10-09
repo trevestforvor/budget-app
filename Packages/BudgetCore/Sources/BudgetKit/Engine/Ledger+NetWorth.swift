@@ -32,7 +32,10 @@ extension Ledger {
     // MARK: History
 
     /// The breakdown and the series for `range`, from the snapshots recorded so far.
-    func netWorth(range: NetWorthRange, snapshots: [BalanceSnapshot]) -> NetWorth {
+    func netWorth(range: NetWorthRange, snapshots recordedSnapshots: [BalanceSnapshot]) -> NetWorth {
+        // An account that's gone (unlinked, reset) leaves its records behind; they don't stretch the history back.
+        let known = Set(accounts.map(\.id))
+        let snapshots = recordedSnapshots.filter { known.contains($0.accountID) }
         let today = calendar.startOfDay(for: now)
         let start = netWorthStart(range, snapshots: snapshots, today: today)
         let dayCount = max(1, (calendar.dateComponents([.day], from: start, to: today).day ?? 0) + 1)
@@ -96,7 +99,7 @@ extension Ledger {
         var dayStyle = Date.FormatStyle.dateTime.month(.abbreviated).day()
         dayStyle.timeZone = calendar.timeZone
         let note = estimatedThrough.map {
-            "Investments through \($0.formatted(dayStyle)) are estimated: they hold their first recorded balance until a sync records another."
+            "Investments through \($0.formatted(dayStyle)) are estimated: no sync had recorded their balance yet, so they're held at the first one recorded."
         }
         return NetWorth(range: range.rawValue, asOf: now, start: start, points: Self.thinned(all), netWorth: current,
                         assets: all[last].assets, liabilities: all[last].liabilities, change: current - first,
@@ -303,6 +306,12 @@ extension Ledger {
     /// The item a save leaves, and the one it replaces (nil when it adds one).
     private func manualAssetPlan(_ p: SaveManualAsset) throws -> (next: ManualAsset, previous: ManualAsset?) {
         if let restore = p.restore {
+            // Undo sends the item back whole; it still has to be one the ledger could have kept.
+            let name = restore.name.trimmingCharacters(in: .whitespacesAndNewlines)
+            guard !restore.id.isEmpty, !name.isEmpty, name.count <= Self.manualNameLimit,
+                  !restore.value.isNegative, restore.value < Self.manualValueLimit,
+                  (restore.history ?? []).allSatisfy({ !$0.value.isNegative && $0.value < Self.manualValueLimit })
+            else { throw BudgetAPIError.rejected("That can't be put back as it was.") }
             return (restore, manualAssets.first { $0.id == restore.id })
         }
         let name = p.name?.trimmingCharacters(in: .whitespacesAndNewlines)

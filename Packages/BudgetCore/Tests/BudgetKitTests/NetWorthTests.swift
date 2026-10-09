@@ -164,6 +164,15 @@ struct NetWorthTests {
         #expect(empty.points.count == 1 && empty.netWorth == .zero && empty.changePercent == nil)
     }
 
+    @Test("Records left by an account that's gone don't count or stretch the history back")
+    func goneAccounts() {
+        let ledger = NetWorthFixture.ledger(NetWorthFixture.rows)
+        let stale = [BalanceSnapshot(accountID: "unlinked", day: NetWorthFixture.day(200), balance: Money(50_000))]
+        let worth = ledger.netWorth(range: .all, snapshots: stale)
+        #expect(worth.start == Fixture.calendar.startOfDay(for: EngineFixture.day(20)))
+        #expect(worth == ledger.netWorth(range: .all, snapshots: []))
+    }
+
     @Test("Long ranges are thinned to about 120 points, keeping the first day and today")
     func thinning() {
         let ledger = Fixture.ledger()
@@ -287,6 +296,17 @@ struct ManualAssetTests {
         #expect(throws: BudgetAPIError.self) { try ledger.perform(.saveManualAsset(p)) }
     }
 
+    @Test("Undo's put-back is checked too: a negative value or a blank name is refused")
+    func restoreChecked() throws {
+        var ledger = Fixture.ledger()
+        var item = try #require(ledger.manualAssets.first)
+        item.value = Money(-1)
+        #expect(throws: BudgetAPIError.self) { try ledger.perform(.saveManualAsset(SaveManualAsset(restore: item))) }
+        item.value = Money(1)
+        item.name = " "
+        #expect(throws: BudgetAPIError.self) { try ledger.perform(.saveManualAsset(SaveManualAsset(restore: item))) }
+    }
+
     @Test("Unknown ids are not found")
     func unknown() {
         var ledger = Fixture.ledger()
@@ -338,6 +358,10 @@ struct NetWorthAskTests {
         try ToolCatalog.validateArguments(tool: call.name, json: Data(call.arguments.utf8), categoryIDs: nil)
         #expect(Grounding.ungroundedAmounts(in: reply.text, allowed: reply.figures.map(\.value)).isEmpty, "\(reply.text)")
         #expect(reply.figures.first?.value == Fixture.ledger().balances().netWorth)
+        // It says how net worth moved over the range, from the recorded history, and that figure is grounded too.
+        let worth = try await Fixture.api().netWorth(range: .threeMonths)
+        #expect(reply.figures.contains { $0.id == "net-worth-change" && $0.value == worth.change })
+        #expect(reply.text.contains(worth.change.magnitude.formatted()), "\(reply.text)")
     }
 
     @Test("The netWorth tool returns the screen's figures, formatted for grounding")
@@ -350,5 +374,13 @@ struct NetWorthAskTests {
         #expect(o["netWorth"] == .string(worth.netWorth.display))
         #expect(o["change"] == .string(worth.change.display))
         #expect(figures.contains { $0.id == "net-worth-change" && $0.value == worth.change })
+        // The percent comes as text with its sign, so a model quoting it stays grounded; the range reads in any case.
+        if case let .string(percent)? = o["changePercent"] {
+            #expect(percent.hasSuffix("%") && (percent.hasPrefix("+") || percent.hasPrefix("-")))
+            #expect(Grounding.ungroundedPercents(in: "up \(percent.dropFirst())", allowed: Grounding.percents(in: percent)).isEmpty)
+        } else { Issue.record("changePercent should be text") }
+        let (lower, _) = try await box.run(read: "netWorth", arguments: .object(["range": .string("1m")]))
+        guard case let .object(l) = lower else { Issue.record("not an object"); return }
+        #expect(l["range"] == .string("1M"))
     }
 }
