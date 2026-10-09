@@ -383,6 +383,30 @@
   },
   {
     "function" : {
+      "description" : "Net worth today — what the user owns (cash, investments, assets they keep by hand such as a home or car) less what they owe (cards, loans) — with its change over a range and the breakdown by account and item. Investments hold their latest recorded balance, so part of a longer range can be estimated; the result says when. Use it for questions about net worth, what they own or owe, or how their overall position changed.",
+      "name" : "netWorth",
+      "parameters" : {
+        "additionalProperties" : false,
+        "properties" : {
+          "range" : {
+            "description" : "How far back to compare: 1M, 3M (the default), YTD, 1Y or ALL.",
+            "enum" : [
+              "1M",
+              "3M",
+              "YTD",
+              "1Y",
+              "ALL"
+            ],
+            "type" : "string"
+          }
+        },
+        "type" : "object"
+      }
+    },
+    "type" : "function"
+  },
+  {
+    "function" : {
       "description" : "Propose setting a category's monthly target to an exact amount the user stated.",
       "name" : "setCategoryTarget",
       "parameters" : {

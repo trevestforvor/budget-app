@@ -21,7 +21,7 @@ The single source of truth is `ToolCatalog`. The server sends its OpenAI-compati
 
 | Kind | Tools | What happens |
 |---|---|---|
-| read | `queryTransactions` (with `spent` and `income`, the Activity summary's totals), `sumByCategory` (with optional `compareTo`), `sumByMerchant`, `projectBalance`, `flexBudget`, `cashFlow` (income against spending by month, as Plan shows it), `categoryHistory` (one category month by month), `savingsCapacity`, `savingsGuidance`, `categorize`, `findRules` | Runs on the ledger; the result goes back to the model. Every "Ask about this" question in the app lands on one of these |
+| read | `queryTransactions` (with `spent` and `income`, the Activity summary's totals), `sumByCategory` (with optional `compareTo`), `sumByMerchant`, `projectBalance`, `flexBudget`, `cashFlow` (income against spending by month, as Plan shows it), `categoryHistory` (one category month by month), `savingsCapacity`, `savingsGuidance`, `categorize`, `findRules`, `netWorth` (today's net worth, its change over a range and the breakdown, from server 0.5.0) | Runs on the ledger; the result goes back to the model. Every "Ask about this" question in the app lands on one of these |
 | write | `setCategoryTarget`, `adjustCategoryTarget`, `removeCategoryTarget`, `setMerchantTarget`, `removeMerchantTarget`, `setMonthlySavings`, `createCategory`, `updateCategory`, `mergeCategory`, `createBudgetRule`, `updateBudgetRule`, `deleteBudgetRule`, `recategorize`, `editTransactions`, `updateDecisionPolicy` | Becomes a `ProposedAction` card with ledger-computed before/after effects. Nothing changes until the user taps Apply |
 | client | `navigate` | A card that opens a screen (including `recurring`) focused on a category, budget month, range, search or horizon |
 
