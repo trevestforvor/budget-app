@@ -52,6 +52,7 @@ public enum ToolCatalog {
     static let date = JSONSchema.string("A date, YYYY-MM-DD.", format: "date")
     static let transactionIDs = JSONSchema.array("Transaction ids returned by queryTransactions.", of: .string("A transaction id."), minItems: 1, maxItems: 50)
     static let ruleID = JSONSchema.string("A rule id returned by findRules.", minLength: 1, maxLength: 40)
+    static let tag = JSONSchema.string("A tag, e.g. \"Austin trip\" or \"Reimbursable\".", minLength: 1, maxLength: TransactionTags.maxLength)
     static let symbol = JSONSchema.string("An SF Symbol name, e.g. \"pawprint\".", pattern: #"^[a-z0-9.]{1,40}$"#)
     static let color = JSONSchema.string("One of the category colors.", enum: CategoryColor.allCases.map(\.rawValue))
     static let group = JSONSchema.string("Which part of the budget it counts in: bills (rent, utilities, insurance), subscriptions (streaming, apps, memberships) or everyday (groceries, dining, shopping, travel). A merchant on the recurring list counts as its own kind whatever its category.",
@@ -70,7 +71,7 @@ public enum ToolCatalog {
 
     public static let specs: [ToolSpec] = [
         // Read — computed by the ledger, returned to the model.
-        ToolSpec(name: "queryTransactions", description: "Find transactions. Returns rows newest first with id, date, merchant, amount, category, accountID, and the user's note if any; rows in a money-in category are marked moneyIn. Also returns spent (spending net of refunds, transfers aside) and income (everything filed under a money-in category: Income and any like card rewards) over every matching row — the same totals the Activity list shows. Rows the user hid are marked hidden and left out of both.", kind: .read,
+        ToolSpec(name: "queryTransactions", description: "Find transactions. Returns rows newest first with id, date, merchant, amount, category, accountID, and the user's note if any; rows in a money-in category are marked moneyIn. Also returns spent (spending net of refunds, transfers aside) and income (everything filed under a money-in category: Income and any like card rewards) over every matching row — the same totals the Activity list shows. Rows the user hid are marked hidden and left out of both. Rows list their tags.", kind: .read,
                  schema: .object(nil, [
                      "search": .string("Text to match in the merchant name, bank descriptor or note, or one exact amount like 42.50. For more or less than an amount (\"over $500\"), use minAmount or maxAmount, not search.", maxLength: 80),
                      "categoryID": categoryID,
@@ -78,6 +79,7 @@ public enum ToolCatalog {
                      "maxAmount": .string("Only rows at most this big, either way, digits only: \"20\" for \"under $20\".", pattern: DecimalAmount.unsignedPattern),
                      "direction": .string("Only money going out (\"out\": charges, purchases, bills) or only money coming in (\"in\").", enum: TransactionFilter.Direction.allCases.map(\.rawValue)),
                      "needsReviewOnly": .boolean("Only rows the categorizer flagged for review."),
+                     "tag": .string("Only rows carrying this tag (the user's own label, like a trip or a project).", minLength: 1, maxLength: TransactionTags.maxLength),
                      "since": .string("The first day to include, YYYY-MM-DD.", format: "date"),
                      "until": .string("The last day to include, YYYY-MM-DD: \"2026-08-31\" for all of August.", format: "date"),
                      "limit": .integer("Maximum rows to return.", minimum: 1, maximum: 200),
@@ -117,6 +119,11 @@ public enum ToolCatalog {
                  schema: .object(nil, [:])),
         ToolSpec(name: "categorize", description: "Run the categorization pipeline on transactions and return ranked suggestions with confidence. Does not change anything.", kind: .read,
                  schema: .object(nil, ["transactionIDs": transactionIDs], required: ["transactionIDs"])),
+        ToolSpec(name: "sumByTag", description: "Spending on one of the user's tags (their own labels for a trip, a project, or what work pays back): spent (net of refunds, hidden rows and transfers aside), income, how many transactions carry it, its first and last date, and spending by category. Without tag, every tag with its totals, most recently used first.", kind: .read,
+                 schema: .object(nil, [
+                     "tag": tag,
+                     "period": period,
+                 ])),
         ToolSpec(name: "findRules", description: "The user's categorization rules, newest first (the first that matches a transaction files it): each rule's id, what it matches, its category, whether it's on, how many transactions it filed and matches now, the rules it disagrees with, and whether its category is gone.", kind: .read,
                  schema: .object(nil, [:])),
 
@@ -177,7 +184,7 @@ public enum ToolCatalog {
                  schema: .object(nil, ["ruleID": ruleID], required: ["ruleID"])),
         ToolSpec(name: "recategorize", description: "Propose filing specific transactions under a category.", kind: .write,
                  schema: .object(nil, ["transactionIDs": transactionIDs, "categoryID": categoryID], required: ["transactionIDs", "categoryID"])),
-        ToolSpec(name: "editTransactions", description: "Propose changes to specific transactions: file them under a category, keep the category they already have, hide them from spending and budget totals (or count them again), mark a yearly charge to spread it over the year (or not), add a note, or rename the merchant. Give only the fields to change.", kind: .write,
+        ToolSpec(name: "editTransactions", description: "Propose changes to specific transactions: file them under a category (optionally with every other transaction from the same merchant), keep the category they already have, hide them from spending and budget totals (or count them again), mark a yearly charge to spread it over the year (or not), add a note, rename the merchant, or add or remove tags. Give only the fields to change.", kind: .write,
                  schema: .object(nil, [
                      "transactionIDs": transactionIDs,
                      "categoryID": categoryID,
@@ -187,6 +194,9 @@ public enum ToolCatalog {
                      "note": .string("A note to attach, in the user's words. An empty string removes the note.", maxLength: 500),
                      "merchant": .string("A new merchant name, e.g. \"Blue Bottle\".", minLength: 1, maxLength: 60),
                      "renameSimilar": .boolean("With merchant: also rename every transaction with the same bank descriptor, and future ones."),
+                     "fileSimilar": .boolean("With categoryID: also file every other transaction from the same merchant or with the same bank descriptor, going the same way, under it. Ones the user filed themselves keep their category."),
+                     "addTags": .array("Tags to add, in the user's words.", of: tag, minItems: 1, maxItems: TransactionTags.maxPerTransaction),
+                     "removeTags": .array("Tags to take off.", of: tag, minItems: 1, maxItems: TransactionTags.maxPerTransaction),
                  ], required: ["transactionIDs"], minProperties: 2)),
 
         ToolSpec(name: "updateDecisionPolicy", description: "Propose changing the decision model: which provider categorizes uncertain transactions, and the confidence percent at or above which its decisions are accepted without review.", kind: .write,

@@ -301,12 +301,13 @@ extension Ledger {
         return fileIDs.count
     }
 
-    /// Hidden, the note and a renamed merchant, from one copy of a row to another (never over what the
-    /// other already has).
+    /// Hidden, the note, tags and a renamed merchant, from one copy of a row to another (never over what the
+    /// other already has: tags are added to its own).
     static func carryUserFields(from old: LedgerTransaction, to new: inout LedgerTransaction) {
         if old.isHidden { new.isHidden = true }
         if new.note == nil { new.note = old.note }
         if new.isYearly == nil { new.isYearly = old.isYearly }
+        if old.tags != nil { new.tags = TransactionTags.merged(new.tags, old.tags) }
         if old.originalMerchant != nil, new.originalMerchant == nil, old.merchant != new.merchant {
             new.originalMerchant = new.merchant
             new.merchant = old.merchant

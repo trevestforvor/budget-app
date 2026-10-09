@@ -1,6 +1,6 @@
 [
   {
-    "description" : "Find transactions. Returns rows newest first with id, date, merchant, amount, category, accountID, and the user's note if any; rows in a money-in category are marked moneyIn. Also returns spent (spending net of refunds, transfers aside) and income (everything filed under a money-in category: Income and any like card rewards) over every matching row — the same totals the Activity list shows. Rows the user hid are marked hidden and left out of both.",
+    "description" : "Find transactions. Returns rows newest first with id, date, merchant, amount, category, accountID, and the user's note if any; rows in a money-in category are marked moneyIn. Also returns spent (spending net of refunds, transfers aside) and income (everything filed under a money-in category: Income and any like card rewards) over every matching row — the same totals the Activity list shows. Rows the user hid are marked hidden and left out of both. Rows list their tags.",
     "kind" : "read",
     "name" : "queryTransactions",
     "parameters" : {
@@ -62,6 +62,12 @@
         "since" : {
           "description" : "The first day to include, YYYY-MM-DD.",
           "format" : "date",
+          "type" : "string"
+        },
+        "tag" : {
+          "description" : "Only rows carrying this tag (the user's own label, like a trip or a project).",
+          "maxLength" : 32,
+          "minLength" : 1,
           "type" : "string"
         },
         "until" : {
@@ -340,6 +346,28 @@
       "required" : [
         "transactionIDs"
       ],
+      "type" : "object"
+    }
+  },
+  {
+    "description" : "Spending on one of the user's tags (their own labels for a trip, a project, or what work pays back): spent (net of refunds, hidden rows and transfers aside), income, how many transactions carry it, its first and last date, and spending by category. Without tag, every tag with its totals, most recently used first.",
+    "kind" : "read",
+    "name" : "sumByTag",
+    "parameters" : {
+      "additionalProperties" : false,
+      "properties" : {
+        "period" : {
+          "description" : "A period: this_month, last_month, last_7_days, last_90_days, year_to_date, a month like 2026-09, or a quarter like 2026-Q3.",
+          "pattern" : "^(this_month|last_month|last_7_days|last_90_days|year_to_date|[0-9]{4}-Q[1-4]|[0-9]{4}-(0[1-9]|1[0-2]))$",
+          "type" : "string"
+        },
+        "tag" : {
+          "description" : "A tag, e.g. \"Austin trip\" or \"Reimbursable\".",
+          "maxLength" : 32,
+          "minLength" : 1,
+          "type" : "string"
+        }
+      },
       "type" : "object"
     }
   },
@@ -963,7 +991,7 @@
     }
   },
   {
-    "description" : "Propose changes to specific transactions: file them under a category, keep the category they already have, hide them from spending and budget totals (or count them again), mark a yearly charge to spread it over the year (or not), add a note, or rename the merchant. Give only the fields to change.",
+    "description" : "Propose changes to specific transactions: file them under a category (optionally with every other transaction from the same merchant), keep the category they already have, hide them from spending and budget totals (or count them again), mark a yearly charge to spread it over the year (or not), add a note, rename the merchant, or add or remove tags. Give only the fields to change.",
     "kind" : "write",
     "name" : "editTransactions",
     "parameters" : {
@@ -973,6 +1001,18 @@
         "acceptGuess" : {
           "description" : "Keep the category each transaction already has, as the user's own choice.",
           "type" : "boolean"
+        },
+        "addTags" : {
+          "description" : "Tags to add, in the user's words.",
+          "items" : {
+            "description" : "A tag, e.g. \"Austin trip\" or \"Reimbursable\".",
+            "maxLength" : 32,
+            "minLength" : 1,
+            "type" : "string"
+          },
+          "maxItems" : 10,
+          "minItems" : 1,
+          "type" : "array"
         },
         "categoryID" : {
           "description" : "A category id from the category list.",
@@ -994,6 +1034,10 @@
           ],
           "type" : "string"
         },
+        "fileSimilar" : {
+          "description" : "With categoryID: also file every other transaction from the same merchant or with the same bank descriptor, going the same way, under it. Ones the user filed themselves keep their category.",
+          "type" : "boolean"
+        },
         "isHidden" : {
           "description" : "true leaves the transactions out of spending, income and budget totals (balances still include them); false counts them again.",
           "type" : "boolean"
@@ -1012,6 +1056,18 @@
           "description" : "A note to attach, in the user's words. An empty string removes the note.",
           "maxLength" : 500,
           "type" : "string"
+        },
+        "removeTags" : {
+          "description" : "Tags to take off.",
+          "items" : {
+            "description" : "A tag, e.g. \"Austin trip\" or \"Reimbursable\".",
+            "maxLength" : 32,
+            "minLength" : 1,
+            "type" : "string"
+          },
+          "maxItems" : 10,
+          "minItems" : 1,
+          "type" : "array"
         },
         "renameSimilar" : {
           "description" : "With merchant: also rename every transaction with the same bank descriptor, and future ones.",

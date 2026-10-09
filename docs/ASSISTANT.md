@@ -4,7 +4,7 @@ The `chat` model answers questions and can control the app. A separate decision 
 
 ## System prompt
 
-The demo ledger calls no model, so it has no prompt. Its answers are templated around tool results. The prompt the server gives the `chat` role is `AssistantPrompt.system(context)`, version `chat-2026-09-26.2`. It's rendered per request with today's date, the time zone, and the live category list with targets. A rendered copy is in [assistant/system-prompt.md](assistant/system-prompt.md), and the app shows the live one under Settings → Assistant → System prompt.
+The demo ledger calls no model, so it has no prompt. Its answers are templated around tool results. The prompt the server gives the `chat` role is `AssistantPrompt.system(context)`, version `chat-2026-10-09.1`. It's rendered per request with today's date, the time zone, and the live category list with targets. A rendered copy is in [assistant/system-prompt.md](assistant/system-prompt.md), and the app shows the live one under Settings → Assistant → System prompt.
 
 The prompt carries the rules a schema can't express:
 - **Numbers come from the ledger.** Every amount, difference, percentage and projection must appear in a tool result. For comparisons, the model calls `sumByCategory` with `compareTo` instead of subtracting.
@@ -21,8 +21,8 @@ The single source of truth is `ToolCatalog`. The server sends its OpenAI-compati
 
 | Kind | Tools | What happens |
 |---|---|---|
-| read | `queryTransactions` (with `spent` and `income`, the Activity summary's totals), `sumByCategory` (with optional `compareTo`), `sumByMerchant`, `projectBalance`, `flexBudget`, `cashFlow` (income against spending by month, as Plan shows it), `categoryHistory` (one category month by month), `savingsCapacity`, `savingsGuidance`, `categorize`, `findRules` | Runs on the ledger; the result goes back to the model. Every "Ask about this" question in the app lands on one of these |
-| write | `setCategoryTarget`, `adjustCategoryTarget`, `removeCategoryTarget`, `setMerchantTarget`, `removeMerchantTarget`, `setMonthlySavings`, `createCategory`, `updateCategory`, `mergeCategory`, `createBudgetRule`, `updateBudgetRule`, `deleteBudgetRule`, `recategorize`, `editTransactions`, `updateDecisionPolicy` | Becomes a `ProposedAction` card with ledger-computed before/after effects. Nothing changes until the user taps Apply |
+| read | `queryTransactions` (with `spent` and `income`, the Activity summary's totals), `sumByCategory` (with optional `compareTo`), `sumByMerchant`, `projectBalance`, `flexBudget`, `cashFlow` (income against spending by month, as Plan shows it), `categoryHistory` (one category month by month), `savingsCapacity`, `savingsGuidance`, `categorize`, `findRules`, `sumByTag` (one tag with spending by category, or every tag; `queryTransactions` also takes a `tag` and lists each row's tags) | Runs on the ledger; the result goes back to the model. Every "Ask about this" question in the app lands on one of these |
+| write | `setCategoryTarget`, `adjustCategoryTarget`, `removeCategoryTarget`, `setMerchantTarget`, `removeMerchantTarget`, `setMonthlySavings`, `createCategory`, `updateCategory`, `mergeCategory`, `createBudgetRule`, `updateBudgetRule`, `deleteBudgetRule`, `recategorize`, `editTransactions` (also `addTags`, `removeTags`, and `fileSimilar` to file the rest from a merchant), `updateDecisionPolicy` | Becomes a `ProposedAction` card with ledger-computed before/after effects. Nothing changes until the user taps Apply |
 | client | `navigate` | A card that opens a screen (including `recurring`) focused on a category, budget month, range, search or horizon |
 
 Schema rules, chosen so constrained decoders (llama.cpp grammars, vLLM/SGLang guided decoding) can enforce them:

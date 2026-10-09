@@ -11,6 +11,7 @@ extension Ledger {
         }
         let categoryIDs = filter.categoryIDs.flatMap { $0.isEmpty ? nil : Set($0) }
         let accountIDs = filter.accountIDs.flatMap { $0.isEmpty ? nil : Set($0) }
+        let tagKeys = filter.tags.flatMap { $0.isEmpty ? nil : Set($0.map(TransactionTags.key)) }
         let search = filter.search.flatMap(SearchText.init)
         let rows = transactions.filter { row in
             if let window, row.postedAt < window.start || row.postedAt >= window.end { return false }
@@ -18,6 +19,7 @@ extension Ledger {
             if let until = filter.until, row.postedAt >= until { return false }
             if let categoryIDs, !categoryIDs.contains(row.categorization?.categoryID ?? "") { return false }
             if let accountIDs, !accountIDs.contains(row.accountID) { return false }
+            if let tagKeys, !(row.tags ?? []).contains(where: { tagKeys.contains($0.lowercased()) }) { return false }
             switch filter.direction {
             case .moneyOut?: if row.amount.minorUnits >= 0 { return false }
             case .moneyIn?: if row.amount.minorUnits <= 0 { return false }
@@ -63,7 +65,7 @@ extension Ledger {
     }
 }
 
-/// What a search box matches: the merchant, the bank descriptor, the note, or — when the text reads as an
+/// What a search box matches: the merchant, the bank descriptor, the note, a tag, or — when the text reads as an
 /// amount — the amount. "42.50" (or "$42.50", "-42.50") is exact; "42" finds $42.00 up to $42.99.
 struct SearchText {
     let text: String
@@ -87,7 +89,8 @@ struct SearchText {
 
     func matches(_ row: LedgerTransaction) -> Bool {
         if row.merchant.localizedCaseInsensitiveContains(text) || row.rawDescription.localizedCaseInsensitiveContains(text)
-            || (row.note?.localizedCaseInsensitiveContains(text) ?? false) { return true }
+            || (row.note?.localizedCaseInsensitiveContains(text) ?? false)
+            || (row.tags ?? []).contains(where: { $0.localizedCaseInsensitiveContains(text) }) { return true }
         let magnitude = row.amount.magnitude.minorUnits
         if let cents { return magnitude == cents }
         if let dollars { return magnitude / 100 == dollars }
