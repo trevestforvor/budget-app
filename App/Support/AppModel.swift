@@ -206,8 +206,14 @@ final class AppModel {
     /// false while the server can't be asked).
     func serverSupports(_ minimum: String) async -> Bool {
         guard !isDemo else { return true }
+        return await knownServerVersion().map { ServerStatus.version($0, isAtLeast: minimum) } ?? false
+    }
+
+    /// The server's version, asked once per connection and kept; nil in the demo or while the server can't be asked.
+    func knownServerVersion() async -> String? {
+        guard !isDemo else { return nil }
         if serverVersion == nil { serverVersion = try? await api.serverStatus().version }
-        return serverVersion.map { ServerStatus.version($0, isAtLeast: minimum) } ?? false
+        return serverVersion
     }
 
     /// Opportunity cost from anywhere (the Home button, the Check a Price shortcut). Settings is closed first: it's

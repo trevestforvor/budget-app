@@ -40,6 +40,8 @@ struct TransactionDetailView: View {
     @State private var showsNote = false
     @State private var editsRecurring = false
     @State private var showsTags = false
+    /// False on a server older than merchant pages, so "About" isn't offered only to say "update the server".
+    @State private var hasMerchantPages = true
     @State private var openTag: TagRoute?
     /// Re-filing found others like it: the offer to file them too, shown before anything is filed.
     @State private var similarOffer: SimilarOffer?
@@ -113,6 +115,7 @@ struct TransactionDetailView: View {
         .task {
             if app.account(row.accountID) == nil { await app.refreshAccounts() }
         }
+        .task(id: app.revision) { hasMerchantPages = await !app.serverPredates(ServerStatus.merchantsSince) }
     }
 
     private func reload() async {
@@ -534,7 +537,7 @@ struct TransactionDetailView: View {
 
     private var footer: some View {
         VStack(alignment: .leading, spacing: DSSpace.sm) {
-            if app.merchants != nil {
+            if app.merchants != nil, hasMerchantPages {
                 NavigationLink("About \(row.merchant)") { MerchantDetailView(merchant: row.merchant) }
                     .buttonStyle(.ds(.quiet))
                     .frame(minHeight: DSSize.hitTarget)

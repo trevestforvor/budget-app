@@ -243,8 +243,12 @@ final class SettingsUITests: XCTestCase {
         XCTAssertEqual(name.value as? String, "Takeout", "the search becomes the name")
         snapshot("detail-new-category-editor")
         app.buttons["saveCategory"].tap()
-        XCTAssertTrue(text(containing: "Filed under Takeout").waitForExistence(timeout: 10), "the transaction is re-filed under it")
-        XCTAssertEqual(chip.value as? String, "Takeout")
+        // DoorDash's other rows are filed as Dining, so the ledger offers to file them too (apply to similar).
+        let fileSimilar = app.buttons["fileSimilarButton"]
+        XCTAssertTrue(fileSimilar.waitForExistence(timeout: 10), "re-filing offers the merchant's other rows")
+        fileSimilar.tap()
+        _ = XCTWaiter.wait(for: [XCTNSPredicateExpectation(predicate: NSPredicate(format: "value == 'Takeout'"), object: chip)], timeout: 10)
+        XCTAssertEqual(chip.value as? String, "Takeout", "the transaction is re-filed under it")
     }
 
     // MARK: Review

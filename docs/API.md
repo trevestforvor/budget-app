@@ -90,6 +90,8 @@ The math (`Ledger.paceAlerts`, all in the ledger): the everyday budget and its s
 
 The notification's payload carries `kind: "pace"`, `month` ("2026-10") and what a tap opens: `to: "budget"` (Spending's month), or `to: "category"` / `"merchant"` with `id` (the category id or merchant name). It's grouped with the other pace alerts (`thread-id` `pace-alerts`) and replaces an earlier one for the same target that month.
 
+The morning summary and pace alerts are separate notifications (`collapse-id` `summary-<day>` and `pace-<month>-<target>`, threads `morning-summary` and `pace-alerts`) and never stand in for each other: the summary tells yesterday (and safe to spend) once a day, and a pace alert goes out once per target and threshold a month whatever the summary said. Both write the same phone list (`budget_settings` "devices"), one write at a time, so a pace alert dropping a dead token can't undo the summary marking a day sent (which would send it twice).
+
 ### Dashboard (second listener, `DASHBOARD_PORT`)
 
 The browser dashboard is served on its own listener, behind an Olares `private` entrance, so the person has already signed in to Olares. It takes no bearer token. Its writes (anything but GET) must carry `X-Budget-Dashboard: 1` (a cross-site page can't send it without a preflight this server never approves) and, when the browser sends an `Origin`, come from the dashboard's own host; otherwise 403. Every `/v1` route above is also available here under the same rules. The phone's listener serves none of these.
@@ -301,7 +303,7 @@ Every spending figure uses one rule: each category is net of its own refunds and
 - `income`, `spending` and `saved` (= income − spending; negative when spending ran past income) are that month's `MonthFlow`, so they match Plan's cash flow to the cent. `movedToSavings` is what went into savings accounts as transfers, as "saved first" counts it.
 - `buckets: [RecapBucket {group, spent, planned?}]` are bills, subscriptions and everyday from that month's `BudgetMonth` (a spread charge counts its twelfth, so they can differ from `spending` by that). `planned` is nil when `hasBudget` is false: the month didn't have three full months before it.
 - `categoryChanges: [RecapCategoryChange {categoryID, name, spent, previous, change}]`: up to three spending categories that moved $20 or more against the whole month before, biggest first; empty when the ledger doesn't cover that month.
-- `cashChange` is checking and savings at the month's end less at its start. `netWorthChange` is the same for net worth once there's a net-worth history (`Ledger.recapNetWorthChange`, or passed in by `LedgerBudgetAPI.monthlyRecap`); nil until then, and the app shows `cashChange`.
+- `cashChange` is checking and savings at the month's end less at its start. `netWorthChange` is the same for net worth, from the [net worth history](#net-worth-server-050) (`Ledger.recapNetWorthChange`): net worth at the end of the month's last day less at the end of the day before it. It's nil when the history doesn't reach the day before the month, or when either end is estimated (an investment with no balance recorded by then), and the app (and Ask) then shows `cashChange`.
 - `summary` is a sentence or two from these figures, written by the ledger. `showsUntil` is the end of the first week of the next month for last month's recap (nil for any other), and `isFresh` says whether `asOf` is before it: when Home shows the card.
 
 `navigate` also takes `month` ("2026-09", for Spending) and the `recurring` screen.

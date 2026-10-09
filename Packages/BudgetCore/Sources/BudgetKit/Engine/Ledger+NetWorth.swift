@@ -32,7 +32,9 @@ extension Ledger {
     // MARK: History
 
     /// The breakdown and the series for `range`, from the snapshots recorded so far.
-    func netWorth(range: NetWorthRange, snapshots recordedSnapshots: [BalanceSnapshot]) -> NetWorth {
+    /// - Parameter thinned: false keeps a point for every day (the monthly recap reads two exact days); the API and
+    ///   the chart thin a long series to about 120 points.
+    func netWorth(range: NetWorthRange, snapshots recordedSnapshots: [BalanceSnapshot], thinned: Bool = true) -> NetWorth {
         // An account that's gone (unlinked, reset) leaves its records behind; they don't stretch the history back.
         let known = Set(accounts.map(\.id))
         let snapshots = recordedSnapshots.filter { known.contains($0.accountID) }
@@ -101,7 +103,7 @@ extension Ledger {
         let note = estimatedThrough.map {
             "Investments through \($0.formatted(dayStyle)) are estimated: no sync had recorded their balance yet, so they're held at the first one recorded."
         }
-        return NetWorth(range: range.rawValue, asOf: now, start: start, points: Self.thinned(all), netWorth: current,
+        return NetWorth(range: range.rawValue, asOf: now, start: start, points: thinned ? Self.thinned(all) : all, netWorth: current,
                         assets: all[last].assets, liabilities: all[last].liabilities, change: current - first,
                         changePercent: first.minorUnits > 0 ? Double(current.minorUnits - first.minorUnits) / Double(first.minorUnits) * 100 : nil,
                         assetLines: ordered(assetLines), liabilityLines: ordered(liabilityLines), manualAssets: manualAssets,

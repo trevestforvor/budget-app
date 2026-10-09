@@ -21,9 +21,9 @@ extension DemoToolbox {
     }
 
     /// `monthlyRecap`: a finished month — income, spending, what was left, each bucket against its budget, the categories
-    /// that moved most, and the change in cash.
-    func monthlyRecap(month: String?) throws -> (result: JSONValue, figures: [Figure]) {
-        let recap = try ledger.monthlyRecap(month)
+    /// that moved most, the change in cash, and the change in net worth when the recorded balances cover the month.
+    func monthlyRecap(month: String?, snapshots: [BalanceSnapshot]? = nil) throws -> (result: JSONValue, figures: [Figure]) {
+        let recap = try ledger.monthlyRecap(month, snapshots: snapshots)
         let name = ledger.monthStart(recap.month).map { $0.formatted(Ledger.monthStyle(ledger.calendar)) } ?? recap.month
         var figures = [Figure(id: "recap-income", label: "Income · \(name)", detail: nil, value: recap.income),
                        Figure(id: "recap-spending", label: "Spending · \(name)", detail: nil, value: recap.spending),

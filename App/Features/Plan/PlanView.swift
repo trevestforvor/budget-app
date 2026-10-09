@@ -100,7 +100,7 @@ struct PlanView: View {
         .sheet(item: $scenarioEdit) { edit in
             ScenarioSheet(scenario: edit.scenario) { saved in scenarioID = saved }
         }
-        .sheet(item: $eventEdit) { PlanEventSheet(scenario: $0.scenario, event: $0.event) }
+        .sheet(item: $eventEdit) { PlanEventSheet(scenario: $0.scenario, event: $0.event, upcoming: upcoming) }
     }
 
     @discardableResult
@@ -114,7 +114,8 @@ struct PlanView: View {
         if savings == nil { savings = await app.saved(.savings) }
         if scenarios == nil { scenarios = await app.saved(.scenarios(horizonMonths: horizon)) }
         async let plan = try? api.savingsPlan()
-        async let list = Self.scenarioList(planning, horizon: horizon)
+        // A task, not a second async let: two here crashed in swift_task_dealloc (asyncLet_finish) when the view loaded.
+        let list = Task { await Self.scenarioList(planning, horizon: horizon) }
         let updating = app.beginUpdating(showingSaved: first && state.value != nil)
         let (next, error) = await state.refreshing {
             guard let scenarioID, let planning else { return try await api.projection(horizonMonths: horizon, goal: nil) }
@@ -129,7 +130,7 @@ struct PlanView: View {
         state = next
         savings = await plan
         // Kept as it was when the list didn't load (offline with no saved copy); cleared on a server without scenarios.
-        if case let .success(fresh) = await list { scenarios = fresh }
+        if case let .success(fresh) = await list.value { scenarios = fresh }
         // A scenario deleted elsewhere falls back to the plain forecast.
         if let id = self.scenarioID, let scenarios, !scenarios.scenarios.contains(where: { $0.id == id }) { self.scenarioID = nil }
         if let fresh = try? await api.upcoming(days: UpcomingWindow.days) { upcoming = fresh }

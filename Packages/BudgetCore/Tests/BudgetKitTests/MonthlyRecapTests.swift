@@ -73,6 +73,42 @@ struct MonthlyRecapTests {
         #expect(try Rows.ledger(Self.rows()).monthlyRecap(nil, netWorthChange: Money(4100)).netWorthChange == Money(4100))
     }
 
+    @Test("Net worth from the history: every account's rows in the month, cards included; nil with no history at hand")
+    func netWorthFromHistory() throws {
+        let ledger = Rows.ledger(Self.rows())
+        // Pay in (+3,000), the move to savings nets out, and the card's August rows (hidden ones still move the
+        // balance): −250 + 30 − 190 − 40 − 999 = −1,449.
+        #expect(try ledger.monthlyRecap(nil, snapshots: []).netWorthChange == Money(1551))
+        #expect(try ledger.monthlyRecap(nil, snapshots: []).cashChange == Money(3000))
+        // No history store: the cash figure stands alone.
+        #expect(try ledger.monthlyRecap(nil, snapshots: nil).netWorthChange == nil)
+        // The ledger starts in June: July has the day before it (30 June), May's end it hasn't.
+        #expect(try ledger.monthlyRecap("2026-07", snapshots: []).netWorthChange != nil)
+    }
+
+    @Test("An investment with no balance recorded by the month's start leaves net worth out (a guess isn't shown)")
+    func netWorthEstimated() throws {
+        var state = Rows.state(Self.rows())
+        state.accounts.append(Account(id: "inv", name: "Brokerage", institution: "Northwind", kind: .investment, balance: Money(20_000), source: .plaid))
+        state.openingBalances["inv"] = Money(20_000)
+        let ledger = Ledger(state: state, now: EngineFixture.now, calendar: Fixture.calendar)
+        #expect(try ledger.monthlyRecap(nil, snapshots: []).netWorthChange == nil)
+        // Recorded on both ends: the investment's move counts.
+        let recorded = [BalanceSnapshot(accountID: "inv", day: "2026-07-31", balance: Money(19_000)),
+                        BalanceSnapshot(accountID: "inv", day: "2026-08-31", balance: Money(19_500))]
+        #expect(try ledger.monthlyRecap(nil, snapshots: recorded).netWorthChange == Money(1551 + 500))
+    }
+
+    @Test("The demo API's recap reads its recorded balances; Ask says net worth then")
+    func demoNetWorth() async throws {
+        let recap = try await Fixture.api().monthlyRecap(month: nil)
+        let change = try #require(recap.netWorthChange)
+        #expect(change != recap.cashChange)
+        let reply = try await Fixture.api().ask("How did last month go?", conversationID: nil)
+        #expect(reply.text.contains("Net worth"))
+        #expect(reply.figures.contains { $0.id == "recap-networth" && $0.value == change })
+    }
+
     @Test("Only a finished month the ledger holds")
     func refusals() {
         let ledger = Rows.ledger(Self.rows())

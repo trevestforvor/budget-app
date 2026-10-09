@@ -9,9 +9,13 @@ extension Ledger {
     /// A finished month in review (`MonthlyRecap`). Nil `key` is last month. Income, spending and what was left are cash
     /// flow's figures for the month; the buckets are the budget month's (`budgetMonth`), each against what the budget
     /// planned for it then.
-    /// - Parameter netWorthChange: the month's change in net worth, from a net-worth history kept outside the ledger.
-    ///   Without it, `recapNetWorthChange(from:to:)`; when neither has one, the recap shows the change in cash.
-    func monthlyRecap(_ key: String?, netWorthChange: Money? = nil) throws -> MonthlyRecap {
+    /// - Parameters:
+    ///   - snapshots: the balances recorded at sync (net worth history, `BalanceHistoryStore`). Given, the recap carries
+    ///     the month's change in net worth when that history covers both ends of the month (`recapNetWorthChange`).
+    ///     Nil (no history at hand) or a month the history only estimates leaves it out, and the recap shows the
+    ///     change in cash.
+    ///   - netWorthChange: a change worked out elsewhere, used as given (tests).
+    func monthlyRecap(_ key: String?, snapshots: [BalanceSnapshot]? = nil, netWorthChange: Money? = nil) throws -> MonthlyRecap {
         let lastMonth = interval(for: .lastMonth).start
         let key = key ?? monthKey(lastMonth)
         guard let start = monthStart(key) else { throw BudgetAPIError.rejected("A month is written like 2026-09.") }
@@ -34,15 +38,24 @@ extension Ledger {
         return MonthlyRecap(month: key, asOf: now, showsUntil: showsUntil, income: flow.income, spending: flow.spending, saved: flow.net,
                             movedToSavings: movedToSavings(from: start, to: end), buckets: buckets, hasBudget: hasBudget,
                             categoryChanges: changes, cashChange: cashChange,
-                            netWorthChange: netWorthChange ?? recapNetWorthChange(from: start, to: end),
+                            netWorthChange: netWorthChange ?? recapNetWorthChange(from: start, to: end, snapshots: snapshots),
                             summary: Self.recapSummary(name: name, flow: flow, buckets: buckets, changes: changes))
     }
 
-    /// Net worth at `end` less at `start`, from the ledger's own net-worth history. The seam for that history (D1): nil
-    /// until the ledger keeps one, and the recap shows the change in cash. The Ask tool and the API both read through
-    /// here, so filling this in reaches both; a history kept outside the ledger passes `monthlyRecap(_:netWorthChange:)`
-    /// instead (`LedgerBudgetAPI.monthlyRecap`).
-    func recapNetWorthChange(from start: Date, to end: Date) -> Money? { nil }
+    /// Net worth at the end of the month's last day less at the end of the day before it starts, from the net worth
+    /// history (`netWorth(range:snapshots:)`: cash and cards walked back through their rows, investments at their
+    /// recorded balances, hand-kept values). Nil without a history (`snapshots` nil), when the ledger doesn't reach back
+    /// to the day before the month, or when either end is estimated (an investment with no balance recorded by then),
+    /// so a change that is only a guess never stands in for the cash figure. The API and the Ask tool both read here.
+    func recapNetWorthChange(from start: Date, to end: Date, snapshots: [BalanceSnapshot]?) -> Money? {
+        guard let snapshots, let before = calendar.date(byAdding: .day, value: -1, to: start),
+              let last = calendar.date(byAdding: .day, value: -1, to: end), last <= now else { return nil }
+        let history = netWorth(range: .all, snapshots: snapshots, thinned: false)
+        let byDay = Dictionary(history.points.map { (dayName($0.date), $0) }, uniquingKeysWith: { a, _ in a })
+        guard let opening = byDay[dayName(before)], let closing = byDay[dayName(last)],
+              opening.isEstimated != true, closing.isEstimated != true else { return nil }
+        return closing.netWorth - opening.netWorth
+    }
 
     /// The spending categories that moved most against the whole month before, at least `recapChangeFloor` either way,
     /// biggest first — none when the ledger doesn't cover that month from its start.

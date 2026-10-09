@@ -415,11 +415,12 @@ public actor LedgerBudgetAPI: BudgetAPI {
         return ledger.recurringReview()
     }
 
-    /// A finished month in review (`MonthlyRecapAPI`). The net-worth change is nil until the ledger keeps a net-worth
-    /// history; the recap then shows the change in cash.
+    /// A finished month in review (`MonthlyRecapAPI`), with the month's change in net worth from the recorded balances
+    /// when they cover it; otherwise (no history yet, or it can't be read) the recap shows the change in cash.
     public func monthlyRecap(month: String?) async throws -> MonthlyRecap {
         tick(); await pause(0.5)
-        return try ledger.monthlyRecap(month, netWorthChange: nil)
+        let snapshots = try? await balanceHistory.balanceSnapshots()
+        return try ledger.monthlyRecap(month, snapshots: snapshots)
     }
 
     public func checkup() async throws -> Checkup {

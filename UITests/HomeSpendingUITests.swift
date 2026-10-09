@@ -201,9 +201,11 @@ final class HomeSpendingUITests: XCTestCase {
     func testRecurringUpcomingAndAll() {
         let app = launch(["-open", "recurring"])
         XCTAssertTrue(app.staticTexts["Due in the next 30 days"].waitForExistence(timeout: 10))
-        XCTAssertTrue(app.staticTexts["Netflix"].exists)
+        // The "To review" card (0.5.0) sits above the list, so the list starts below the fold.
+        let all = reveal(app.buttons["All"], in: app)
+        XCTAssertTrue(app.staticTexts["Netflix"].waitForExistence(timeout: 5))
         snapshot("recurring-upcoming")
-        app.buttons["All"].tap()
+        all.tap()
         XCTAssertTrue(app.staticTexts["Bills"].waitForExistence(timeout: 5))
         snapshot("recurring-all")
     }

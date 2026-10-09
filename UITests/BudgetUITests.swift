@@ -118,8 +118,12 @@ final class BudgetUITests: XCTestCase {
         for _ in 0..<8 where !(link.exists && link.isHittable) { app.swipeUp() }
         XCTAssertTrue(link.exists)
         link.tap()
+        // The "To review" card (0.5.0) sits above the list, so the list starts below the fold.
+        let all = app.buttons["All"]
+        XCTAssertTrue(app.descendants(matching: .any).matching(identifier: "recurringLayout").firstMatch.waitForExistence(timeout: 10))
+        for _ in 0..<8 where !(all.exists && all.isHittable) { app.swipeUp() }
         XCTAssertTrue(app.staticTexts["Netflix"].waitForExistence(timeout: 10))
-        app.buttons["All"].tap()
+        all.tap()
         XCTAssertTrue(app.staticTexts["Bills"].waitForExistence(timeout: 5))
         snapshot("subscriptions")
     }

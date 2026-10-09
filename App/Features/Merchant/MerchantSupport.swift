@@ -12,7 +12,7 @@ extension AppModel {
 
     /// Whether the server is older than `minimum` — so a 404 means "not yet" rather than "not there". The demo never is.
     func serverPredates(_ minimum: String) async -> Bool {
-        guard !isDemo, let version = try? await api.serverStatus().version else { return false }
+        guard let version = await knownServerVersion() else { return false }
         return !ServerStatus.version(version, isAtLeast: minimum)
     }
 }

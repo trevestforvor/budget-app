@@ -148,8 +148,15 @@ final class ActivityUITests: XCTestCase {
         XCTAssertTrue(groceries.waitForExistence(timeout: 5))
         snapshot("detail-category-picker")
         groceries.tap()
-        XCTAssertTrue(element(app, containing: "Filed under Groceries").waitForExistence(timeout: 10))
-        XCTAssertTrue(app.buttons["categoryChip"].value as? String == "Groceries")
+        // DoorDash has other rows filed as Dining, so the ledger first offers to file them too (apply to similar).
+        let fileSimilar = app.buttons["fileSimilarButton"]
+        XCTAssertTrue(fileSimilar.waitForExistence(timeout: 10))
+        snapshot("detail-file-similar-offer")
+        fileSimilar.tap()
+        XCTAssertTrue(element(app, containing: "Groceries").waitForExistence(timeout: 10))
+        let chip = app.buttons["categoryChip"]
+        _ = XCTWaiter.wait(for: [XCTNSPredicateExpectation(predicate: NSPredicate(format: "value == 'Groceries'"), object: chip)], timeout: 10)
+        XCTAssertTrue(chip.value as? String == "Groceries")
         app.buttons["Undo"].tap()
         XCTAssertTrue(element(app, containing: "Put back the way it was").waitForExistence(timeout: 10))
         XCTAssertTrue(app.buttons["categoryChip"].value as? String == "Dining")

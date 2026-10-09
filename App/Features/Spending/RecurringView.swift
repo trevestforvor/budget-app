@@ -98,13 +98,14 @@ struct RecurringView: View {
             .padding(.top, DSSpace.sm)
             .plainRow()
 
-        if let review, review.count > 0 || review.ended?.isEmpty == false {
-            RecurringReviewCard(review: review, toast: $toast).id(review).plainRow()
-        }
-
+        // The view switch first, so the calendar is always a tap away; the questions lead the list, not the calendar.
         DSSegmented("Show", selection: $layout, options: RecurringLayout.allCases) { $0.title }
             .plainRow()
             .accessibilityIdentifier("recurringLayout")
+
+        if layout == .list, let review, review.count > 0 || review.ended?.isEmpty == false {
+            RecurringReviewCard(review: review, toast: $toast).id(review).plainRow()
+        }
 
         if layout == .calendar {
             RecurringCalendarContent(upcoming: expected, problem: expectedProblem, subscriptions: found.items).plainRow()

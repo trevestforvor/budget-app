@@ -16,6 +16,8 @@ struct MerchantDetailView: View {
     @State private var renames = false
     @State private var makesRule = false
     @State private var editsCap = false
+    /// A new category found other rows like it: B1's "apply to similar" offer, shown before anything is filed.
+    @State private var similarOffer: SimilarOffer?
 
     init(merchant: String) {
         _name = State(initialValue: merchant)
@@ -51,11 +53,14 @@ struct MerchantDetailView: View {
         .sheet(isPresented: $picksCategory) {
             let summary = state.value
             CategoryPickerSheet(title: "File \(name) as", selected: summary?.categoryID,
-                                footnote: "Files its \(fileableIDs(summary).count) transactions here as your answer. Undo puts them back.") { picked in
-                // B1 seam: when "apply to similar" lands, offer it here with its preview count instead of filing these rows directly.
-                Task { await edits.file(fileableIDs(summary), as: picked.id) }
+                                footnote: "Shows how many of its transactions this reaches before filing. Undo puts them back.") { picked in
+                // Apply to similar (B1): file the newest charge and offer the merchant's others, with the ledger's count
+                // (refunds follow purchases; rows you filed yourself keep theirs).
+                guard let newest = fileableRows(summary).first else { return }
+                Task { similarOffer = await edits.fileOrOffer(newest, as: picked) }
             }
         }
+        .sheet(item: $similarOffer) { FileSimilarSheet(offer: $0, edits: edits) }
         .sheet(isPresented: $renames) {
             if let row = state.value?.transactions.first {
                 RenameMerchantSheet(transaction: row) { newName, similar in
@@ -95,12 +100,13 @@ struct MerchantDetailView: View {
         }
     }
 
-    /// Rows "change category" files: everything but transfers and money in, which aren't this merchant's spending.
-    private func fileableIDs(_ summary: MerchantSummary?) -> [String] {
+    /// Rows "change category" starts from, newest first: everything but transfers and money in, which aren't this
+    /// merchant's spending.
+    private func fileableRows(_ summary: MerchantSummary?) -> [LedgerTransaction] {
         (summary?.transactions ?? []).filter { row in
             let category = app.category(row.categorization?.categoryID)
             return category?.isMoneyIn != true && category?.id != BudgetCategory.transferID
-        }.map(\.id)
+        }.sorted { $0.postedAt > $1.postedAt }
     }
 
     // MARK: Header
@@ -204,7 +210,7 @@ struct MerchantDetailView: View {
                               value: category?.name ?? "Not filed", showsChevron: true)
                 }
                 .buttonStyle(.plain)
-                .disabled(fileableIDs(m).isEmpty)
+                .disabled(fileableRows(m).isEmpty)
                 .accessibilityHint("Files all of its transactions under another category")
                 .accessibilityIdentifier("merchantCategory")
                 DSDivider()

@@ -49,6 +49,9 @@ final class RecurringUITests: XCTestCase {
     func testTakeOffRecurringAndPutBack() {
         let app = launch(["-open", "recurring"])
         let netflix = element(app, containing: "Netflix")
+        // The "To review" card (0.5.0) sits above the list, so the list starts below the fold.
+        XCTAssertTrue(app.descendants(matching: .any).matching(identifier: "recurringLayout").firstMatch.waitForExistence(timeout: 10))
+        scroll(to: netflix, in: app)
         XCTAssertTrue(netflix.waitForExistence(timeout: 10))
         netflix.tap()
         let remove = app.buttons["recurringRemove"]

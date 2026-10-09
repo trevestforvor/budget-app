@@ -41,6 +41,10 @@ public actor MorningSummary {
     static let freshSync: TimeInterval = 2 * 3600
     static let keptDigests = 14
 
+    /// Device writes take turns (`oneAtATime`).
+    private var writingDevices = false
+    private var waitingDeviceWriters: [CheckedContinuation<Void, Never>] = []
+
     public init(api: LedgerBudgetAPI, store: any ServerStore, sync: SyncService, settings: ServerSettings, push: PushSender,
                 logger: Logger, clock: @escaping @Sendable () -> Date = { Date() }) {
         self.api = api
@@ -63,11 +67,22 @@ public actor MorningSummary {
     }
 
     func update(_ token: String, _ change: (inout StoredDevice) -> Void) async throws -> StoredDevice {
-        var all = try await devices()
-        guard let index = all.firstIndex(where: { $0.token == token }) else { throw BudgetAPIError.notFound }
-        change(&all[index])
-        try await save(all)
-        return all[index]
+        try await oneAtATime {
+            var all = try await devices()
+            guard let index = all.firstIndex(where: { $0.token == token }) else { throw BudgetAPIError.notFound }
+            change(&all[index])
+            try await save(all)
+            return all[index]
+        }
+    }
+
+    /// Writes to the device list take turns. Each reads the whole list, changes one phone and saves it all back, and
+    /// two that overlap across those awaits (the morning summary marking a day sent while the pace-alert sender drops a
+    /// dead token, or a phone registering) would lose one's change; losing `lastSentDay` would send the summary twice.
+    private func oneAtATime<T>(_ body: () async throws -> T) async throws -> T {
+        if writingDevices { await withCheckedContinuation { waitingDeviceWriters.append($0) } } else { writingDevices = true }
+        defer { if waitingDeviceWriters.isEmpty { writingDevices = false } else { waitingDeviceWriters.removeFirst().resume() } }
+        return try await body()
     }
 
     public func register(_ r: DeviceRegistration) async throws -> DeviceStatus {
@@ -75,6 +90,11 @@ public actor MorningSummary {
         guard token.count >= 32 else { throw BudgetAPIError.rejected("That isn't an APNs device token.") }
         guard TimeZone(identifier: r.timeZone) != nil else { throw BudgetAPIError.rejected("“\(r.timeZone)” isn't a time zone.") }
         guard (0...23).contains(r.hour), (0...59).contains(r.minute) else { throw BudgetAPIError.rejected("The time must be a valid hour and minute.") }
+        let device = try await oneAtATime { try await registered(token, r) }
+        return await status(device)
+    }
+
+    private func registered(_ token: String, _ r: DeviceRegistration) async throws -> StoredDevice {
         var all = try await devices()
         var device = all.first { $0.token == token }
             ?? StoredDevice(token: token, environment: r.environment, timeZone: r.timeZone, enabled: r.enabled, hour: r.hour, minute: r.minute, updatedAt: clock())
@@ -88,7 +108,7 @@ public actor MorningSummary {
         all.removeAll { $0.token == token }
         all.append(device)
         try await save(all)
-        return await status(device)
+        return device
     }
 
     func status(_ d: StoredDevice) async -> DeviceStatus {

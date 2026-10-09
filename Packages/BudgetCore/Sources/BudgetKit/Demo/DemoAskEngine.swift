@@ -118,12 +118,17 @@ struct DemoAskEngine {
     private func recapIntent(_ q: String, _ cid: String) -> AskReply? {
         guard ["recap", "how did last month go", "last month go", "month in review", "how was last month"].contains(where: q.contains) else { return nil }
         let key = q.contains("last month") ? nil : pastMonthKey(q)
-        guard let recap = try? ledger.monthlyRecap(key), let out = try? toolbox.monthlyRecap(month: key) else { return nil }
+        guard let recap = try? ledger.monthlyRecap(key, snapshots: balanceSnapshots),
+              let out = try? toolbox.monthlyRecap(month: key, snapshots: balanceSnapshots) else { return nil }
         var lines = [recap.summary]
         if let top = recap.categoryChanges.first {
             lines.append("The biggest change was \(top.name): \(top.spent.formatted()), \(top.change.isNegative ? "down" : "up") \(top.change.magnitude.formatted()) on the month before.")
         }
-        lines.append("Cash \(recap.cashChange.isNegative ? "fell" : "grew") by \(recap.cashChange.magnitude.formatted()) over the month.")
+        if let change = recap.netWorthChange {
+            lines.append("Net worth \(change.isNegative ? "fell" : "grew") by \(change.magnitude.formatted()) over the month.")
+        } else {
+            lines.append("Cash \(recap.cashChange.isNegative ? "fell" : "grew") by \(recap.cashChange.magnitude.formatted()) over the month.")
+        }
         return reply(cid, text: lines.joined(separator: " "), figures: out.figures,
                      tools: [call("monthlyRecap", key.map { ["month": .string($0)] } ?? [:])], followUps: ["How has my cash flow changed?"])
     }

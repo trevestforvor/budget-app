@@ -52,7 +52,9 @@ struct DemoToolbox: AgentToolbox {
         case "checkPace": return checkPace()
         case "findSubscriptions": return findSubscriptions()
         case "recurringReview": return recurringReview()
-        case "monthlyRecap": return try monthlyRecap(month: string("month"))
+        case "monthlyRecap":
+            let snapshots = try? await balanceHistory?.balanceSnapshots()
+            return try monthlyRecap(month: string("month"), snapshots: snapshots ?? nil)
         case "findUpcoming": return findUpcoming(days: int("days") ?? 30)
         case "findRules": return findRules()
         case "sumByTag": return try sumByTag(string("tag"), period: string("period"))

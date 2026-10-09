@@ -299,3 +299,33 @@ struct MorningSummaryRouteTests {
         }
     }
 }
+
+/// The morning summary and the pace-alert sender both write the device list; neither may undo the other's change.
+@Suite("Morning summary: device writes")
+struct DeviceWriteTests {
+    @Test("Phones registering at once are all kept, and a change from the pace sender doesn't undo a summary marked sent")
+    func writesTakeTurns() async throws {
+        let (_, service) = try await PushFixture.service(apns: FakeAPNs(), clock: TestClock(PushFixture.at(9, 31)), spending: false)
+        let tokens = (0..<20).map { String(format: "%064x", $0 + 1) }
+        try await withThrowingTaskGroup(of: Void.self) { group in
+            for token in tokens {
+                group.addTask {
+                    _ = try await service.morning.register(DeviceRegistration(token: token, environment: .sandbox, timeZone: "America/Los_Angeles",
+                                                                              enabled: true))
+                }
+            }
+            try await group.waitForAll()
+        }
+        #expect(Set(try await service.morning.devices().map(\.token)) == Set(tokens))
+
+        // The summary marks a day sent while the pace sender moves the same phone's environment: both land.
+        let token = tokens[0]
+        try await withThrowingTaskGroup(of: Void.self) { group in
+            group.addTask { _ = try await service.morning.update(token) { $0.lastSentDay = "2026-09-29" } }
+            group.addTask { _ = try await service.morning.update(token) { $0.environment = .production } }
+            try await group.waitForAll()
+        }
+        let device = try #require(try await service.morning.devices().first { $0.token == token })
+        #expect(device.lastSentDay == "2026-09-29" && device.environment == .production)
+    }
+}

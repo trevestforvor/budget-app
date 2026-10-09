@@ -45,6 +45,8 @@ struct SpendingView: View {
     @State private var recurring: SubscriptionSummary?
     /// Paychecks, bills and card bills coming up (`GET /v1/upcoming`); nil from a server without it.
     @State private var expected: Upcoming?
+    /// Questions waiting on the Recurring screen ("Is this recurring?", "Did this stop?"); 0 from a server without them.
+    @State private var recurringToReview = 0
     @State private var caps: [MerchantCap] = []
     /// The ledger's first row, so the switcher stops where the data does.
     @State private var earliest: Date?
@@ -153,6 +155,7 @@ struct SpendingView: View {
         recurring = await found
         // After the others, not as a third async let: three here abort the task allocator.
         if current, let fresh = try? await api.upcoming(days: UpcomingWindow.days) { expected = fresh }
+        if current, let review = try? await (api as? any RecurringReviewAPI)?.recurringReview() { recurringToReview = review.count }
         caps = await summary?.merchantCaps ?? []
         return error
     }
@@ -483,7 +486,14 @@ struct SpendingView: View {
                     DSDivider()
                     Button { path.append(RecurringRoute()) } label: {
                         HStack {
-                            Text("Due in the next 30 days").dsFont(.callout).foregroundStyle(Color.ds.inkSecondary)
+                            VStack(alignment: .leading, spacing: DSSpace.xxs) {
+                                Text("Due in the next 30 days").dsFont(.callout).foregroundStyle(Color.ds.inkSecondary)
+                                if recurringToReview > 0 {
+                                    DSTag("\(recurringToReview) to review", tint: Color.ds.amber)
+                                        .accessibilityIdentifier("recurringToReview")
+                                }
+                            }
+                            .padding(.vertical, recurringToReview > 0 ? DSSpace.xs : 0)
                             Spacer()
                             DSAmountText((found.dueNext30Days ?? upcoming.map(\.amount).sum()).decimal, sign: .magnitude)
                             Image(systemName: "chevron.right").font(.system(size: DSIconSize.xs, weight: .semibold))
@@ -494,7 +504,8 @@ struct SpendingView: View {
                     }
                     .buttonStyle(.plain)
                     .accessibilityIdentifier("subscriptions")
-                    .accessibilityHint("Opens every recurring charge")
+                    .accessibilityHint(recurringToReview > 0 ? "Opens every recurring charge, with questions waiting on some"
+                                                             : "Opens every recurring charge")
                 }
                 .padding(.horizontal, DSSpace.md)
             }

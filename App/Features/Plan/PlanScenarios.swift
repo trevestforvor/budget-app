@@ -92,6 +92,8 @@ struct ScenarioCard: View {
             }
         }
         .announcesProblem(problem)
+        // A container, so the rows and "Add a change" keep their own identifiers instead of taking the card's.
+        .accessibilityElement(children: .contain)
         .accessibilityIdentifier("scenarioCard")
     }
 
@@ -286,6 +288,8 @@ struct PlanEventSheet: View {
     let scenario: PlanScenario
     /// Nil adds one.
     let event: PlanEvent?
+    /// What's coming up (A1): its expected paycheck puts a "Money in" change against today's pay. Nil hides that.
+    var upcoming: Upcoming? = nil
     @Environment(AppModel.self) private var app
     @Environment(\.dismiss) private var dismiss
     @State private var name = ""
@@ -317,6 +321,13 @@ struct PlanEventSheet: View {
                     DSField("What is it", text: $name, prompt: "Car payment, Bonus, Rent goes up…")
                         .accessibilityIdentifier("planEventName")
                     DSSegmented("Money", selection: $kind, options: [(value: PlanEvent.Kind.expense, title: "Money out"), (value: .income, title: "Money in")])
+                    if kind == .income, let pay = upcoming?.nextPaycheck {
+                        Text("Your pay now: about \(pay.amount.formatted(fractionDigits: 0)) \(upcoming?.payCadence ?? "a paycheck"). "
+                             + "A raise counts only what it adds; the forecast already has today's pay.")
+                            .dsFont(.caption).foregroundStyle(Color.ds.inkSecondary)
+                            .fixedSize(horizontal: false, vertical: true)
+                            .accessibilityIdentifier("planEventPay")
+                    }
                     DSAmountField(currencySymbol: nil, style: .amount, alignment: .leading) {
                         TextField("Amount", value: $amount, format: .currency(code: "USD").precision(.fractionLength(0...2)))
                             .keyboardType(.decimalPad)
