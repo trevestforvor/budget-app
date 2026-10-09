@@ -580,9 +580,13 @@ extension LedgerTransaction {
 private struct TransactionDetailSheet: ViewModifier {
     @Binding var item: LedgerTransaction?
     let onShowAccount: ((String) -> Void)?
+    @Environment(AppModel.self) private var app
 
     func body(content: Content) -> some View {
-        content.sheet(item: $item) { row in
+        content
+            // Going somewhere from inside the sheet (All from, In Activity, Ask) closes it, so the new place shows.
+            .onChange(of: app.navigationToken) { item = nil }
+            .sheet(item: $item) { row in
             NavigationStack {
                 TransactionDetailView(transaction: row, presentation: .sheet, onShowAccount: onShowAccount)
                     .navigationDestination(for: LedgerTransaction.self) { TransactionDetailView(transaction: $0) }

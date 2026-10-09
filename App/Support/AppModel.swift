@@ -50,6 +50,9 @@ final class AppModel {
     var pendingPrice: Decimal?
     /// Set by launch arguments or cross-screen actions; consumed by AskView.
     var pendingQuestion: String?
+    /// Bumped each time the app goes somewhere (`route`, `ask`, `showActivity`). A sheet watches it and closes, so a
+    /// tap inside one never switches the tab out of sight underneath it.
+    private(set) var navigationToken = 0
     var opensFirstReview = false
     /// Navigation requests from `navigate` actions, consumed by the target screen.
     var spendingRoute: SpendingRoute?
@@ -224,6 +227,7 @@ final class AppModel {
     }
 
     func route(_ destination: Navigate) {
+        navigationToken &+= 1
         switch destination.screen {
         case .home: selectedTab = .home
         case .spending:
@@ -247,12 +251,14 @@ final class AppModel {
 
     /// Activity with only `day`'s transactions.
     func showActivity(on day: Date) {
+        navigationToken &+= 1
         activityDay = day
         selectedTab = .activity
     }
 
     /// Opens Ask with `question` on a fresh conversation — what every "Ask about this" button does.
     func ask(_ question: String) {
+        navigationToken &+= 1
         pendingQuestion = question
         selectedTab = .ask
     }

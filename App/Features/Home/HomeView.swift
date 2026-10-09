@@ -52,6 +52,8 @@ struct HomeView: View {
             .navigationDestination(isPresented: $showsAccounts) { AccountsView() }
             .navigationDestination(isPresented: $app.showsNetWorth) { NetWorthView() }
             .sheet(isPresented: $app.showsSettings) { SettingsView() }
+            // The recap's Ask link goes to Ask: the sheet closes so it shows.
+            .onChange(of: app.navigationToken) { showsMonthlyRecap = false }
             .sheet(isPresented: $showsMonthlyRecap) {
                 if let monthlyRecap { MonthlyRecapSheet(recap: monthlyRecap) }
             }
