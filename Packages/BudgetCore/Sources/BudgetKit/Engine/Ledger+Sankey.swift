@@ -44,7 +44,8 @@ extension Ledger {
         // exactly — a payer that took money back (a reversed deposit) comes off the smallest named one.
         let moneyIn = moneyInCategoryIDs
         var byPayer: [String: Int64] = [:]
-        for row in rows where moneyIn.contains(row.categorization?.categoryID ?? "") {
+        // The same rows `netIncome` counts: a hidden deposit names no source.
+        for row in rows where !row.isHidden && moneyIn.contains(row.categorization?.categoryID ?? "") {
             byPayer[row.merchant, default: 0] += row.amount.minorUnits
         }
         let payers = byPayer.filter { $0.value > 0 }.sorted { $0.value != $1.value ? $0.value > $1.value : $0.key < $1.key }

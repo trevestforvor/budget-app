@@ -88,11 +88,12 @@ public enum ToolCatalog {
                      "compareTo": period,
                      "categoryID": categoryID,
                  ], required: ["period"])),
-        ToolSpec(name: "projectBalance", description: "Project cash after cards (cash less what's owed on cards) forward at the recent pace of income less spending — the last three complete months, a yearly charge counted a twelfth a month — optionally checking whether a savings goal fits.", kind: .read,
+        ToolSpec(name: "projectBalance", description: "Project cash after cards (cash less what's owed on cards) forward at the recent pace of income less spending — the last three complete months, a yearly charge counted a twelfth a month — optionally checking whether a savings goal fits. With scenarioID (from planScenarios), the projection and the goal include that Plan scenario's switched-on changes, with the plain forecast's end beside them.", kind: .read,
                  schema: .object(nil, [
                      "account": .string("Which balance to project.", enum: ["cash"]),
                      "horizonMonths": .integer("How many months ahead.", minimum: 1, maximum: 36),
                      "goal": .object("A goal to check against the projection.", ["amount": amount, "targetDate": date], required: ["amount", "targetDate"]),
+                     "scenarioID": .string("A Plan scenario id from planScenarios, to project with its changes; leave out for the plain forecast.", minLength: 1, maxLength: 64),
                  ], required: ["account", "horizonMonths"])),
         ToolSpec(name: "planScenarios", description: "The user's Plan scenarios: named sets of planned changes (a car payment from a month on, a one-time bonus, rent going up), each change with its amount, money in or out, how often, its months and whether it's switched on — and where each scenario leaves cash after cards at the end of the horizon against the plain forecast (projectBalance's). With scenarioID it also projects that scenario month by month and, with a goal, checks the goal against it. Read only: the user edits scenarios on the Plan screen.", kind: .read,
                  schema: .object(nil, [

@@ -98,6 +98,8 @@ struct CashFlowSankeyTests {
     func countedOnly() throws {
         let rows = [
             Rows.row("pay", "chk", 2, 3000, "ACME PAYROLL", "income"),
+            // A hidden deposit is no source: it would otherwise take the top spot and crowd out the real payer.
+            Rows.row("hidden-pay", "chk", 2, 9000, "OLD EMPLOYER", "income", hidden: true),
             Rows.row("hidden", "card", 3, -800, "BIG TV", "shopping", hidden: true),
             Rows.row("move", "chk", 4, -500, "TRANSFER TO SAV", "transfer"),
             Rows.row("dinner", "card", 5, -60, "HARVEST TABLE", "dining"),
@@ -107,6 +109,7 @@ struct CashFlowSankeyTests {
         let flow = try Rows.ledger(rows).cashFlowSankey(month: nil)
         Self.expectBalanced(flow)
         #expect(flow.spending == Money(40))
+        #expect(flow.nodes.filter { $0.column == 0 }.map(\.label) == ["Acme Payroll"])
         #expect(flow.node("cat-everyday-dining") == nil && flow.node("cat-everyday-shopping") == nil)
         #expect(flow.income == Money(3000) && flow.saved == Money(2960))
     }

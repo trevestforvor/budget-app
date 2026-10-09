@@ -35,7 +35,9 @@ struct DemoToolbox: AgentToolbox {
                                      minAmount: string("minAmount").flatMap(DecimalAmount.init(string:))?.money(),
                                      maxAmount: string("maxAmount").flatMap(DecimalAmount.init(string:))?.money(),
                                      direction: string("direction").flatMap(TransactionFilter.Direction.init(rawValue:)))
-        case "projectBalance": return projectBalance(horizon: int("horizonMonths") ?? 6, goal: goalArgument(args["goal"]))
+        case "projectBalance":
+            return projectBalance(horizon: int("horizonMonths") ?? 6, goal: goalArgument(args["goal"]),
+                                  scenario: try string("scenarioID").map { try ledger.planScenario($0) })
         case "planScenarios": return try planScenarios(scenarioID: string("scenarioID"), horizon: int("horizonMonths") ?? 12, goal: goalArgument(args["goal"]))
         case "monthFlow": return try monthFlow(month: string("month"))
         case "flexBudget": return flexBudget()
@@ -187,8 +189,10 @@ struct DemoToolbox: AgentToolbox {
         ]), figures)
     }
 
-    func projectBalance(horizon: Int, goal: GoalQuery?) -> (result: JSONValue, figures: [Figure]) {
-        let p = ledger.projection(horizonMonths: horizon, goal: goal)
+    /// With `scenario`, the projection and the goal include a Plan scenario's switched-on changes, with the plain
+    /// forecast's end beside them.
+    func projectBalance(horizon: Int, goal: GoalQuery?, scenario: PlanScenario? = nil) -> (result: JSONValue, figures: [Figure]) {
+        let p = ledger.projection(horizonMonths: horizon, goal: goal, scenario: scenario)
         var o: [String: JSONValue] = [
             "cashNow": .string(ledger.cash(through: ledger.now).display), "cardsOwed": .string((p.cardsOwed ?? .zero).display),
             "cashAfterCardsNow": .string(p.projected[0].expected.display),
@@ -199,6 +203,16 @@ struct DemoToolbox: AgentToolbox {
             "likelyRange": .string("\(p.projected.last!.low.display) to \(p.projected.last!.high.display)"),
         ]
         var figures = [Figure(id: "projected", label: "Cash after cards in \(p.horizonMonths) months", detail: "At \(p.monthlyNet.display)/mo", value: p.endBalance)]
+        if let scenario, let plain = p.baselineEndBalance, let effect = p.scenarioEffect {
+            o["scenario"] = .string(scenario.name)
+            o["projectedEndIs"] = .string("cash after cards: cash less what's owed on cards, with the scenario's switched-on changes")
+            o["plainForecastEnd"] = .string(plain.display)
+            o["differenceFromPlainForecast"] = .string(effect.display)
+            figures[0] = Figure(id: "projected", label: "Cash after cards in \(p.horizonMonths) months, with \(scenario.name)",
+                                detail: "At \(p.monthlyNet.display)/mo plus its changes", value: p.endBalance)
+            figures += [Figure(id: "plain-end", label: "Plain forecast in \(p.horizonMonths) months", detail: "Cash after cards", value: plain),
+                        Figure(id: "scenario-effect", label: "\(scenario.name) against the plain forecast", detail: nil, value: effect)]
+        }
         if let g = p.goal {
             o["goal"] = .object(["amount": .string(g.query.amount.display), "by": .string(isoDay(g.query.targetDate)),
                                  "projectedSavings": .string(g.projectedSavings.display), "onTrack": .bool(g.isOnTrack),

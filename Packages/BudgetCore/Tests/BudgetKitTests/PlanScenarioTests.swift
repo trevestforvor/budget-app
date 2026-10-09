@@ -157,6 +157,8 @@ struct PlanScenarioTests {
                                                     endMonth: "2027-04", cadence: .monthly)]), "“A” ends before it starts."),
         (SavePlanScenario(name: "X", events: [.init(name: "", kind: .income, amount: DecimalAmount(minorUnits: 100), startMonth: "2027-05", cadence: .once)]),
          "Each change needs a name, like “Car payment”."),
+        (SavePlanScenario(name: "X", events: [.init(id: "has space", name: "A", kind: .income, amount: DecimalAmount(minorUnits: 100), startMonth: "2027-05", cadence: .once)]),
+         "That isn't a change id."),
     ])
     func refused(draft: SavePlanScenario, message: String) {
         #expect(throws: BudgetAPIError.rejected(message)) { try Fixture.ledger().validatedScenario(draft) }
@@ -229,5 +231,35 @@ struct PlanScenarioTests {
         #expect(months.count == 12)
         #expect(g["scenario"] == .string("New car"))
         #expect(out.figures.contains { $0.id == "goal-saved" })
+    }
+
+    @Test("projectBalance takes a scenario: its end, the plain forecast's and the difference are the projection's")
+    func projectBalanceTool() async throws {
+        let ledger = Fixture.ledger()
+        let toolbox = DemoToolbox(ledger: ledger, decisions: nil)
+        func run(_ json: String) async throws -> (result: JSONValue, figures: [Figure]) {
+            try await toolbox.run(read: "projectBalance", arguments: try JSONDecoder().decode(JSONValue.self, from: Data(json.utf8)))
+        }
+        let goal = #"{"amount": "8000", "targetDate": "2027-06-30"}"#
+        let args = #"{"account": "cash", "horizonMonths": 12, "scenarioID": "scn-car", "goal": \#(goal)}"#
+        try ToolCatalog.validateArguments(tool: "projectBalance", json: Data(args.utf8))
+        let out = try await run(args)
+        let p = ledger.projection(horizonMonths: 12, goal: nil, scenario: try ledger.planScenario("scn-car"))
+        guard case let .object(o) = out.result else { Issue.record("not an object"); return }
+        #expect(o["scenario"] == .string("New car"))
+        #expect(o["projectedEnd"] == .string(p.endBalance.display))
+        #expect(o["plainForecastEnd"] == .string(p.baselineEndBalance!.display))
+        #expect(o["differenceFromPlainForecast"] == .string(p.scenarioEffect!.display))
+        #expect(out.figures.contains { $0.id == "scenario-effect" && $0.value == p.scenarioEffect })
+        guard case let .object(g)? = o["goal"] else { Issue.record("no goal"); return }
+        let check = ledger.projection(horizonMonths: 12, goal: GoalQuery(amount: Money(8000), targetDate: Fixture.calendar.date(from: DateComponents(year: 2027, month: 6, day: 30))!),
+                                      scenario: try ledger.planScenario("scn-car")).goal!
+        #expect(check.scenarioID == "scn-car" && g["projectedSavings"] == .string(check.projectedSavings.display))
+
+        // Without one it's the plain forecast, as before.
+        let plain = try await run(#"{"account": "cash", "horizonMonths": 12}"#)
+        guard case let .object(po) = plain.result else { Issue.record("not an object"); return }
+        #expect(po["scenario"] == nil && po["projectedEnd"] == .string(p.baselineEndBalance!.display))
+        await #expect(throws: BudgetAPIError.notFound) { try await run(#"{"account": "cash", "horizonMonths": 12, "scenarioID": "nope"}"#) }
     }
 }

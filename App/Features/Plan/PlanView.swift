@@ -110,20 +110,33 @@ struct PlanView: View {
         if savings == nil { savings = await app.saved(.savings) }
         if scenarios == nil { scenarios = await app.saved(.scenarios(horizonMonths: horizon)) }
         async let plan = try? api.savingsPlan()
-        // A server before 0.5.0 has no scenarios: the list is a 404 and the picker stays away.
-        let list = Task { try? await planning?.scenarios(horizonMonths: horizon) }
+        async let list = Self.scenarioList(planning, horizon: horizon)
         let updating = app.beginUpdating(showingSaved: first && state.value != nil)
         let (next, error) = await state.refreshing {
-            if let scenarioID, let planning { try await planning.projection(horizonMonths: horizon, goal: nil, scenarioID: scenarioID) }
-            else { try await api.projection(horizonMonths: horizon, goal: nil) }
+            guard let scenarioID, let planning else { return try await api.projection(horizonMonths: horizon, goal: nil) }
+            do {
+                return try await planning.projection(horizonMonths: horizon, goal: nil, scenarioID: scenarioID)
+            } catch BudgetAPIError.notFound {
+                // Deleted elsewhere: show the plain forecast, and the selection falls back below.
+                return try await api.projection(horizonMonths: horizon, goal: nil)
+            }
         }
         app.endUpdating(updating)
         state = next
         savings = await plan
-        scenarios = await list.value
+        // Kept as it was when the list didn't load (offline with no saved copy); cleared on a server without scenarios.
+        if case let .success(fresh) = await list { scenarios = fresh }
         // A scenario deleted elsewhere falls back to the plain forecast.
         if let id = self.scenarioID, let scenarios, !scenarios.scenarios.contains(where: { $0.id == id }) { self.scenarioID = nil }
         return error
+    }
+
+    /// The scenario list; nil on a server before 0.5.0, which has no scenarios (a 404), so the picker stays away.
+    private static func scenarioList(_ planning: (any PlanScenariosAPI)?, horizon: Int) async -> Result<ScenarioList?, any Error> {
+        guard let planning else { return .success(nil) }
+        do { return .success(try await planning.scenarios(horizonMonths: horizon)) }
+        catch BudgetAPIError.notFound { return .success(nil) }
+        catch { return .failure(error) }
     }
 
     @ViewBuilder

@@ -132,6 +132,7 @@ extension Ledger {
                 guard span >= 0 else { throw BudgetAPIError.rejected("“\(label)” ends before it starts.") }
             }
             let id = e.id ?? PlanScenario.newID("evt")
+            guard (1...64).contains(id.count), !id.contains(where: \.isWhitespace) else { throw BudgetAPIError.rejected("That isn't a change id.") }
             guard ids.insert(id).inserted else { throw BudgetAPIError.rejected("Two changes share the id \(id).") }
             return PlanEvent(id: id, name: label, kind: e.kind, amount: e.amount.money(), startMonth: e.startMonth, endMonth: end,
                              cadence: e.cadence, isEnabled: e.isEnabled ?? true)

@@ -129,7 +129,7 @@ struct ScenarioCard: View {
             .buttonStyle(.plain)
             .accessibilityHint("Edits this change")
             Toggle(isOn: Binding(get: { event.isEnabled }, set: { on in Task { await toggle(event, in: scenario, on: on) } })) {
-                Text("Count \(event.name)")
+                Text("Include \(event.name)")
             }
             .labelsHidden()
             .tint(Color.ds.accent)
@@ -288,7 +288,6 @@ struct PlanEventSheet: View {
     let event: PlanEvent?
     @Environment(AppModel.self) private var app
     @Environment(\.dismiss) private var dismiss
-    @Environment(\.dynamicTypeSize) private var dynamicTypeSize
     @State private var name = ""
     @State private var kind: PlanEvent.Kind = .expense
     @State private var amount: Decimal = 0
@@ -301,6 +300,11 @@ struct PlanEventSheet: View {
     @State private var problem: String?
 
     private var latest: Date { Calendar.current.date(byAdding: .year, value: 10, to: AppClock.now)! }
+    /// This month, or a change's own start when it began earlier, so editing it doesn't move its start.
+    private var earliest: Date {
+        let thisMonth = MonthKey.start(of: AppClock.now)
+        return min(thisMonth, event.flatMap { MonthKey.date($0.startMonth) } ?? thisMonth)
+    }
 
     var body: some View {
         NavigationStack {
@@ -322,7 +326,7 @@ struct PlanEventSheet: View {
                     DSSegmented("How often", selection: $cadence, options: PlanEvent.Cadence.allCases) { $0.label }
                     VStack(alignment: .leading, spacing: DSSpace.xs) {
                         Text(cadence == .once ? "When" : "Starts").dsFont(.label).foregroundStyle(Color.ds.inkSecondary)
-                        DSMonthSwitcher(month: $start, earliest: MonthKey.start(of: AppClock.now), latest: latest)
+                        DSMonthSwitcher(month: $start, earliest: earliest, latest: latest)
                     }
                     if cadence != .once {
                         DSToggleRow("Ends", detail: hasEnd ? nil : "Runs on with no end", isOn: $hasEnd.animation(DSMotion.standard))
@@ -343,7 +347,7 @@ struct PlanEventSheet: View {
             .toolbar { ToolbarItem(placement: .cancellationAction) { Button("Cancel") { dismiss() } } }
             .onChange(of: start) { if end < start { end = start } }
         }
-        .presentationDetents(dynamicTypeSize.isAccessibilitySize ? [.large] : [.large])
+        .presentationDetents([.large])
         .presentationBackground(Color.ds.canvas)
         .onAppear(perform: fill)
     }

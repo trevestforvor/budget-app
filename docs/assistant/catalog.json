@@ -118,7 +118,7 @@
     }
   },
   {
-    "description" : "Project cash after cards (cash less what's owed on cards) forward at the recent pace of income less spending — the last three complete months, a yearly charge counted a twelfth a month — optionally checking whether a savings goal fits.",
+    "description" : "Project cash after cards (cash less what's owed on cards) forward at the recent pace of income less spending — the last three complete months, a yearly charge counted a twelfth a month — optionally checking whether a savings goal fits. With scenarioID (from planScenarios), the projection and the goal include that Plan scenario's switched-on changes, with the plain forecast's end beside them.",
     "kind" : "read",
     "name" : "projectBalance",
     "parameters" : {
@@ -157,6 +157,12 @@
           "maximum" : 36,
           "minimum" : 1,
           "type" : "integer"
+        },
+        "scenarioID" : {
+          "description" : "A Plan scenario id from planScenarios, to project with its changes; leave out for the plain forecast.",
+          "maxLength" : 64,
+          "minLength" : 1,
+          "type" : "string"
         }
       },
       "required" : [
