@@ -97,6 +97,10 @@ struct AssistantRouteTests {
             let second = try await client.execute(uri: "/v1/ask", method: .post, headers: TestServer.auth,
                                                   body: TestServer.body(#"{"question":"How is groceries doing?","sessionID":"\#(id)"}"#))
             #expect(try Self.decode(AskReply.self, second.body).conversationID == id)
+            let long = String(repeating: "x", count: ChatSession.maxIDLength + 1)
+            let refused = try await client.execute(uri: "/v1/ask", method: .post, headers: TestServer.auth,
+                                                   body: TestServer.body(#"{"question":"Hi","conversationID":"\#(long)"}"#))
+            #expect(refused.status == .unprocessableContent)
         }
         #expect(try await service.api.chatSession(id: (try await service.api.chatSessions())[0].id).turns.count == 2)
     }

@@ -100,6 +100,10 @@ struct AssistantMemoryTests {
         #expect(memories.first?.source == .assistant)
         await #expect(throws: BudgetAPIError.self) { try await api.perform(proposal.action) }
         #expect(try await api.assistantConfig().systemPrompt.contains("- We're saving for a new bike"))
+
+        // A question that starts the same way is still a question.
+        let question = try await api.ask("Remember what we spent on dining in Q3?", conversationID: nil)
+        #expect(!question.proposedActions.contains { if case .rememberFact = $0.action { true } else { false } })
     }
 
     @Test("The API's add, edit and delete write through the ledger")
@@ -315,5 +319,45 @@ struct ChatHistoryTests {
         #expect(decoded.lastQuestion == nil)
         let memory = #"{"id":"m","text":"T","createdAt":"2026-09-25T17:00:00Z","source":"somethingNew"}"#
         #expect(try RemoteBudgetAPI.decoder.decode(AssistantMemory.self, from: Data(memory.utf8)).source == .person)
+    }
+
+    @Test("A proposal this version can't read is left out, not the answer or the conversation")
+    func unknownProposal() async throws {
+        let api = Fixture.api()
+        let reply = try await api.ask("Set the dining target to $500", conversationID: "c-unknown")
+        let known = try #require(reply.proposedActions.first)
+        let session = try await api.chatSession(id: "c-unknown")
+        let data = try RemoteBudgetAPI.encoder.encode(session)
+        var json = try #require(try JSONSerialization.jsonObject(with: data) as? [String: Any])
+        var turns = try #require(json["turns"] as? [[String: Any]])
+        var stored = try #require(turns[0]["reply"] as? [String: Any])
+        var proposals = try #require(stored["proposedActions"] as? [Any])
+        let future: [String: Any] = ["id": "p-new", "title": "Something newer", "effects": [] as [Any],
+                                     "action": ["type": "somethingNewer", "x": 1] as [String: Any]]
+        proposals.insert(future, at: 0)
+        proposals.append(future)
+        stored["proposedActions"] = proposals
+        turns[0]["reply"] = stored
+        json["turns"] = turns
+        let decoded = try RemoteBudgetAPI.decoder.decode(ChatSession.self, from: try JSONSerialization.data(withJSONObject: json))
+        #expect(decoded.turns[0].reply.proposedActions == [known])
+        #expect(decoded.turns[0].reply.text == reply.text)
+
+        // Round trip unchanged, and an answer without proposals still reads.
+        #expect(try RemoteBudgetAPI.decoder.decode(AskReply.self, from: try RemoteBudgetAPI.encoder.encode(reply)) == reply)
+        stored["proposedActions"] = nil
+        let bare = try RemoteBudgetAPI.decoder.decode(AskReply.self, from: try JSONSerialization.data(withJSONObject: stored))
+        #expect(bare.proposedActions.isEmpty)
+    }
+
+    @Test("A conversation id is short and not blank")
+    func conversationIDs() async throws {
+        let api = LedgerBudgetAPI.serverLike()
+        await #expect(throws: BudgetAPIError.self) {
+            try await api.ask("How is groceries doing?", conversationID: String(repeating: "x", count: ChatSession.maxIDLength + 1))
+        }
+        let blank = try await api.ask("How is groceries doing?", conversationID: "  ")
+        #expect(!blank.conversationID.trimmingCharacters(in: .whitespaces).isEmpty)
+        #expect(try await api.chatSessions().map(\.id) == [blank.conversationID])
     }
 }

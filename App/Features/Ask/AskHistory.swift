@@ -162,6 +162,8 @@ struct ChatHistoryView: View {
                     ForEach(section.sessions) { session in
                         Button { onOpen(session) } label: { ConversationRow(session: session) }
                             .buttonStyle(.plain)
+                            .accessibilityHint("Opens the conversation. Swipe or touch and hold to rename or delete it.")
+                            .accessibilityIdentifier("conversationRow")
                             .swipeActions {
                                 Button("Delete", role: .destructive) { deleting = session }
                                 Button("Rename") { renaming = session }.tint(Color.ds.iris)
@@ -186,22 +188,24 @@ struct ChatHistoryView: View {
         state = await state.refreshed { try await assistant.chatSessions() }
     }
 
-    private func rename(_ session: ChatSessionSummary, to title: String) async -> Bool {
+    /// Nil once renamed; otherwise why not, for the sheet to show.
+    private func rename(_ session: ChatSessionSummary, to title: String) async -> String? {
         problem = nil
+        guard let assistant = app.assistant else { return "This connection doesn't keep conversations." }
         do {
-            _ = try await app.assistant?.renameChatSession(id: session.id, title: title)
+            _ = try await assistant.renameChatSession(id: session.id, title: title)
             await load()
-            return true
+            return nil
         } catch {
-            problem = error.localizedDescription
-            return false
+            return error.localizedDescription
         }
     }
 
     private func delete(_ session: ChatSessionSummary) async {
         problem = nil
+        guard let assistant = app.assistant else { return }
         do {
-            try await app.assistant?.deleteChatSession(id: session.id)
+            try await assistant.deleteChatSession(id: session.id)
             await load()
         } catch {
             problem = error.localizedDescription
@@ -212,26 +216,29 @@ struct ChatHistoryView: View {
 /// A new name for a conversation.
 struct RenameConversationSheet: View {
     let initial: String
-    let onSave: (String) async -> Bool
+    /// Nil when saved; otherwise what went wrong, shown under the field.
+    let onSave: (String) async -> String?
 
     @Environment(\.dismiss) private var dismiss
     @State private var title = ""
     @State private var isSaving = false
+    @State private var failure: String?
     @FocusState private var focused: Bool
 
-    private var trimmed: String { title.trimmingCharacters(in: .whitespacesAndNewlines) }
+    private var trimmed: String { AssistantMemory.normalized(title) }
     private var tooLong: Bool { trimmed.count > ChatSession.maxTitleLength }
 
     var body: some View {
         NavigationStack {
             List {
                 DSListSection {
-                    DSField("Name", style: .inline, error: tooLong ? "Keep it to \(ChatSession.maxTitleLength) characters." : nil,
+                    DSField("Name", style: .inline, error: tooLong ? "Keep it to \(ChatSession.maxTitleLength) characters." : failure,
                             counter: "\(trimmed.count) / \(ChatSession.maxTitleLength)", isFocused: focused) {
                         TextField("Conversation name", text: $title)
                             .focused($focused)
                             .submitLabel(.done)
                             .onSubmit(save)
+                            .onChange(of: title) { failure = nil }
                             .accessibilityIdentifier("conversationNameField")
                     }
                 }
@@ -259,8 +266,9 @@ struct RenameConversationSheet: View {
         guard !trimmed.isEmpty, !tooLong, !isSaving else { return }
         Task {
             isSaving = true
-            if await onSave(trimmed) { dismiss() }
+            failure = await onSave(trimmed)
             isSaving = false
+            if failure == nil { dismiss() }
         }
     }
 }

@@ -87,6 +87,8 @@ public struct ChatSession: Identifiable, Hashable, Codable, Sendable {
     /// Turns kept per conversation; past it the oldest go.
     public static let maxTurns = 40
     public static let maxTitleLength = 60
+    /// Longest `conversationID` `/v1/ask` takes (a 422 past it).
+    public static let maxIDLength = 128
 
     /// "Where did my money go this month?" → itself; a long question is cut at a word, with an ellipsis.
     public static func title(for question: String) -> String {

@@ -88,7 +88,7 @@ struct AssistantMemoryView: View {
                         Button { editing = .existing(memory) } label: { row(memory) }
                             .buttonStyle(.plain)
                             .swipeActions {
-                                Button("Forget", role: .destructive) { Task { await delete(memory) } }
+                                Button("Forget", role: .destructive) { Task { _ = await delete(memory) } }
                             }
                             .accessibilityHint("Edit or forget")
                             .accessibilityIdentifier("assistantMemoryRow")
@@ -124,30 +124,31 @@ struct AssistantMemoryView: View {
         }
     }
 
-    private func add(_ text: String) async -> Bool {
+    private func add(_ text: String) async -> String? {
         await change("Ask will keep that in mind.") { _ = try await $0.addAssistantMemory(text) }
     }
 
-    private func update(_ memory: AssistantMemory, to text: String) async -> Bool {
+    private func update(_ memory: AssistantMemory, to text: String) async -> String? {
         await change("Saved.") { _ = try await $0.updateAssistantMemory(id: memory.id, text: text) }
     }
 
-    private func delete(_ memory: AssistantMemory) async -> Bool {
+    private func delete(_ memory: AssistantMemory) async -> String? {
         await change("Ask stopped keeping that in mind.") { try await $0.deleteAssistantMemory(id: memory.id) }
     }
 
-    /// Runs a write, then reloads every screen (the prompt Settings shows changes with it).
-    private func change(_ message: String, _ write: (any AssistantAPI) async throws -> Void) async -> Bool {
+    /// Runs a write, then reloads every screen (the prompt Settings shows changes with it). Nil when it worked;
+    /// otherwise why not, for the sheet to show (and the list, behind it).
+    private func change(_ message: String, _ write: (any AssistantAPI) async throws -> Void) async -> String? {
         problem = nil
-        guard let assistant = app.assistant else { return false }
+        guard let assistant = app.assistant else { return "This connection doesn't keep assistant memory." }
         do {
             try await write(assistant)
             await app.didWrite()
             toast = DSToastMessage(message)
-            return true
+            return nil
         } catch {
             problem = error.localizedDescription
-            return false
+            return error.localizedDescription
         }
     }
 }
@@ -156,12 +157,14 @@ struct AssistantMemoryView: View {
 struct AssistantMemorySheet: View {
     let title: String
     let initial: String
-    var onDelete: (() async -> Bool)?
-    let onSave: (String) async -> Bool
+    /// Each returns nil when it worked; otherwise what went wrong, shown under the field.
+    var onDelete: (() async -> String?)?
+    let onSave: (String) async -> String?
 
     @Environment(\.dismiss) private var dismiss
     @State private var text = ""
     @State private var isSaving = false
+    @State private var failure: String?
     @FocusState private var focused: Bool
 
     private var trimmed: String { AssistantMemory.normalized(text) }
@@ -171,11 +174,12 @@ struct AssistantMemorySheet: View {
         NavigationStack {
             List {
                 DSListSection(footer: "One fact, in your words. Ask reads it as background; figures still come from your ledger.") {
-                    DSField(nil, style: .inline, error: tooLong ? "Keep it to \(AssistantMemory.maxLength) characters." : nil,
+                    DSField(nil, style: .inline, error: tooLong ? "Keep it to \(AssistantMemory.maxLength) characters." : failure,
                             counter: "\(trimmed.count) / \(AssistantMemory.maxLength)", isFocused: focused) {
                         TextField("Saving for a trip in March", text: $text, axis: .vertical)
                             .lineLimit(2...6)
                             .focused($focused)
+                            .onChange(of: text) { failure = nil }
                             .padding(.vertical, DSSpace.xxs)
                             .accessibilityIdentifier("assistantMemoryField")
                     }
@@ -185,8 +189,9 @@ struct AssistantMemorySheet: View {
                         SettingsDestructiveRow(title: "Forget") {
                             Task {
                                 isSaving = true
-                                if await onDelete() { dismiss() }
+                                failure = await onDelete()
                                 isSaving = false
+                                if failure == nil { dismiss() }
                             }
                         }
                         .disabled(isSaving)
@@ -213,10 +218,12 @@ struct AssistantMemorySheet: View {
     }
 
     private func save() {
+        guard !trimmed.isEmpty, !tooLong, !isSaving else { return }
         Task {
             isSaving = true
-            if await onSave(trimmed) { dismiss() }
+            failure = await onSave(trimmed)
             isSaving = false
+            if failure == nil { dismiss() }
         }
     }
 }

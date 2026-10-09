@@ -332,7 +332,12 @@ public actor LedgerBudgetAPI: BudgetAPI {
     /// or none starts one. Either way the turn is kept in chat history (`LedgerBudgetAPI+Assistant.swift`).
     public func ask(_ question: String, conversationID: String?) async throws -> AskReply {
         tick()
-        let id = conversationID ?? UUID().uuidString
+        // The id names a kept conversation (and a path segment), so it's short and not blank; apps send a UUID.
+        let given = conversationID?.trimmingCharacters(in: .whitespacesAndNewlines)
+        if let given, given.count > ChatSession.maxIDLength {
+            throw BudgetAPIError.rejected("A conversation id is at most \(ChatSession.maxIDLength) characters.")
+        }
+        let id = given.flatMap { $0.isEmpty ? nil : $0 } ?? UUID().uuidString
         let history = await chatHistory(for: id)
         let reply: AskReply
         let transcript: [ChatMessage]

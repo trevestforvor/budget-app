@@ -491,7 +491,8 @@ struct DemoAskEngine {
         let pattern = /(?i)^\s*(?:please\s+)?(?:remember|keep in mind|note)(?:\s+that)?[\s:,]+(.+)$/
         guard let match = question.firstMatch(of: pattern) else { return nil }
         let fact = String(match.1).trimmingCharacters(in: CharacterSet(charactersIn: " .!"))
-        guard !fact.isEmpty else { return nil }
+        // "Remember what we spent on dining?" is a question, not something to keep.
+        guard !fact.isEmpty, !fact.hasSuffix("?") else { return nil }
         let sentence = fact.prefix(1).uppercased() + fact.dropFirst()
         return proposal(.rememberFact(RememberFact(fact: sentence)), cid, lead: "I can keep that in mind for later conversations.")
     }

@@ -647,6 +647,29 @@ public struct AskReply: Identifiable, Hashable, Codable, Sendable {
     public var proposedActions: [ProposedAction]
 }
 
+extension AskReply {
+    private enum Keys: String, CodingKey { case id, conversationID, text, figures, toolCalls, model, followUps, proposedActions }
+    /// Skips one element of an unkeyed container whatever it holds.
+    private struct Skipped: Decodable { init(from decoder: any Decoder) throws {} }
+
+    /// A proposal this version can't read (an action a newer server added) is left out rather than failing the whole
+    /// answer, or a whole kept conversation (`ChatSession.turns`).
+    public init(from decoder: any Decoder) throws {
+        let c = try decoder.container(keyedBy: Keys.self)
+        var proposals: [ProposedAction] = []
+        if c.contains(.proposedActions), try !c.decodeNil(forKey: .proposedActions) {
+            var list = try c.nestedUnkeyedContainer(forKey: .proposedActions)
+            while !list.isAtEnd {
+                if let proposal = try? list.decode(ProposedAction.self) { proposals.append(proposal) } else { _ = try list.decode(Skipped.self) }
+            }
+        }
+        self.init(id: try c.decode(String.self, forKey: .id), conversationID: try c.decode(String.self, forKey: .conversationID),
+                  text: try c.decode(String.self, forKey: .text), figures: try c.decode([Figure].self, forKey: .figures),
+                  toolCalls: try c.decode([ToolCall].self, forKey: .toolCalls), model: try c.decode(String.self, forKey: .model),
+                  followUps: try c.decode([String].self, forKey: .followUps), proposedActions: proposals)
+    }
+}
+
 public struct GoalQuery: Hashable, Codable, Sendable {
     public var amount: Money
     public var targetDate: Date

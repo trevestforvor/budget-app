@@ -36,6 +36,7 @@ struct AskView: View {
     @State private var isOpening = false
     @State private var renaming: ChatSessionSummary?
     @State private var deletingSession: ChatSessionSummary?
+    @State private var toast: DSToastMessage?
 
     static let starters = [
         "What did we spend on dining in Q3 vs Q2?",
@@ -112,6 +113,7 @@ struct AskView: View {
                 }
             }
             .task(id: "\(app.revision)|\(historyVersion)") { await loadHistory() }
+            .dsToast($toast)
             .sheet(item: $renaming) { summary in
                 RenameConversationSheet(initial: summary.title) { await rename(summary, to: $0) }
             }
@@ -188,20 +190,27 @@ struct AskView: View {
         }
     }
 
-    private func rename(_ summary: ChatSessionSummary, to title: String) async -> Bool {
+    /// Nil once renamed; otherwise why not, for the sheet to show.
+    private func rename(_ summary: ChatSessionSummary, to title: String) async -> String? {
+        guard let assistant = app.assistant else { return "This connection doesn't keep conversations." }
         do {
-            _ = try await app.assistant?.renameChatSession(id: summary.id, title: title)
+            _ = try await assistant.renameChatSession(id: summary.id, title: title)
             historyVersion += 1
-            return true
+            return nil
         } catch {
-            return false
+            return error.localizedDescription
         }
     }
 
     private func delete(_ summary: ChatSessionSummary) async {
-        _ = try? await app.assistant?.deleteChatSession(id: summary.id)
-        if conversationID == summary.id { startOver() }
-        historyVersion += 1
+        guard let assistant = app.assistant else { return }
+        do {
+            try await assistant.deleteChatSession(id: summary.id)
+            if conversationID == summary.id { startOver() }
+            historyVersion += 1
+        } catch {
+            toast = DSToastMessage("Couldn't delete it: \(error.localizedDescription)")
+        }
     }
 
     private var intro: some View {
