@@ -29,6 +29,9 @@ struct DemoToolbox: AgentToolbox {
         switch tool {
         case "sumByCategory": return try sumByCategory(period: string("period")!, compareTo: string("compareTo"), categoryID: string("categoryID"))
         case "sumByMerchant": return try sumByMerchant(string("merchant")!, period: string("period")!, compareTo: string("compareTo"))
+        case "merchantSummary": return try merchantSummaryTool(string("merchant")!)
+        case "topMerchants":
+            return try topMerchantsTool(period: string("period")!, sort: string("sort").flatMap(TopMerchants.Sort.init(rawValue:)) ?? .visits, limit: int("limit") ?? 5)
         case "queryTransactions":
             return queryTransactions(search: string("search"), categoryID: string("categoryID"), needsReviewOnly: bool("needsReviewOnly") ?? false,
                                      since: string("since"), until: string("until"), limit: int("limit") ?? 25,
@@ -190,6 +193,7 @@ struct DemoToolbox: AgentToolbox {
                 if ledger.isMoneyIn(row.categorization?.categoryID) { o["moneyIn"] = .bool(true) }
                 if let note = row.note { o["note"] = .string(note) }
                 if let tags = row.tags { o["tags"] = .array(tags.map(JSONValue.string)) }
+                if let order = row.orderMatch { o["orderItems"] = .array(order.items.map(JSONValue.string)) }
                 return .object(o)
             }),
         ]), figures)

@@ -406,21 +406,26 @@ public struct LedgerTransaction: Identifiable, Hashable, Codable, Sendable {
     /// The person's own labels ("Austin trip", "Reimbursable"), in the order given; nil when there are none, never empty.
     /// Search matches them. Server 0.5.0 (`ServerStatus.tagsSince`).
     public var tags: [String]?
+    /// The store order this charge paid for, matched from an imported order history (Amazon's). Nil for most rows,
+    /// and on rows from servers before 0.5.0.
+    public var orderMatch: OrderMatch?
 
     public init(id: String, accountID: String, postedAt: Date, merchant: String, rawDescription: String, amount: Money,
                 categorization: Categorization?, isPending: Bool, source: SourceKind, batchID: String? = nil, providerCategory: String? = nil,
                 isHidden: Bool = false, note: String? = nil, transferPeerID: String? = nil, originalMerchant: String? = nil,
-                isYearly: Bool? = nil, tags: [String]? = nil) {
+                isYearly: Bool? = nil, tags: [String]? = nil, orderMatch: OrderMatch? = nil) {
         self.id = id; self.accountID = accountID; self.postedAt = postedAt; self.merchant = merchant; self.rawDescription = rawDescription
         self.amount = amount; self.categorization = categorization; self.isPending = isPending; self.source = source
         self.batchID = batchID; self.providerCategory = providerCategory
         self.isHidden = isHidden; self.note = note; self.transferPeerID = transferPeerID; self.originalMerchant = originalMerchant
         self.isYearly = isYearly; self.tags = tags
+        self.orderMatch = orderMatch
     }
 
     enum CodingKeys: String, CodingKey {
         case id, accountID, postedAt, merchant, rawDescription, amount, categorization, isPending, source, batchID, providerCategory
         case isHidden, note, transferPeerID, originalMerchant, isYearly, countsAsYearly, tags
+        case orderMatch
     }
 
     /// Rows stored and cached before hiding, notes, transfer pairs and yearly charges existed decode with those unset.
@@ -444,6 +449,7 @@ public struct LedgerTransaction: Identifiable, Hashable, Codable, Sendable {
         isYearly = try c.decodeIfPresent(Bool.self, forKey: .isYearly)
         countsAsYearly = try c.decodeIfPresent(Bool.self, forKey: .countsAsYearly)
         tags = try c.decodeIfPresent([String].self, forKey: .tags)
+        orderMatch = try c.decodeIfPresent(OrderMatch.self, forKey: .orderMatch)
     }
 
     /// Whether the row counts toward spending and income. Hidden rows don't, and neither does money moving

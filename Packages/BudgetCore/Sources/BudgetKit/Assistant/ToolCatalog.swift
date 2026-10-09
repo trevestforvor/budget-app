@@ -102,6 +102,16 @@ public enum ToolCatalog {
                      "period": period,
                      "compareTo": period,
                  ], required: ["merchant", "period"])),
+        ToolSpec(name: "merchantSummary", description: "Everything about one merchant: spending there this month, over the last 12 months and all time (net of refunds), how many charges and how often (\"about 6 times a month\"), the average charge, first and last charge, its usual category, whether it recurs (cadence, amount, next charge) and its monthly cap if one is set.", kind: .read,
+                 schema: .object(nil, [
+                     "merchant": .string("Merchant name as the user said it, e.g. \"Blue Bottle\".", minLength: 2, maxLength: 60),
+                 ], required: ["merchant"])),
+        ToolSpec(name: "topMerchants", description: "The merchants of a period, most charges first (where the user goes most) or most spent first, each with its number of charges and spending net of refunds.", kind: .read,
+                 schema: .object(nil, [
+                     "period": period,
+                     "sort": .string("visits (most charges first, the default) or spent (most money first).", enum: TopMerchants.Sort.allCases.map(\.rawValue)),
+                     "limit": .integer("How many merchants.", minimum: 1, maximum: 20),
+                 ], required: ["period"])),
         ToolSpec(name: "flexBudget", description: "This month's budget: expected income, a usual month of bills and of subscriptions (a charge spread over the year counts a twelfth), planned savings, the everyday budget that leaves, everyday spending so far, safe-to-spend and the days left (today included).", kind: .read,
                  schema: .object(nil, [:])),
         ToolSpec(name: "cashFlow", description: "Income against spending month by month: up to `months` complete months, then this month so far, oldest first — each month's income, spending (every category net of its refunds) and net. Use it for questions about cash flow, how income or spending changed, or what's driving cash up or down.", kind: .read,

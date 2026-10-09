@@ -2,6 +2,7 @@
 // import and sync with its warnings and an Undo that says what it removes.
 import { fill, h, api, store, heavy, cached, pageHead, sectionHead, button, busy, armed, isArmed, callout, details, tag, icon, afterWrite,
   reportError, toast, money, count, plural, dateShort, span, KIND, SOURCE, emptyState, loadInto } from "./core.js";
+import { ordersRegion } from "./orders.js";
 
 const NEW = "__new__";
 const MAX_BYTES = 30 * 1024 * 1024;
@@ -238,6 +239,7 @@ export default {
         sub: "Download CSV, OFX or QFX files from your bank's website and drop them here. Rows already in the ledger, from a sync or an earlier import, are skipped." }),
       pre && !batch ? h("div", { class: "banners" }, callout({ tone: "info", role: "note", title: `Files go into ${pre.name}${pre.mask ? ` ••${pre.mask}` : ""} unless they name another account.` })) : null,
       this.flow,
+      ordersRegion(),
       this.coverageRegion(),
       sectionHead("History", null, "history-title"),
       this.history);

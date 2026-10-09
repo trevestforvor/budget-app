@@ -353,6 +353,7 @@ public struct Ledger: Sendable {
         }
         addActivityExamples(today: today)
         addTagExamples()
+        addOrderExamples()
         // The demo's rows include answers the model filed, so its settings say the model is on (Qwen Decide at 80%).
         decisionPolicy = DecisionPolicy(provider: .localDecide, autoAcceptPercent: 80, kinds: [.category])
     }
@@ -755,7 +756,9 @@ public struct Ledger: Sendable {
             guard let c = row.categorization, c.needsReview, c.tier != .user, !row.isHidden,
                   Self.normalizedDescriptor(row.rawDescription) == descriptor,
                   !(category.isMoneyIn && row.amount.isNegative), !(categoryID == BudgetCategory.incomeID && isCardCredit(row)),
-                  row.amount.magnitude.minorUnits <= decisionPolicy.reviewAbove?.minorUnits ?? .max else { return false }
+                  row.amount.magnitude.minorUnits <= decisionPolicy.reviewAbove?.minorUnits ?? .max,
+                  // A charge matched to a store order goes with its own order only (its items say what it was).
+                  row.orderMatch?.orderID == target.orderMatch?.orderID else { return false }
             return !generic || (row.accountID == target.accountID && row.amount.isNegative == target.amount.isNegative)
         }
         let undo = restoring(indices)

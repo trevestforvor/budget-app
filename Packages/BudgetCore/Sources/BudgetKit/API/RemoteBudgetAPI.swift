@@ -126,7 +126,7 @@ public struct RemoteBudgetAPI: BudgetAPI, MorningSummaryAPI {
         return try decode(try await load(URLRequest(url: components.url!)))
     }
 
-    private func send<T: Decodable>(_ method: String, _ path: String, body: some Encodable, timeout: TimeInterval = timeout) async throws -> T {
+    func send<T: Decodable>(_ method: String, _ path: String, body: some Encodable, timeout: TimeInterval = timeout) async throws -> T {
         try decode(try await load(try request(method, path, body: body), timeout: timeout))
     }
 

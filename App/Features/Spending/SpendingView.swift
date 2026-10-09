@@ -207,6 +207,7 @@ struct SpendingView: View {
             groupSection(group, budget: budget)
         }
 
+        TopMerchantsSection(period: budget.month)
         if budget.isCurrent {
             if let recurring { comingUpCard(recurring) }
             if !caps.isEmpty { capsSection(caps) }
@@ -548,6 +549,7 @@ struct SpendingView: View {
                             .padding(.vertical, DSSpace.xxs)
                         }
                     }
+                    TopMerchantsSection(period: summary.range == .yearToDate ? "year_to_date" : "last_90_days")
                 }
             }
             .dsLoading(summary.range != period.range)

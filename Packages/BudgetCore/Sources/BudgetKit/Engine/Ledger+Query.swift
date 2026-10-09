@@ -90,7 +90,8 @@ struct SearchText {
     func matches(_ row: LedgerTransaction) -> Bool {
         if row.merchant.localizedCaseInsensitiveContains(text) || row.rawDescription.localizedCaseInsensitiveContains(text)
             || (row.note?.localizedCaseInsensitiveContains(text) ?? false)
-            || (row.tags ?? []).contains(where: { $0.localizedCaseInsensitiveContains(text) }) { return true }
+            || (row.tags ?? []).contains(where: { $0.localizedCaseInsensitiveContains(text) })
+            || (row.orderMatch?.items.contains { $0.localizedCaseInsensitiveContains(text) } ?? false) { return true }
         let magnitude = row.amount.magnitude.minorUnits
         if let cents { return magnitude == cents }
         if let dollars { return magnitude / 100 == dollars }

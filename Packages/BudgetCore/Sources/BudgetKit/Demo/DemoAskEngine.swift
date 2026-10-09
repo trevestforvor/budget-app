@@ -27,6 +27,7 @@ struct DemoAskEngine {
         if let r = pastMonthIntent(q, conversationID) { return r }
         if let r = idleCashIntent(q, conversationID) { return r }
         if let r = planningIntent(q, conversationID) { return r }
+        if let r = merchantProfileIntent(q, conversationID) { return r }
         if let r = merchantIntent(q, conversationID) { return r }
         if let r = suggestTargetsIntent(q, conversationID) { return r }
         if let r = categoryHistoryIntent(q, category, conversationID) { return r }

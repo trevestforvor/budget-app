@@ -273,6 +273,7 @@ public func buildRouter(_ service: BudgetService, surface: Surface = .api) -> Ro
     addTransactionToolRoutes(router, service)
     addLinkRoutes(router, service)
     addImportRoutes(router, service)
+    addMerchantRoutes(router, service)
     addMorningSummaryRoutes(router, service)
     return router
 }

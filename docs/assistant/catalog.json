@@ -204,6 +204,59 @@
     }
   },
   {
+    "description" : "Everything about one merchant: spending there this month, over the last 12 months and all time (net of refunds), how many charges and how often (\"about 6 times a month\"), the average charge, first and last charge, its usual category, whether it recurs (cadence, amount, next charge) and its monthly cap if one is set.",
+    "kind" : "read",
+    "name" : "merchantSummary",
+    "parameters" : {
+      "additionalProperties" : false,
+      "properties" : {
+        "merchant" : {
+          "description" : "Merchant name as the user said it, e.g. \"Blue Bottle\".",
+          "maxLength" : 60,
+          "minLength" : 2,
+          "type" : "string"
+        }
+      },
+      "required" : [
+        "merchant"
+      ],
+      "type" : "object"
+    }
+  },
+  {
+    "description" : "The merchants of a period, most charges first (where the user goes most) or most spent first, each with its number of charges and spending net of refunds.",
+    "kind" : "read",
+    "name" : "topMerchants",
+    "parameters" : {
+      "additionalProperties" : false,
+      "properties" : {
+        "limit" : {
+          "description" : "How many merchants.",
+          "maximum" : 20,
+          "minimum" : 1,
+          "type" : "integer"
+        },
+        "period" : {
+          "description" : "A period: this_month, last_month, last_7_days, last_90_days, year_to_date, a month like 2026-09, or a quarter like 2026-Q3.",
+          "pattern" : "^(this_month|last_month|last_7_days|last_90_days|year_to_date|[0-9]{4}-Q[1-4]|[0-9]{4}-(0[1-9]|1[0-2]))$",
+          "type" : "string"
+        },
+        "sort" : {
+          "description" : "visits (most charges first, the default) or spent (most money first).",
+          "enum" : [
+            "visits",
+            "spent"
+          ],
+          "type" : "string"
+        }
+      },
+      "required" : [
+        "period"
+      ],
+      "type" : "object"
+    }
+  },
+  {
     "description" : "This month's budget: expected income, a usual month of bills and of subscriptions (a charge spread over the year counts a twelfth), planned savings, the everyday budget that leaves, everyday spending so far, safe-to-spend and the days left (today included).",
     "kind" : "read",
     "name" : "flexBudget",

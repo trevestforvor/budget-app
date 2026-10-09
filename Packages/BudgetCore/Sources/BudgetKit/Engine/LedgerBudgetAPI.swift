@@ -176,7 +176,7 @@ public actor LedgerBudgetAPI: BudgetAPI {
     private var waitingWriters: [CheckedContinuation<Void, Never>] = []
 
     /// Makes `change` (synchronous, so nothing else runs in the middle of it) and saves it, taking its turn.
-    private func write<T>(_ change: () throws -> T) async throws -> T {
+    func write<T>(_ change: () throws -> T) async throws -> T {
         if writing { await withCheckedContinuation { waitingWriters.append($0) } } else { writing = true }
         defer { if waitingWriters.isEmpty { writing = false } else { waitingWriters.removeFirst().resume() } }
         let before = ledger.state
