@@ -41,6 +41,14 @@ This replaced a projection of cash alone at the pace cash itself moved (server 0
 
 Money moved to an investment account isn't spending, so the pace doesn't count it, but it does leave cash. Someone who invests every month would see the forecast run ahead of their cash.
 
+### Scenarios (`planScenarios`)
+
+A scenario lays changes you expect over the forecast: a car payment from March, a bonus in December, rent up $200 from June. Each change is money in or out, once, monthly or yearly, from a month and optionally until one. The forecast with the scenario is the plain one plus the running total of its changes, month by month, so the two lines start together and part where the first change lands. A goal checked against a scenario counts every change in a month that starts before the goal's date. The pace itself never changes: a scenario says what you plan, the ledger says how you've been doing. Details: [API.md](API.md#plan-scenarios-server-050).
+
+## The month's flow (`monthFlow`)
+
+Spending's Flow view draws a month left to right: where the money came from (each payer, and cash drawn down when spending passed income), what Bills, Subscriptions and Everyday took and what was left (Saved), then each bucket's top categories. Income is the cash flow's figure and the buckets are the budget's, so the view matches the rest of Spending to the cent. Saved is income less spending, not what moved to a savings account.
+
 ## "How much should I save?" (`savingsGuidance`)
 
 Rules of thumb, each stated with its source and computed against your numbers:

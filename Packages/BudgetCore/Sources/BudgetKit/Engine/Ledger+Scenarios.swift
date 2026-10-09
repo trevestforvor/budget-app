@@ -131,16 +131,12 @@ extension Ledger {
                 guard let span = PlanMonth.distance(from: e.startMonth, to: last) else { throw BudgetAPIError.rejected("A month is written like 2027-03.") }
                 guard span >= 0 else { throw BudgetAPIError.rejected("“\(label)” ends before it starts.") }
             }
-            let id = e.id ?? Self.newPlanID("evt")
+            let id = e.id ?? PlanScenario.newID("evt")
             guard ids.insert(id).inserted else { throw BudgetAPIError.rejected("Two changes share the id \(id).") }
             return PlanEvent(id: id, name: label, kind: e.kind, amount: e.amount.money(), startMonth: e.startMonth, endMonth: end,
                              cadence: e.cadence, isEnabled: e.isEnabled ?? true)
         }
-        return PlanScenario(id: p.scenarioID ?? Self.newPlanID("scn"), name: name, events: events)
-    }
-
-    static func newPlanID(_ prefix: String) -> String {
-        "\(prefix)-\(UUID().uuidString.prefix(8).lowercased())"
+        return PlanScenario(id: p.scenarioID ?? PlanScenario.newID(), name: name, events: events)
     }
 
     func scenarioPreview(_ p: SavePlanScenario) throws -> ActionPreview {

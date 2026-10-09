@@ -89,6 +89,11 @@ public struct PlanScenario: Identifiable, Hashable, Codable, Sendable {
         self.id = id; self.name = name; self.events = events
     }
 
+    /// A fresh id for a scenario ("scn-…") or a change ("evt-…").
+    public static func newID(_ prefix: String = "scn") -> String {
+        "\(prefix)-\(UUID().uuidString.prefix(8).lowercased())"
+    }
+
     enum CodingKeys: String, CodingKey { case id, name, events }
 
     public init(from decoder: any Decoder) throws {
@@ -207,6 +212,15 @@ public struct SavePlanScenario: Hashable, Sendable, Codable {
 
     public init(scenarioID: String? = nil, name: String, events: [Event] = []) {
         self.scenarioID = scenarioID; self.name = name; self.events = events
+    }
+
+    enum CodingKeys: String, CodingKey { case scenarioID, name, events }
+
+    /// `events` may be left out: a scenario with a name and no changes yet.
+    public init(from decoder: any Decoder) throws {
+        let c = try decoder.container(keyedBy: CodingKeys.self)
+        self.init(scenarioID: try c.decodeIfPresent(String.self, forKey: .scenarioID), name: try c.decode(String.self, forKey: .name),
+                  events: try c.decodeIfPresent([Event].self, forKey: .events) ?? [])
     }
 
     /// The scenario as it stands, to save back (an undo, or a toggle on top of it).

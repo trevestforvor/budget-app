@@ -160,7 +160,8 @@ struct ErrorMiddleware<Context: RequestContext>: RouterMiddleware {
 
 struct ConfirmBody: Decodable { let categoryID: String }
 struct AskBody: Decodable { let question: String; let conversationID: String? }
-struct ProjectionBody: Decodable { let horizonMonths: Int; let goal: GoalQuery? }
+/// `scenarioID` (0.5.0) projects with a Plan scenario's changes on top; an older server ignores it.
+struct ProjectionBody: Decodable { let horizonMonths: Int; let goal: GoalQuery?; let scenarioID: String? }
 struct PlaidExchangeBody: Decodable { let publicToken: String; let institution: String }
 struct PlaidTokenBody: Decodable { let linkID: String? }
 struct TellerBody: Decodable { let accessToken: String; let enrollmentID: String?; let institution: String }
@@ -252,7 +253,7 @@ public func buildRouter(_ service: BudgetService, surface: Surface = .api) -> Ro
     }
     router.post("/v1/projection") { request, _ in
         let body = try await HTTP.body(ProjectionBody.self, request)
-        return try HTTP.json(try await api.projection(horizonMonths: body.horizonMonths, goal: body.goal))
+        return try HTTP.json(try await api.projection(horizonMonths: body.horizonMonths, goal: body.goal, scenarioID: body.scenarioID))
     }
     router.get("/v1/status") { _, _ in try HTTP.json(try await api.serverStatus()) }
     router.post("/v1/actions") { request, _ in
@@ -273,6 +274,7 @@ public func buildRouter(_ service: BudgetService, surface: Surface = .api) -> Ro
     addLinkRoutes(router, service)
     addImportRoutes(router, service)
     addMorningSummaryRoutes(router, service)
+    addPlanRoutes(router, service)
     return router
 }
 
