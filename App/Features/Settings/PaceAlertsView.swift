@@ -10,6 +10,9 @@ struct PaceAlertsView: View {
     @State private var state: LoadState<PaceAlerts> = .loading
     /// The server answered 404: it's older than pace alerts.
     @State private var tooOld = false
+    /// A switch the person just flipped, shown as flipped while the server takes it; cleared when the write is done,
+    /// which shows what the server kept (the old value again if the write failed).
+    @State private var pending: [PaceAlert.Kind: Bool] = [:]
 
     private var morning: MorningSummaryModel { .shared }
 
@@ -116,7 +119,13 @@ struct PaceAlertsView: View {
     }
 
     private func binding(_ kind: PaceAlert.Kind) -> Binding<Bool> {
-        Binding(get: { morning.wantsPace(kind) }, set: { on in Task { await morning.setPace(kind, on) } })
+        Binding(get: { pending[kind] ?? morning.wantsPace(kind) }, set: { on in
+            pending[kind] = on
+            Task {
+                await morning.setPace(kind, on)
+                pending[kind] = nil
+            }
+        })
     }
 
     private static let budgetAlert = PaceAlert(kind: .everyday, threshold: .unknown, targetID: "everyday", name: "Everyday",
@@ -127,6 +136,12 @@ struct PaceAlertsView: View {
     private func load() async -> String? {
         guard let api = app.api as? any PaceAlertsAPI else {
             state = .failed("Pace alerts need a server of your own.")
+            return nil
+        }
+        // A server known to be older than pace alerts isn't asked (`ServerStatus.paceAlertsSince`).
+        if let version = await app.knownServerVersion(), !ServerStatus.version(version, isAtLeast: ServerStatus.paceAlertsSince) {
+            tooOld = true
+            state = .failed("Your server doesn't work out pace alerts yet. Update it to \(ServerStatus.paceAlertsSince) or later.")
             return nil
         }
         do {
