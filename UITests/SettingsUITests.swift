@@ -199,6 +199,12 @@ final class SettingsUITests: XCTestCase {
         XCTAssertTrue(app.navigationBars["File it under"].waitForExistence(timeout: 5), "cancelling goes back to the picker")
         app.navigationBars["File it under"].buttons["Cancel"].tap()
 
+        // Closing the picker gives the description field its focus back; on a software keyboard (a freshly erased
+        // simulator) the keyboard then covers "File it under". Put it away first, as a person would.
+        if app.keyboards.firstMatch.waitForExistence(timeout: 2) {
+            descriptor.typeText("\n")
+            XCTAssertTrue(app.keyboards.firstMatch.waitForNonExistence(timeout: 5))
+        }
         app.buttons["Either way"].tap()
         app.buttons["ruleCategory"].tap()
         XCTAssertTrue(new.waitForExistence(timeout: 5))
