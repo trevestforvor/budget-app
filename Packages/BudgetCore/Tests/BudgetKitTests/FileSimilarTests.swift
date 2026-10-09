@@ -205,6 +205,9 @@ struct CSVExportTests {
         let api = Fixture.api()
         await #expect(throws: BudgetAPIError.rejected("Unknown period “someday”.")) { try await api.exportCSV(TransactionFilter(period: "someday")) }
         let data = try await api.exportCSV(TransactionFilter())
-        #expect(CSV.rows(String(decoding: data, as: UTF8.self)).count == Fixture.ledger().transactions.count + 1)
+        // The file starts with a UTF-8 byte order mark, so Excel reads it as UTF-8.
+        #expect(Array(data.prefix(3)) == [0xEF, 0xBB, 0xBF])
+        #expect(String(decoding: data.dropFirst(3), as: UTF8.self).hasPrefix("Date,Merchant,"))
+        #expect(CSV.rows(String(decoding: data.dropFirst(3), as: UTF8.self)).count == Fixture.ledger().transactions.count + 1)
     }
 }

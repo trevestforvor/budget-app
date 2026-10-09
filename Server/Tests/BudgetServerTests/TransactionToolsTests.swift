@@ -61,7 +61,8 @@ struct TransactionToolsTests {
                 #expect(response.headers[.contentType] == "text/csv; charset=utf-8; header=present")
                 #expect(response.headers[.contentDisposition]?.hasPrefix("attachment; filename=\"budget-transactions-") == true)
                 let body = String(buffer: response.body)
-                #expect(body.hasPrefix("Date,Merchant,Description,Amount,Category,Bucket,Account,Tags,Note,Status,Hidden\r\n"))
+                #expect(Array(response.body.readableBytesView.prefix(3)) == [0xEF, 0xBB, 0xBF]) // UTF-8 BOM, for Excel
+                #expect(body.hasPrefix("\u{FEFF}Date,Merchant,Description,Amount,Category,Bucket,Account,Tags,Note,Status,Hidden\r\n"))
                 #expect(body.components(separatedBy: "\r\n").filter { !$0.isEmpty }.count == dining + 1)
                 #expect(!body.replacingOccurrences(of: "\r\n", with: "").contains("\n")) // no bare line feeds outside quoted fields here
             }

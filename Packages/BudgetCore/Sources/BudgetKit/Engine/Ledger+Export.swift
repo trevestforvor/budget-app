@@ -6,6 +6,8 @@ import Foundation
 /// holds a comma, a double quote, CR or LF, and a double quote inside one doubled.
 extension CSV {
     static let lineBreak = "\r\n"
+    /// U+FEFF, which the export's file starts with (`LedgerBudgetAPI.exportCSV`).
+    static let byteOrderMark = "\u{FEFF}"
 
     static func field(_ value: String) -> String {
         guard value.contains(where: { $0 == "," || $0 == "\"" || $0 == "\r" || $0 == "\n" || $0 == "\r\n" }) else { return value }

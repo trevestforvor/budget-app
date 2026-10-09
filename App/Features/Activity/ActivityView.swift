@@ -37,6 +37,10 @@ struct ActivityView: View {
     /// The server can write the CSV (0.5.0 on); an older one has no export to offer.
     @State private var canExport = false
     @State private var toast: DSToastMessage?
+    /// The CSV is being fetched; the export button shows progress.
+    @State private var isExporting = false
+    /// The fetched CSV, shared from its file.
+    @State private var exported: TransactionsCSV?
     @State private var workingGroups: Set<String> = []
     @State private var isWorking = false
 
@@ -155,14 +159,25 @@ struct ActivityView: View {
             .toolbar {
                 if !isSelecting, canExport, let tools = app.transactionTools {
                     ToolbarItem(placement: .topBarTrailing) {
-                        ShareLink(item: TransactionsCSV(filter: effectiveFilter, tools: tools),
-                                  preview: SharePreview(effectiveFilter.narrows ? "Transactions (filtered).csv" : "Transactions.csv")) {
-                            Label("Export CSV", systemImage: "square.and.arrow.up")
+                        Button {
+                            Task { await export(effectiveFilter, tools: tools) }
+                        } label: {
+                            if isExporting {
+                                ProgressView().accessibilityLabel("Exporting CSV")
+                            } else {
+                                Label("Export CSV", systemImage: "square.and.arrow.up")
+                            }
                         }
+                        .disabled(isExporting)
                         .accessibilityHint(effectiveFilter.narrows ? "Saves the transactions showing as a spreadsheet file" : "Saves every transaction as a spreadsheet file")
                         .accessibilityIdentifier("exportCSV")
                     }
                 }
+            }
+            .sheet(item: $exported) { file in
+                ShareFileSheet(url: file.url)
+                    .presentationDetents([.medium, .large])
+                    .ignoresSafeArea()
             }
             .sheet(item: $noting) { target in
                 NoteSheet(title: target.ids.count == 1 ? "Note" : "Note for \(target.ids.count)", initial: target.initial) { note in
@@ -488,6 +503,19 @@ struct ActivityView: View {
     }
 
     /// After the picker has gone: file the one row, or offer the rows like it first.
+    /// Fetches the CSV, then opens the share sheet on it; a failure is a toast with Try again.
+    private func export(_ filter: TransactionFilter, tools: any TransactionToolsAPI) async {
+        isExporting = true
+        defer { isExporting = false }
+        do {
+            exported = try await TransactionsCSV.fetch(filter, tools: tools)
+        } catch {
+            toast = DSToastMessage("Couldn't export: \(error.localizedDescription)", actionTitle: "Try again", duration: .seconds(8)) {
+                Task { await export(filter, tools: tools) }
+            }
+        }
+    }
+
     private func offerSimilar() {
         guard let pick = pendingPick else { return }
         pendingPick = nil

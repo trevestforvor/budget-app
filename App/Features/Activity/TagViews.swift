@@ -1,6 +1,7 @@
 import BudgetKit
 import DesignSystem
 import SwiftUI
+import UIKit
 
 // Tags: the person's own labels on transactions (a trip, a project, what work pays back). Edited from a transaction's
 // details and from Select in Activity, filtered on in Activity's Filters, and added up in a tag's own screen.
@@ -266,8 +267,8 @@ struct TagDetailView: View {
                 VStack(spacing: 0) {
                     ForEach(Array(categories.enumerated()), id: \.element.categoryID) { index, spend in
                         let category = app.category(spend.categoryID)
-                        DSListRow(category?.name ?? spend.categoryID, value: spend.spent.formatted(), systemImage: category?.symbol ?? "questionmark",
-                                  tone: CategoryStyle.tone(for: category))
+                        DSCategoryAmountRow(category?.name ?? spend.categoryID, systemImage: category?.symbol ?? "questionmark",
+                                            tone: CategoryStyle.tone(for: category), amount: spend.spent.decimal, currencyCode: spend.spent.currencyCode)
                         if index < categories.count - 1 { DSDivider() }
                     }
                 }
@@ -327,19 +328,30 @@ struct TagChips: View {
 
 // MARK: - Export
 
-/// The rows a filter matches as a CSV file, written only when the person picks where it goes (ShareLink).
-struct TransactionsCSV: Transferable {
-    let filter: TransactionFilter
-    let tools: any TransactionToolsAPI
+/// The rows a filter matches as a CSV file. It's fetched before the share sheet opens, so a failure (offline, a
+/// timeout) is said in the app with a way to try again, not left to the share sheet to swallow.
+struct TransactionsCSV: Identifiable {
+    let id = UUID()
+    let url: URL
 
-    static var transferRepresentation: some TransferRepresentation {
-        FileRepresentation(exportedContentType: .commaSeparatedText) { export in
-            let data = try await export.tools.exportCSV(export.filter)
-            // Today where the person is (the ISO style alone would date it in UTC, a day ahead on a US evening).
-            let day = Date.now.formatted(Date.ISO8601FormatStyle(timeZone: .current).year().month().day())
-            let url = FileManager.default.temporaryDirectory.appending(path: "Budget transactions \(day).csv")
-            try data.write(to: url, options: .atomic)
-            return SentTransferredFile(url)
-        }
+    /// Fetches the export and writes it to a temporary file named for today.
+    static func fetch(_ filter: TransactionFilter, tools: any TransactionToolsAPI) async throws -> TransactionsCSV {
+        let data = try await tools.exportCSV(filter)
+        // Today where the person is (the ISO style alone would date it in UTC, a day ahead on a US evening).
+        let day = Date.now.formatted(Date.ISO8601FormatStyle(timeZone: .current).year().month().day())
+        let url = FileManager.default.temporaryDirectory.appending(path: "Budget transactions \(day).csv")
+        try data.write(to: url, options: .atomic)
+        return TransactionsCSV(url: url)
     }
+}
+
+/// The system share sheet for a file already on disk.
+struct ShareFileSheet: UIViewControllerRepresentable {
+    let url: URL
+
+    func makeUIViewController(context: Context) -> UIActivityViewController {
+        UIActivityViewController(activityItems: [url], applicationActivities: nil)
+    }
+
+    func updateUIViewController(_ controller: UIActivityViewController, context: Context) {}
 }
