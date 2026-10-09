@@ -184,6 +184,7 @@ struct ActivitySelectionBar: View {
     let onKeep: () -> Void
     let onCount: () -> Void
     let onNote: () -> Void
+    let onTags: () -> Void
 
     var body: some View {
         VStack(alignment: .leading, spacing: DSSpace.sm) {
@@ -247,6 +248,7 @@ struct ActivitySelectionBar: View {
             Button("Keep their categories", systemImage: "checkmark", action: onKeep)
             Button("Count in totals again", systemImage: "eye", action: onCount)
             Button("Add a note…", systemImage: "note.text", action: onNote)
+            Button("Tags…", systemImage: "tag", action: onTags)
         } label: {
             Text("More").fixedSize()
         }

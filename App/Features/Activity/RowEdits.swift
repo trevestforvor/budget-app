@@ -86,6 +86,19 @@ struct RowEdits {
         await run(.editTransactions(EditTransactions(transactionIDs: ids, note: note)))
     }
 
+    /// Files the rows and, with `similar`, every other row from the same merchant or descriptor (`fileSimilar`).
+    @discardableResult
+    func file(_ ids: [String], as categoryID: String, similar: Bool, rule: RuleMatch? = nil) async -> Bool {
+        await run(.editTransactions(EditTransactions(transactionIDs: ids, categoryID: categoryID, fileSimilar: similar ? true : nil)),
+                  rule: rule, ruleCategory: rule == nil ? nil : categoryID)
+    }
+
+    /// Puts `add` on every row and takes `remove` off.
+    @discardableResult
+    func setTags(_ ids: [String], add: [String], remove: [String]) async -> Bool {
+        await run(.editTransactions(EditTransactions(transactionIDs: ids, addTags: add.isEmpty ? nil : add, removeTags: remove.isEmpty ? nil : remove)))
+    }
+
     @discardableResult
     func rename(_ ids: [String], to merchant: String, similar: Bool) async -> Bool {
         await run(.editTransactions(EditTransactions(transactionIDs: ids, merchant: merchant, renameSimilar: similar ? true : nil)))

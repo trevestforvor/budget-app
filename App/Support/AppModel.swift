@@ -269,6 +269,8 @@ extension AppAction {
     var minimumServer: String? {
         switch self {
         case .createBudgetRule where hasRuleConditions: ServerStatus.rulesWithConditionsSince
+        case let .editTransactions(p) where !(p.addTags ?? []).isEmpty || !(p.removeTags ?? []).isEmpty: ServerStatus.tagsSince
+        case let .editTransactions(p) where p.fileSimilar == true: ServerStatus.fileSimilarSince
         case let .editTransactions(p) where p.isYearly != nil: ServerStatus.yearlyAndRecurringSince
         case .setRecurring: ServerStatus.yearlyAndRecurringSince
         default: nil

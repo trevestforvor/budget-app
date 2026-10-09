@@ -39,6 +39,10 @@ struct TransactionDetailView: View {
     @State private var showsRename = false
     @State private var showsNote = false
     @State private var editsRecurring = false
+    @State private var showsTags = false
+    @State private var openTag: TagRoute?
+    /// Re-filing found others like it: the offer to file them too, shown before anything is filed.
+    @State private var similarOffer: SimilarOffer?
 
     private var row: LedgerTransaction { loaded?.id == transaction.id ? loaded! : transaction }
     private var toastBinding: Binding<DSToastMessage?> { toast ?? $ownToast }
@@ -84,7 +88,8 @@ struct TransactionDetailView: View {
                 if needsReview {
                     choice = picked.id
                 } else if picked.id != category?.id {
-                    Task { await edits.file([row.id], as: picked.id) }
+                    let current = row
+                    Task { similarOffer = await edits.fileOrOffer(current, as: picked) }
                 }
             }
         }
@@ -95,6 +100,11 @@ struct TransactionDetailView: View {
             NoteSheet(title: "Note", initial: row.note ?? "") { await edits.setNote([row.id], $0) }
         }
         .sheet(isPresented: $editsRecurring) { RecurringEditSheet(merchant: row.merchant, current: recurring, amount: row.amount.magnitude) }
+        .sheet(isPresented: $showsTags) {
+            TagSheet(title: "Tags", current: row.tags ?? []) { add, remove in await edits.setTags([row.id], add: add, remove: remove) }
+        }
+        .sheet(item: $similarOffer) { FileSimilarSheet(offer: $0, edits: edits) }
+        .navigationDestination(item: $openTag) { TagDetailView(tag: $0.tag) }
         .task(id: "\(transaction.id)|\(app.revision)") { await reload() }
         .task(id: "\(row.merchant)|\(app.revision)") {
             recurring = try? await app.api.subscriptions().items.first { $0.covers(row.merchant) }
@@ -380,6 +390,8 @@ struct TransactionDetailView: View {
                 .buttonStyle(.plain)
                 .accessibilityIdentifier("noteRow")
                 DSDivider()
+                tagsRow
+                DSDivider()
                 countsRow
                 if isSpending {
                     DSDivider()
@@ -394,6 +406,24 @@ struct TransactionDetailView: View {
                 }
             }
             .padding(.horizontal, DSSpace.md)
+        }
+    }
+
+    /// The person's tags: the row edits them, each chip opens what the tag adds up to.
+    private var tagsRow: some View {
+        let tags = row.tags ?? []
+        return VStack(alignment: .leading, spacing: 0) {
+            Button { showsTags = true } label: {
+                DSListRow("Tags", detail: tags.isEmpty ? "A trip, a project, what work pays back" : nil,
+                          value: tags.isEmpty ? "Add" : "Edit", showsChevron: true)
+            }
+            .buttonStyle(.plain)
+            .accessibilityValue(tags.isEmpty ? "None" : tags.joined(separator: ", "))
+            .accessibilityIdentifier("tagsRow")
+            if !tags.isEmpty {
+                TagChips(tags: tags) { openTag = TagRoute(tag: $0) }
+                    .padding(.bottom, DSSpace.sm)
+            }
         }
     }
 

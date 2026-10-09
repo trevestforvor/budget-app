@@ -83,6 +83,7 @@ extension TransactionFilter {
         if activePeriod != .all { n += 1 }
         if !(categoryIDs ?? []).isEmpty { n += 1 }
         if !(accountIDs ?? []).isEmpty { n += 1 }
+        if !(tags ?? []).isEmpty { n += 1 }
         if direction != nil || minAmount != nil || maxAmount != nil { n += 1 }
         if visibility != .all { n += 1 }
         if needsReviewOnly { n += 1 }
