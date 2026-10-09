@@ -12,6 +12,8 @@ public struct BudgetService: Sendable {
     public let sync: SyncService
     /// Yesterday's spending at 9:30 in each phone's time zone.
     public let morning: MorningSummary
+    /// Pace alerts: a target past 80% or on pace to go over, once a month, in each phone's daytime.
+    public let pace: PaceAlertSender
     public let config: ServerConfig
     public let sealer: TokenSealer?
     /// Plaid and Teller as configured right now (dashboard settings over environment).
@@ -273,6 +275,7 @@ public func buildRouter(_ service: BudgetService, surface: Surface = .api) -> Ro
     addLinkRoutes(router, service)
     addImportRoutes(router, service)
     addMorningSummaryRoutes(router, service)
+    addPaceAlertRoutes(router, service)
     return router
 }
 
