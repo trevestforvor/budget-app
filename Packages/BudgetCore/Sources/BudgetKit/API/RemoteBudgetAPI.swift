@@ -4,7 +4,7 @@ import FoundationNetworking // URLSession/URLRequest on Linux
 #endif
 
 /// HTTP client for the Budget API (Vapor/Hummingbird on the Olares). Contract: docs/API.md.
-public struct RemoteBudgetAPI: BudgetAPI, MorningSummaryAPI {
+public struct RemoteBudgetAPI: BudgetAPI, MorningSummaryAPI, PaceAlertsAPI {
     public let baseURL: URL
     private let session: URLSession
     private let token: String?
@@ -110,6 +110,9 @@ public struct RemoteBudgetAPI: BudgetAPI, MorningSummaryAPI {
         // Writing the summary can wait on the chat model.
         try await send("POST", "v1/devices/test", body: ["token": token], timeout: 120)
     }
+
+    /// Pace alerts (server 0.5.0; an older one answers 404, `.notFound`).
+    public func paceAlerts() async throws -> PaceAlerts { try await get("v1/alerts/pace") }
 
     // MARK: - Transport
 

@@ -382,6 +382,20 @@ public actor LedgerBudgetAPI: BudgetAPI {
         return ledger.checkup(institutions: deployment.institutions)
     }
 
+    /// This month's pace and what's past a threshold (`Ledger.paceAlerts`). `asOf` works it out at another instant
+    /// (the pace-alert scheduler's clock) without moving the ledger's own.
+    public func paceAlerts(asOf: Date?) async throws -> PaceAlerts {
+        tick()
+        guard let asOf else { return ledger.paceAlerts() }
+        var at = ledger
+        at.now = asOf
+        return at.paceAlerts()
+    }
+
+    public func paceAlerts() async throws -> PaceAlerts {
+        try await paceAlerts(asOf: nil)
+    }
+
     /// The morning summary for `day` ("2026-09-28", a day in the ledger's calendar): the ledger's figures and facts,
     /// retold by the chat model when one is configured (`DigestWriter`), with the template otherwise. `reuse` is an
     /// earlier digest of the day: while its facts still hold, its summary is kept and the model isn't asked again —

@@ -320,6 +320,18 @@
     }
   },
   {
+    "description" : "This month's pace, as pace alerts see it: the everyday budget, every category target and every merchant cap with what's spent, where the month lands at the pace so far (from the second week; before it there's no projection), and what a day can take for the rest of the month and stay on budget; plus which are 80% used, on pace to finish over, or already over. Use it for whether the user is on track or will go over this month.",
+    "kind" : "read",
+    "name" : "checkPace",
+    "parameters" : {
+      "additionalProperties" : false,
+      "properties" : {
+
+      },
+      "type" : "object"
+    }
+  },
+  {
     "description" : "Run the categorization pipeline on transactions and return ranked suggestions with confidence. Does not change anything.",
     "kind" : "read",
     "name" : "categorize",

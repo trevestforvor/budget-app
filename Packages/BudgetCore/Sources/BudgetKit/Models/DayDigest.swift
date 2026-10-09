@@ -118,14 +118,19 @@ public struct DeviceRegistration: Codable, Hashable, Sendable {
     public var enabled: Bool
     public var hour: Int
     public var minute: Int
+    /// Which pace alerts this phone wants (server 0.5.0). Nil leaves what the server has as it is; an older server
+    /// ignores it. `enabled` is the morning summary alone: a phone can have pace alerts with the summary off.
+    public var paceAlerts: PaceAlertPreferences?
 
-    public init(token: String, environment: Environment, timeZone: String, enabled: Bool, hour: Int = 9, minute: Int = 30) {
+    public init(token: String, environment: Environment, timeZone: String, enabled: Bool, hour: Int = 9, minute: Int = 30,
+                paceAlerts: PaceAlertPreferences? = nil) {
         self.token = token
         self.environment = environment
         self.timeZone = timeZone
         self.enabled = enabled
         self.hour = hour
         self.minute = minute
+        self.paceAlerts = paceAlerts
     }
 }
 
@@ -141,8 +146,11 @@ public struct DeviceStatus: Codable, Hashable, Sendable {
     public var lastError: String?
     /// Whether the server has an APNs key to send with. Without one nothing can arrive.
     public var pushConfigured: Bool
+    /// The pace alerts the server will send this phone; nil for none, and from servers before 0.5.0.
+    public var paceAlerts: PaceAlertPreferences?
 
-    public init(enabled: Bool, timeZone: String, hour: Int, minute: Int, lastSentDay: String?, lastError: String?, pushConfigured: Bool) {
+    public init(enabled: Bool, timeZone: String, hour: Int, minute: Int, lastSentDay: String?, lastError: String?, pushConfigured: Bool,
+                paceAlerts: PaceAlertPreferences? = nil) {
         self.enabled = enabled
         self.timeZone = timeZone
         self.hour = hour
@@ -150,6 +158,7 @@ public struct DeviceStatus: Codable, Hashable, Sendable {
         self.lastSentDay = lastSentDay
         self.lastError = lastError
         self.pushConfigured = pushConfigured
+        self.paceAlerts = paceAlerts
     }
 }
 
