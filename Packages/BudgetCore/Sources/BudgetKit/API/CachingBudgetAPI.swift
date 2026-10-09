@@ -63,6 +63,8 @@ public enum SavedRead: Hashable, Sendable {
     case spending(SpendingRange)
     case categoryHistory(id: String, months: Int)
     case projection(horizonMonths: Int)
+    case scenarios(horizonMonths: Int)
+    case cashFlowSankey(month: String?)
 
     var key: String {
         switch self {
@@ -81,6 +83,8 @@ public enum SavedRead: Hashable, Sendable {
         case let .spending(range): "spending-\(range.rawValue)"
         case let .categoryHistory(id, months): "category-history-\(id)-\(months)"
         case let .projection(horizon): "projection-\(horizon)"
+        case let .scenarios(horizon): "scenarios-\(horizon)"
+        case let .cashFlowSankey(month): "flow-\(month ?? "current")"
         }
     }
 }
@@ -92,7 +96,7 @@ public protocol SavedCopies: Sendable {
 }
 
 public struct CachingBudgetAPI: BudgetAPI {
-    private let upstream: any BudgetAPI
+    let upstream: any BudgetAPI
     private let cache: ResponseCache
     private let onFreshness: @Sendable (Freshness) -> Void
 
@@ -102,7 +106,7 @@ public struct CachingBudgetAPI: BudgetAPI {
         self.onFreshness = onFreshness
     }
 
-    private func read<T: Codable & Sendable>(_ saved: SavedRead, _ fetch: () async throws -> T) async throws -> T {
+    func read<T: Codable & Sendable>(_ saved: SavedRead, _ fetch: () async throws -> T) async throws -> T {
         let key = saved.key
         do {
             let value = try await fetch()

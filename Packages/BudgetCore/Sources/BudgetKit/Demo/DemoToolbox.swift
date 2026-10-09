@@ -35,13 +35,9 @@ struct DemoToolbox: AgentToolbox {
                                      minAmount: string("minAmount").flatMap(DecimalAmount.init(string:))?.money(),
                                      maxAmount: string("maxAmount").flatMap(DecimalAmount.init(string:))?.money(),
                                      direction: string("direction").flatMap(TransactionFilter.Direction.init(rawValue:)))
-        case "projectBalance":
-            var goal: GoalQuery?
-            if case let .object(g)? = args["goal"], case let .string(a)? = g["amount"], case let .string(d)? = g["targetDate"],
-               let amount = DecimalAmount(string: a), let date = isoDate(d) {
-                goal = GoalQuery(amount: amount.money(), targetDate: date)
-            }
-            return projectBalance(horizon: int("horizonMonths") ?? 6, goal: goal)
+        case "projectBalance": return projectBalance(horizon: int("horizonMonths") ?? 6, goal: goalArgument(args["goal"]))
+        case "planScenarios": return try planScenarios(scenarioID: string("scenarioID"), horizon: int("horizonMonths") ?? 12, goal: goalArgument(args["goal"]))
+        case "monthFlow": return try monthFlow(month: string("month"))
         case "flexBudget": return flexBudget()
         case "cashFlow": return cashFlow(months: int("months") ?? 6)
         case "categoryHistory": return try categoryHistory(string("categoryID")!, months: int("months") ?? 12)
@@ -259,7 +255,7 @@ struct DemoToolbox: AgentToolbox {
     }
 
     /// "Aug 2026" for "2026-08".
-    private func monthLabel(_ key: String) -> String {
+    func monthLabel(_ key: String) -> String {
         guard let start = ledger.monthStart(key) else { return key }
         var style = Date.FormatStyle.dateTime.month(.abbreviated).year()
         style.timeZone = ledger.calendar.timeZone
@@ -373,11 +369,11 @@ struct DemoToolbox: AgentToolbox {
 
     // MARK: Dates
 
-    private func isoDay(_ date: Date) -> String {
+    func isoDay(_ date: Date) -> String {
         date.formatted(Date.ISO8601FormatStyle(timeZone: ledger.calendar.timeZone).year().month().day())
     }
 
-    private func isoDate(_ s: String) -> Date? {
+    func isoDate(_ s: String) -> Date? {
         guard let m = s.wholeMatch(of: /(\d{4})-(\d{2})-(\d{2})/) else { return nil }
         return ledger.calendar.date(from: DateComponents(year: Int(m.1), month: Int(m.2), day: Int(m.3)))
     }

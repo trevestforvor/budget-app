@@ -41,22 +41,27 @@ public struct LedgerState: Hashable, Codable, Sendable {
     public var upgrades: [String]
     /// The person's say on which merchants recur, keyed by `RecurringChoice.key`.
     public var recurringChoices: [String: RecurringChoice]
+    /// Plan's "what if" scenarios, in the order they were made.
+    public var planScenarios: [PlanScenario]
 
     public init(categories: [BudgetCategory], monthlyTargets: [String: Money] = [:], rules: [BudgetRule] = [],
                 decisionPolicy: DecisionPolicy = .default, merchantTargets: [String: Money] = [:], monthlySavings: Money? = nil,
                 accounts: [Account] = [], openingBalances: [String: Money] = [:], transactions: [LedgerTransaction] = [],
                 suggestions: [String: [CategorySuggestion]] = [:], reviewReasons: [String: String] = [:], merchantAliases: [String: String] = [:],
-                forgottenMerchants: [String] = [], upgrades: [String] = [], recurringChoices: [String: RecurringChoice] = [:]) {
+                forgottenMerchants: [String] = [], upgrades: [String] = [], recurringChoices: [String: RecurringChoice] = [:],
+                planScenarios: [PlanScenario] = []) {
         self.categories = categories; self.monthlyTargets = monthlyTargets; self.rules = rules; self.decisionPolicy = decisionPolicy
         self.merchantTargets = merchantTargets; self.monthlySavings = monthlySavings; self.accounts = accounts
         self.openingBalances = openingBalances; self.transactions = transactions; self.suggestions = suggestions; self.reviewReasons = reviewReasons
         self.merchantAliases = merchantAliases; self.forgottenMerchants = forgottenMerchants; self.upgrades = upgrades
         self.recurringChoices = recurringChoices
+        self.planScenarios = planScenarios
     }
 
     enum CodingKeys: String, CodingKey {
         case categories, monthlyTargets, rules, decisionPolicy, merchantTargets, monthlySavings, accounts, openingBalances, transactions
         case suggestions, reviewReasons, merchantAliases, forgottenMerchants, upgrades, recurringChoices
+        case planScenarios
     }
 
     /// Fields added after a ledger was first saved decode as empty; rules saved before they had ids get them.
@@ -76,7 +81,8 @@ public struct LedgerState: Hashable, Codable, Sendable {
                   merchantAliases: try c.decodeIfPresent([String: String].self, forKey: .merchantAliases) ?? [:],
                   forgottenMerchants: try c.decodeIfPresent([String].self, forKey: .forgottenMerchants) ?? [],
                   upgrades: try c.decodeIfPresent([String].self, forKey: .upgrades) ?? [],
-                  recurringChoices: try c.decodeIfPresent([String: RecurringChoice].self, forKey: .recurringChoices) ?? [:])
+                  recurringChoices: try c.decodeIfPresent([String: RecurringChoice].self, forKey: .recurringChoices) ?? [:],
+                  planScenarios: try c.decodeIfPresent([PlanScenario].self, forKey: .planScenarios) ?? [])
     }
 
     /// A fresh ledger for a new install: the standard categories, no targets, no data. It lists no upgrades: the server
@@ -126,6 +132,8 @@ public struct Ledger: Sendable {
     var upgrades: Set<String> = []
     /// The person's say on which merchants recur (`LedgerState.recurringChoices`).
     var recurringChoices: [String: RecurringChoice] = [:] { didSet { rowsToken = RowsToken.next() } }
+    /// Plan's "what if" scenarios (`LedgerState.planScenarios`).
+    var planScenarios: [PlanScenario] = []
 
     public init(state: LedgerState, now: Date, calendar: Calendar = .current) {
         self.now = now
@@ -145,6 +153,7 @@ public struct Ledger: Sendable {
         forgottenMerchants = Set(state.forgottenMerchants)
         upgrades = Set(state.upgrades)
         recurringChoices = state.recurringChoices
+        planScenarios = state.planScenarios
         pairLegacyTransfers()
         upgradeLegacyProvenance()
         applyOneTimeUpgrades()
@@ -164,7 +173,7 @@ public struct Ledger: Sendable {
                     merchantTargets: merchantTargets, monthlySavings: monthlySavings, accounts: accounts,
                     openingBalances: openingBalances, transactions: transactions, suggestions: suggestions, reviewReasons: reviewReasons,
                     merchantAliases: merchantAliases, forgottenMerchants: forgottenMerchants.sorted(), upgrades: upgrades.sorted(),
-                    recurringChoices: recurringChoices)
+                    recurringChoices: recurringChoices, planScenarios: planScenarios)
     }
 
     /// Makes an account's replayed balance end at its reported balance (providers report the
@@ -352,6 +361,7 @@ public struct Ledger: Sendable {
             accounts[index].balance = balance(of: accounts[index].id, through: now)
         }
         addActivityExamples(today: today)
+        addPlanScenarios()
         // The demo's rows include answers the model filed, so its settings say the model is on (Qwen Decide at 80%).
         decisionPolicy = DecisionPolicy(provider: .localDecide, autoAcceptPercent: 80, kinds: [.category])
     }
@@ -828,19 +838,7 @@ public struct Ledger: Sendable {
                                   high: Money(minorUnits: Int64((expected + band).rounded())))
         }
 
-        var check: GoalCheck?
-        if let goal {
-            let months = max(goal.targetDate.timeIntervalSince(now) / (30.436875 * 86_400), 0.5)
-            let saved = Money(minorUnits: max(0, Int64((mean * months).rounded())))
-            let shortfall = Money(minorUnits: max(0, goal.amount.minorUnits - saved.minorUnits))
-            let needed = Money(minorUnits: Int64((Double(goal.amount.minorUnits) / months).rounded()))
-            let onTrack = shortfall.minorUnits == 0
-            let dateText = goal.targetDate.formatted(.dateTime.month(.wide).year())
-            let summary = onTrack
-                ? "At your recent pace you'd set aside \(saved.formatted(fractionDigits: 0)) by \(dateText) — enough for \(goal.amount.formatted(fractionDigits: 0))."
-                : "At your recent pace you'd set aside \(saved.formatted(fractionDigits: 0)) by \(dateText), \(shortfall.formatted(fractionDigits: 0)) short. Setting aside \(needed.formatted(fractionDigits: 0)) a month closes the gap."
-            check = GoalCheck(query: goal, projectedSavings: saved, isOnTrack: onTrack, shortfall: shortfall, monthlyNeeded: needed, summary: summary)
-        }
+        let check = goal.map { goalCheck($0, pace: mean, scenario: nil) }
 
         return Projection(accountID: nil, horizonMonths: horizon, history: cashTrend(days: 120, strideDays: 4, afterCards: true), projected: projected,
                           monthlyNet: monthlyNet, endBalance: projected.last!.expected, goal: check,

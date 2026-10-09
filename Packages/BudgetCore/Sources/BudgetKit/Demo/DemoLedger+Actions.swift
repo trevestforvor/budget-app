@@ -234,6 +234,9 @@ extension DemoLedger {
                                sample: Array(plan.rows.prefix(Preview.sampleSize)), matchCount: plan.rows.count, changeCount: 0)
             }
 
+        case let .savePlanScenario(p): return try scenarioPreview(p)
+        case let .deletePlanScenario(p): return try scenarioPreview(p)
+
         case let .navigate(p):
             let month = p.month.flatMap(monthStart).map { " · \($0.formatted(Self.monthStyle(calendar)))" }
             let focus = p.categoryID.flatMap(category).map { " · \($0.name)" } ?? month ?? p.search.map { " · “\($0)”" } ?? ""
@@ -406,6 +409,9 @@ extension DemoLedger {
             case let next?: "\(plan.merchant) repeats \([next.cadence.map(\.every), next.kind.map { "as a \($0.rawValue)" }].compactMap { $0 }.joined(separator: ", "))."
             }
             return ActionResult(message: message, affectedTransactions: 0, undo: undo)
+
+        case let .savePlanScenario(p): return try saveScenario(p)
+        case let .deletePlanScenario(p): return try deleteScenario(p)
 
         case .navigate:
             throw BudgetAPIError.rejected("Navigation is handled on the device.")
