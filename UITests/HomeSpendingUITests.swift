@@ -81,13 +81,29 @@ final class HomeSpendingUITests: XCTestCase {
         XCTAssertTrue(pill.label.contains("Tidewater"), pill.label)
         snapshot("home-top")
         XCTAssertTrue(reveal(app.staticTexts["Everyday · last 7 days"], in: app).exists)
-        XCTAssertTrue(reveal(app.staticTexts["Net worth"], in: app).exists)
+        XCTAssertTrue(reveal(app.buttons["openNetWorth"], in: app).exists)
         snapshot("home-balances")
 
         app.swipeDown(); app.swipeDown(); app.swipeDown(); app.swipeDown()
         reveal(pill, in: app).tap()
         XCTAssertTrue(app.staticTexts["Tidewater"].waitForExistence(timeout: 10), "Accounts lists the connection that needs a sign-in")
         snapshot("home-accounts")
+    }
+
+    /// Net worth from Home's balances: the history with its range, what you own and owe, and a hand-kept item opening to edit.
+    func testNetWorth() {
+        let app = launch()
+        reveal(app.buttons["openNetWorth"], in: app).tap()
+        XCTAssertTrue(app.otherElements["netWorthRange"].waitForExistence(timeout: 10) || app.buttons["3M"].waitForExistence(timeout: 2))
+        XCTAssertTrue(reveal(app.staticTexts["What you own"], in: app).exists)
+        snapshot("net-worth")
+        let car = reveal(app.buttons["manualAsset-asset-car"], in: app)
+        XCTAssertTrue(car.exists, "the demo's car is kept by hand and opens to edit")
+        car.tap()
+        XCTAssertTrue(app.buttons["removeManualAsset"].waitForExistence(timeout: 10))
+        snapshot("net-worth-edit")
+        app.buttons["Cancel"].tap()
+        XCTAssertTrue(app.buttons["addManualAsset"].waitForExistence(timeout: 10) || app.buttons["addManualAssetToolbar"].exists)
     }
 
     /// The weekly recap puts itself away for the week, and the checkup card takes its usual place.

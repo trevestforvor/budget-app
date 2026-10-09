@@ -84,7 +84,7 @@ struct BudgetApp: App {
         return args[i + 1]
     }
 
-    /// `-tab spending|ask|plan|activity`, `-ask "question"`, `-open …`, `-review`, `-settings`, `-opportunity [-price]`, `-tips`, `-gallery` — used for screenshots and UI tests.
+    /// `-tab spending|ask|plan|activity`, `-ask "question"`, `-open …`, `-review`, `-settings`, `-opportunity [-price]`, `-networth`, `-tips`, `-gallery` — used for screenshots and UI tests.
     private static func applyLaunchArguments(_ args: [String], to model: AppModel) {
         func value(after flag: String) -> String? { Self.value(after: flag, in: args) }
         switch value(after: "-tab") {
@@ -120,6 +120,10 @@ struct BudgetApp: App {
         // `-opportunity [-price 499]`: opportunity cost, with a price already in.
         if args.contains("-opportunity") { model.showsOpportunity = true }
         if let price = value(after: "-price") { model.pendingPrice = Decimal(string: price) }
+        if args.contains("-networth") {
+            model.selectedTab = .home
+            model.showsNetWorth = true
+        }
         if args.contains("-checkup") {
             model.selectedTab = .home
             model.showsCheckup = true

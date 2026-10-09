@@ -346,6 +346,9 @@ public enum AppAction: Hashable, Sendable {
     case setRecurring(SetRecurring)
     /// Keeps a fact in assistant memory (server 0.5.0).
     case rememberFact(RememberFact)
+    /// Hand-kept assets and debts (net worth); not tools the assistant can call.
+    case saveManualAsset(SaveManualAsset)
+    case removeManualAsset(RemoveManualAsset)
     case navigate(Navigate)
 
     public var toolName: String {
@@ -369,6 +372,8 @@ public enum AppAction: Hashable, Sendable {
         case .forgetMerchant: "forgetMerchant"
         case .setRecurring: "setRecurring"
         case .rememberFact: "rememberFact"
+        case .saveManualAsset: "saveManualAsset"
+        case .removeManualAsset: "removeManualAsset"
         case .navigate: "navigate"
         }
     }
@@ -437,6 +442,8 @@ public enum AppAction: Hashable, Sendable {
         case let .forgetMerchant(p): return try e.encode(p)
         case let .setRecurring(p): return try e.encode(p)
         case let .rememberFact(p): return try e.encode(p)
+        case let .saveManualAsset(p): return try e.encode(p)
+        case let .removeManualAsset(p): return try e.encode(p)
         case let .navigate(p): return try e.encode(p)
         }
     }
@@ -467,6 +474,8 @@ extension AppAction: Codable {
         case "forgetMerchant": self = .forgetMerchant(try ForgetMerchant(from: decoder))
         case "setRecurring": self = .setRecurring(try SetRecurring(from: decoder))
         case "rememberFact": self = .rememberFact(try RememberFact(from: decoder))
+        case "saveManualAsset": self = .saveManualAsset(try SaveManualAsset(from: decoder))
+        case "removeManualAsset": self = .removeManualAsset(try RemoveManualAsset(from: decoder))
         case "navigate": self = .navigate(try Navigate(from: decoder))
         default:
             throw DecodingError.dataCorruptedError(forKey: .type, in: try decoder.container(keyedBy: Keys.self), debugDescription: "Unknown action \(type)")
@@ -496,6 +505,8 @@ extension AppAction: Codable {
         case let .forgetMerchant(p): try p.encode(to: encoder)
         case let .setRecurring(p): try p.encode(to: encoder)
         case let .rememberFact(p): try p.encode(to: encoder)
+        case let .saveManualAsset(p): try p.encode(to: encoder)
+        case let .removeManualAsset(p): try p.encode(to: encoder)
         case let .navigate(p): try p.encode(to: encoder)
         }
     }

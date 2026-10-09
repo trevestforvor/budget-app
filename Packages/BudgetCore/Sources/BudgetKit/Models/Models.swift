@@ -589,7 +589,7 @@ public struct DataAttention: Identifiable, Hashable, Codable, Sendable {
 }
 
 /// Balances by account kind. Card balances are negative in the ledger; `cardsOwed` is what they owe together, as a
-/// positive amount. `netWorth` = cash − cardsOwed + investments; `cashAfterCards` = cash − cardsOwed.
+/// positive amount. `netWorth` = cash − cardsOwed + investments + otherAssets − otherDebts; `cashAfterCards` = cash − cardsOwed.
 public struct Balances: Hashable, Codable, Sendable {
     /// Checking and savings: `Overview.cashOnHand`.
     public var cash: Money
@@ -598,6 +598,9 @@ public struct Balances: Hashable, Codable, Sendable {
     public var investments: Money
     public var netWorth: Money
     public var cashAfterCards: Money
+    /// Assets and debts kept by hand (`ManualAsset`), when there are any (server 0.5.0).
+    public var otherAssets: Money? = nil
+    public var otherDebts: Money? = nil
 }
 
 /// One day's everyday spending.

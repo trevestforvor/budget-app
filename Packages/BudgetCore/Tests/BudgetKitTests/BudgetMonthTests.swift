@@ -33,7 +33,7 @@ struct OverviewAdditionsTests {
         let cards = ledger.accounts.filter { $0.kind == .credit }.map(\.balance).sum()
         #expect(b.cardsOwed == -cards && b.cardsOwed.minorUnits > 0)
         #expect(b.investments == Money(32_418.77) + Money(48_210.10) + Money(6_852.40))
-        #expect(b.netWorth == b.cash - b.cardsOwed + b.investments)
+        #expect(b.netWorth == b.cash - b.cardsOwed + b.investments + (b.otherAssets ?? .zero) - (b.otherDebts ?? .zero))
         #expect(b.cashAfterCards == b.cash - b.cardsOwed)
         #expect(overview.monthTarget == nil && overview.leftToBudget == nil)
     }

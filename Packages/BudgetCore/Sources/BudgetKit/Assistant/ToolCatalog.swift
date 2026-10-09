@@ -138,6 +138,8 @@ public enum ToolCatalog {
                  ])),
         ToolSpec(name: "findRules", description: "The user's categorization rules, newest first (the first that matches a transaction files it): each rule's id, what it matches, its category, whether it's on, how many transactions it filed and matches now, the rules it disagrees with, and whether its category is gone.", kind: .read,
                  schema: .object(nil, [:])),
+        ToolSpec(name: "netWorth", description: "Net worth today — what the user owns (cash, investments, assets they keep by hand such as a home or car) less what they owe (cards, loans) — with its change over a range and the breakdown by account and item. Investments hold their latest recorded balance, so part of a longer range can be estimated; the result says when. Use it for questions about net worth, what they own or owe, or how their overall position changed.", kind: .read,
+                 schema: .object(nil, ["range": .string("How far back to compare: 1M, 3M (the default), YTD, 1Y or ALL.", enum: NetWorthRange.allCases.map(\.rawValue))])),
 
         // Write — each call becomes a proposal card the person applies or dismisses.
         ToolSpec(name: "setCategoryTarget", description: "Propose setting a category's monthly target to an exact amount the user stated.", kind: .write,

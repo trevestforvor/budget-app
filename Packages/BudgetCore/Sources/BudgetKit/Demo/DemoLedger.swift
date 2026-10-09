@@ -43,25 +43,30 @@ public struct LedgerState: Hashable, Codable, Sendable {
     public var recurringChoices: [String: RecurringChoice]
     /// What the person asked Ask to keep in mind, newest first (`AssistantMemory`).
     public var assistantMemories: [AssistantMemory]
+    /// Assets and debts kept by hand (a home, a car, a loan), counted in net worth.
+    public var manualAssets: [ManualAsset]
 
     public init(categories: [BudgetCategory], monthlyTargets: [String: Money] = [:], rules: [BudgetRule] = [],
                 decisionPolicy: DecisionPolicy = .default, merchantTargets: [String: Money] = [:], monthlySavings: Money? = nil,
                 accounts: [Account] = [], openingBalances: [String: Money] = [:], transactions: [LedgerTransaction] = [],
                 suggestions: [String: [CategorySuggestion]] = [:], reviewReasons: [String: String] = [:], merchantAliases: [String: String] = [:],
                 forgottenMerchants: [String] = [], upgrades: [String] = [], recurringChoices: [String: RecurringChoice] = [:],
-                assistantMemories: [AssistantMemory] = []) {
+                assistantMemories: [AssistantMemory] = [],
+                manualAssets: [ManualAsset] = []) {
         self.categories = categories; self.monthlyTargets = monthlyTargets; self.rules = rules; self.decisionPolicy = decisionPolicy
         self.merchantTargets = merchantTargets; self.monthlySavings = monthlySavings; self.accounts = accounts
         self.openingBalances = openingBalances; self.transactions = transactions; self.suggestions = suggestions; self.reviewReasons = reviewReasons
         self.merchantAliases = merchantAliases; self.forgottenMerchants = forgottenMerchants; self.upgrades = upgrades
         self.recurringChoices = recurringChoices
         self.assistantMemories = assistantMemories
+        self.manualAssets = manualAssets
     }
 
     enum CodingKeys: String, CodingKey {
         case categories, monthlyTargets, rules, decisionPolicy, merchantTargets, monthlySavings, accounts, openingBalances, transactions
         case suggestions, reviewReasons, merchantAliases, forgottenMerchants, upgrades, recurringChoices
         case assistantMemories
+        case manualAssets
     }
 
     /// Fields added after a ledger was first saved decode as empty; rules saved before they had ids get them.
@@ -82,7 +87,8 @@ public struct LedgerState: Hashable, Codable, Sendable {
                   forgottenMerchants: try c.decodeIfPresent([String].self, forKey: .forgottenMerchants) ?? [],
                   upgrades: try c.decodeIfPresent([String].self, forKey: .upgrades) ?? [],
                   recurringChoices: try c.decodeIfPresent([String: RecurringChoice].self, forKey: .recurringChoices) ?? [:],
-                  assistantMemories: try c.decodeIfPresent([AssistantMemory].self, forKey: .assistantMemories) ?? [])
+                  assistantMemories: try c.decodeIfPresent([AssistantMemory].self, forKey: .assistantMemories) ?? [],
+                  manualAssets: try c.decodeIfPresent([ManualAsset].self, forKey: .manualAssets) ?? [])
     }
 
     /// A fresh ledger for a new install: the standard categories, no targets, no data. It lists no upgrades: the server
@@ -134,6 +140,8 @@ public struct Ledger: Sendable {
     var recurringChoices: [String: RecurringChoice] = [:] { didSet { rowsToken = RowsToken.next() } }
     /// What the person asked Ask to keep in mind (`LedgerState.assistantMemories`).
     var assistantMemories: [AssistantMemory] = []
+    /// Assets and debts kept by hand (`LedgerState.manualAssets`).
+    var manualAssets: [ManualAsset] = []
 
     public init(state: LedgerState, now: Date, calendar: Calendar = .current) {
         self.now = now
@@ -154,6 +162,7 @@ public struct Ledger: Sendable {
         upgrades = Set(state.upgrades)
         recurringChoices = state.recurringChoices
         assistantMemories = state.assistantMemories
+        manualAssets = state.manualAssets
         pairLegacyTransfers()
         upgradeLegacyProvenance()
         applyOneTimeUpgrades()
@@ -173,7 +182,8 @@ public struct Ledger: Sendable {
                     merchantTargets: merchantTargets, monthlySavings: monthlySavings, accounts: accounts,
                     openingBalances: openingBalances, transactions: transactions, suggestions: suggestions, reviewReasons: reviewReasons,
                     merchantAliases: merchantAliases, forgottenMerchants: forgottenMerchants.sorted(), upgrades: upgrades.sorted(),
-                    recurringChoices: recurringChoices, assistantMemories: assistantMemories)
+                    recurringChoices: recurringChoices, assistantMemories: assistantMemories,
+                    manualAssets: manualAssets)
     }
 
     /// Makes an account's replayed balance end at its reported balance (providers report the
@@ -364,6 +374,7 @@ public struct Ledger: Sendable {
         addTagExamples()
         addOrderExamples()
         assistantMemories = Self.demoAssistantMemories(now: now)
+        addManualAssetExamples(today: today)
         // The demo's rows include answers the model filed, so its settings say the model is on (Qwen Decide at 80%).
         decisionPolicy = DecisionPolicy(provider: .localDecide, autoAcceptPercent: 80, kinds: [.category])
     }

@@ -43,6 +43,12 @@ public final class PostgresStore: ServerStore, Sendable {
         CREATE TABLE IF NOT EXISTS budget_chats (id TEXT PRIMARY KEY, updated_at TIMESTAMPTZ NOT NULL, summary JSONB NOT NULL, doc JSONB NOT NULL);
         CREATE INDEX IF NOT EXISTS budget_chats_updated ON budget_chats (updated_at DESC);
         """,
+        // 4: each account's balance at the end of a day, recorded at sync (net worth history; `PostgresBalanceHistory`).
+        """
+        CREATE TABLE IF NOT EXISTS budget_balances (
+            account_id TEXT NOT NULL, day TEXT NOT NULL, minor BIGINT NOT NULL, currency TEXT NOT NULL,
+            updated_at TIMESTAMPTZ NOT NULL DEFAULT now(), PRIMARY KEY (account_id, day));
+        """,
     ]
 
     public func migrate() async throws {

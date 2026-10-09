@@ -214,13 +214,34 @@ Server 0.5.0 (`ServerStatus.assistantSince`); an older server answers 404 to the
 
 `{"type": "forgetMerchant", descriptor}` (the entry's descriptor, or a raw one) takes a descriptor out of memory: new rows with it are decided afresh until you file one of its rows yourself, and past rows keep their category. The ledger keeps the list in `LedgerState.forgottenMerchants`. It isn't an assistant tool.
 
+### Net worth (server 0.5.0)
+
+| Method | Path | Returns |
+|---|---|---|
+| GET | `/v1/networth?range=1M\|3M\|YTD\|1Y\|ALL` | `NetWorth`: the history and today's breakdown (below). `range` defaults to `3M`, is read case-insensitively, and anything else is a 400. A server before 0.5.0 answers 404, which the app shows as not available yet |
+| GET | `/v1/assets` | `[ManualAsset]`: the assets and debts kept by hand, in the order they were added |
+
+`NetWorth {range, asOf, start, points, netWorth, assets, liabilities, change, changePercent?, assetLines, liabilityLines, manualAssets, estimatedThrough?, note?}`:
+- `points: [NetWorthPoint {date, netWorth, assets, liabilities, isEstimated?}]`, oldest first, today last: every day for ranges up to about 120 days, every few days beyond (the first day and today are always there). `start` is the range's first day, or the ledger's first day (its first row, recorded balance or hand-kept value) when it holds less. Today's `netWorth` equals `Balances.netWorth`.
+- **How each day is worked out.** Checking, savings and cards are walked back from today's balance through each day's rows; on a day a sync recorded the bank's balance, the walk starts again from that figure. Investments (balance-only) hold their latest recorded balance; before the first one they hold that first value (today's, with none), and those days carry `isEstimated: true`. `estimatedThrough` is the last such day and `note` says so in a sentence. Hand-kept items count from the day they were added, at each value they were given.
+- `change` is today less the first point; `changePercent` is that as a percent of the first point, nil when the first point wasn't above zero.
+- `assetLines` / `liabilityLines: [NetWorthLine {id, name, detail?, group, value, change?, isManual?, isEstimated?}]`: one per account (`id` is the account id) and per hand-kept item, ordered by `group` (`cash`, `investments`, `realEstate`, `vehicles`, `otherAssets`; `cards`, `loans`, `otherDebts`) then value. A debt's `value` is what's owed, positive. `change` is since `start`. A group the app doesn't know decodes as `otherAssets`.
+
+**Recorded balances.** After each provider sync (Plaid, Teller, SimpleFIN; never a statement file, whose balance is the statement's) the server records each reported account's balance for the day in the ledger's time zone, one per account per day (a later sync that day replaces it). They live in their own Postgres table, `budget_balances` (migration 3), not in the ledger document. `/v1/admin/reset` clears them; with `seedDemo` it records the demo's two months of investment balances.
+
+**Hand-kept assets and debts** (`LedgerState.manualAssets`): `ManualAsset {id, name, kind: asset|liability, category: realEstate|vehicle|loan|other, value, updatedAt, createdAt?, history?: [{date, value}]}`. `value` is never negative (a debt's is what's owed). They change through `POST /v1/actions`; neither is an assistant tool:
+- `{"type": "saveManualAsset", name, kind?, category?, value}` adds one (`kind` defaults to `liability` for a `loan`, else `asset`; `category` to `loan` for a debt, else `other`). With `id`, only the fields given change; a new `value` is added to `history` from today (a second change the same day replaces the first). `undo` removes a new item, or puts a changed one back exactly. A blank name, a negative value or a change that changes nothing is a 422; an unknown `id` a 404.
+- `{"type": "removeManualAsset", id}` removes it and its history from net worth; `undo` restores it exactly (`saveManualAsset` with `restore`).
+
+`Balances` (in `Overview`) carries `otherAssets` and `otherDebts`, the hand-kept totals, when there are any (nil otherwise, as before).
+
 ### Home, the budget month and history
 
 `Overview.flex` carries the budget (`expectedIncome`, `bills` and `subscriptions` — a usual month of each — planned savings, `flexNumber` the everyday budget, `flexSpent` everyday spending, safe to spend, days left after today, and `perDayLeft`: safe to spend spread over the rest of the month, today included, zero once it's gone). `expectedIncome` is the lower of `averageIncome`, the last 3 months' average, and `recentPaychecks`, a month of the latest `paycheckCount` paychecks. `incomeSource` (`threeMonthAverage` or `recentPaychecks`) says which one it is. All four were added in server 0.3.3; from an older server they're absent and the income is the average. `SpendingSummary.merchantCaps` lists merchant caps with this range's spend. See [BUDGETING.md](BUDGETING.md).
 
 `Overview` also carries, each optional so older payloads decode:
 - `attention: [DataAttention {id, kind, title, detail, institution?, accountID?}]`, worst first: `needsReauth` for each connection to sign in to again (`reauth-<link id>`); `stale` for each checking, savings or card account whose newest row is older than max(10 days, 3× the median gap between its days with rows) (`stale-<account id>`; an institution waiting for a sign-in doesn't also list its accounts); `emptyLedger` (`no-data`). The checkup's data section shows the same items.
-- `balances: {cash, cardsOwed, investments, netWorth, cashAfterCards}`: `cash` is `cashOnHand`, `cardsOwed` the card balances as a positive amount, `netWorth` = cash − cardsOwed + investments, `cashAfterCards` = cash − cardsOwed.
+- `balances: {cash, cardsOwed, investments, netWorth, cashAfterCards, otherAssets?, otherDebts?}`: `cash` is `cashOnHand`, `cardsOwed` the card balances as a positive amount, `netWorth` = cash − cardsOwed + investments + otherAssets − otherDebts, `cashAfterCards` = cash − cardsOwed. `otherAssets` and `otherDebts` are the [hand-kept items](#net-worth-server-050) (server 0.5.0), absent when there are none.
 - `lastSevenDays: [DaySpend {date, flexibleSpent}]`, oldest first, today so far last: everyday spending by the same rules as `flex.flexSpent` (a spread charge left out of the days), each day its own net (a refund lowers its own day, never below zero).
 - `lastSevenDaysSpent`: everyday spending over those seven days as one window, refunds netted across the days — the week's figure, by the same rule as safe to spend.
 - `reviewDecisions`: `reviewCount` rows as the review groups one answer each files (what the phone's badge counts), and `reviewHeadline` the queue in the phone's sentence ("8 quick answers file 11 transactions."), nil when nothing waits.

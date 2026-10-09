@@ -6,6 +6,8 @@ import Foundation
 struct DemoAskEngine {
     let ledger: DemoLedger
     var institutions: [InstitutionLink] = []
+    /// Recorded daily balances, for net worth's change over time.
+    var balanceSnapshots: [BalanceSnapshot] = []
     static let modelLabel = "demo · templated, no model"
 
     private var calendar: Calendar { ledger.calendar }
@@ -18,6 +20,7 @@ struct DemoAskEngine {
         if q.contains("q3"), q.contains("q2") { return compareQuarters(category: category, conversationID: conversationID) }
         if let r = tagIntent(q, conversationID) { return r }
         if let r = cancelIntent(q, conversationID) { return r }
+        if let r = netWorthIntent(q, conversationID) { return r }
         if let r = subscriptionIntent(q, conversationID) { return r }
         if let r = checkupIntent(q, conversationID) { return r }
         if let r = paceIntent(q, conversationID) { return r }

@@ -41,6 +41,7 @@ public enum BudgetServerApp {
                                   persistence: store, deployment: deployment)
         // Ask's conversations go where the store keeps them (Postgres); otherwise they stay in memory with the ledger.
         if let chats = store as? any ChatSessionStore { await api.setChatSessionStore(chats) }
+        await api.useBalanceHistory(balanceHistory(for: store, logger: logger))
         let sync = SyncService(api: api, store: store, config: config, sealer: sealer, providers: providers, settings: settings, logger: logger)
         // One sender for every notification, so they share one APNs provider token.
         let push = PushSender(settings: settings, transport: pushTransport ?? AHCTransport.shared)
@@ -92,6 +93,7 @@ public enum BudgetServerApp {
             let fresh = await service.freshState(seedDemo: service.config.seedDemo)
             try await service.store.replaceLedger(fresh)
             await service.api.load(fresh)
+            if service.config.seedDemo { try await service.api.resetBalanceHistory(seedDemo: true) }
             service.logger.info(service.config.seedDemo ? "seeded the demo ledger (BUDGET_SEED_DEMO)" : "new empty ledger — link an account or import a file")
         }
         await apply(service)

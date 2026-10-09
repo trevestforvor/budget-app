@@ -97,6 +97,9 @@ public actor LedgerBudgetAPI: BudgetAPI {
     /// Chat turns are recorded one at a time (`recordingTurn`).
     var recordingChat = false
     var waitingChatRecorders: [CheckedContinuation<Void, Never>] = []
+    /// Daily balances recorded at sync, for net worth history (`LedgerBudgetAPI+NetWorth.swift`). Kept apart from the
+    /// ledger: it grows every day.
+    var balanceHistory: any BalanceHistoryStore = MemoryBalanceHistory()
 
     /// Server: persisted state, the wall clock, configured models.
     public init(state: LedgerState, calendar: Calendar = .current, clock: @escaping @Sendable () -> Date = { .now },
@@ -134,6 +137,7 @@ public actor LedgerBudgetAPI: BudgetAPI {
         }
         deployment = DeploymentInfo(endpoint: "demo://ledger", version: "demo", sources: [.teller, .plaid, .fileImport], institutions: institutions)
         seedsDemoChats = true
+        balanceHistory = MemoryBalanceHistory(ledger.demoBalanceSnapshots())
     }
 
     /// The demo connection that waits for a sign-in (balance-only, so no spending figure depends on it).
@@ -209,7 +213,7 @@ public actor LedgerBudgetAPI: BudgetAPI {
 
     var toolbox: DemoToolbox {
         DemoToolbox(ledger: ledger, decisions: try? decisions.model(for: ledger.decisionPolicy.isActive ? ledger.decisionPolicy.provider : .localDecide),
-                    institutions: deployment.institutions)
+                    institutions: deployment.institutions, balanceHistory: balanceHistory)
     }
 
     // MARK: BudgetAPI
@@ -347,7 +351,9 @@ public actor LedgerBudgetAPI: BudgetAPI {
             transcript = Array(outcome.transcript.dropFirst(1 + history.count))
         } else {
             await pause(2.5)
-            reply = DemoAskEngine(ledger: ledger, institutions: deployment.institutions).answer(question, conversationID: id)
+            let recorded = (try? await balanceHistory.balanceSnapshots()) ?? []
+            reply = DemoAskEngine(ledger: ledger, institutions: deployment.institutions, balanceSnapshots: recorded)
+                .answer(question, conversationID: id)
             transcript = []
         }
         await recordTurn(question, reply: reply, transcript: transcript, in: id)
@@ -474,7 +480,7 @@ public actor LedgerBudgetAPI: BudgetAPI {
 
         // Then it's written in one step with no suspension before the save: the rows are added to the ledger as it is now,
         // and answers are kept only for rows nobody changed while the model was asked.
-        return try await write {
+        let written = try await write {
             var written = try ledger.prepareIngest(snapshot, batchID: batchID, into: targetAccountID)
             let kept = outcome.unchanged(since: asked, in: ledger)
             ledger.apply(kept)
@@ -495,6 +501,8 @@ public actor LedgerBudgetAPI: BudgetAPI {
             }
             return written
         }
+        await recordBalances(from: snapshot, into: targetAccountID)
+        return written
     }
 
     /// At most this many waiting rows are asked about again per ingest.

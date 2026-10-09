@@ -247,10 +247,12 @@ struct InsightTile: View {
     }
 }
 
-/// Every balance by kind, as of the last sync or import. No history: investments are balance-only.
+/// Every balance by kind, as of the last sync or import, and the assets and debts kept by hand. Net worth opens its
+/// history.
 struct BalancesCard: View {
     let balances: Balances
     let onOpenAccounts: () -> Void
+    let onOpenNetWorth: () -> Void
 
     var body: some View {
         DSCard {
@@ -267,10 +269,29 @@ struct BalancesCard: View {
                     DSFigureRow(label: "Cards owed", value: (-balances.cardsOwed).decimal, currencyCode: balances.cardsOwed.currencyCode)
                     DSFigureRow(label: "Cash after cards", value: balances.cashAfterCards.decimal, currencyCode: balances.cashAfterCards.currencyCode)
                     DSFigureRow(label: "Investments", detail: "Balance only", value: balances.investments.decimal, currencyCode: balances.investments.currencyCode)
+                    if let other = balances.otherAssets {
+                        DSFigureRow(label: "Other assets", detail: "Added by you", value: other.decimal, currencyCode: other.currencyCode)
+                    }
+                    if let debts = balances.otherDebts {
+                        DSFigureRow(label: "Other debts", detail: "Added by you", value: (-debts).decimal, currencyCode: debts.currencyCode)
+                    }
                     DSDivider().padding(.vertical, DSSpace.xs)
-                    DSFigureRow(label: "Net worth", value: balances.netWorth.decimal, currencyCode: balances.netWorth.currencyCode)
+                    Button(action: onOpenNetWorth) {
+                        HStack(alignment: .firstTextBaseline, spacing: DSSpace.xs) {
+                            DSFigureRow(label: "Net worth", detail: "See how it's changed", value: balances.netWorth.decimal,
+                                        currencyCode: balances.netWorth.currencyCode)
+                            Image(systemName: "chevron.right")
+                                .font(.system(size: DSIconSize.xs, weight: .semibold))
+                                .foregroundStyle(Color.ds.inkTertiary)
+                                .accessibilityHidden(true)
+                        }
+                        .contentShape(Rectangle())
+                    }
+                    .buttonStyle(.plain)
+                    .accessibilityHint("Opens net worth over time")
+                    .accessibilityIdentifier("openNetWorth")
                 }
-                Text("As of each account's last sync or statement. Investments show today's balance, not their history.")
+                Text("As of each account's last sync or statement.")
                     .dsFont(.caption)
                     .foregroundStyle(Color.ds.inkTertiary)
                     .fixedSize(horizontal: false, vertical: true)
