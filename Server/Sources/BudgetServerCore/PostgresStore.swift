@@ -38,6 +38,11 @@ public final class PostgresStore: ServerStore, Sendable {
         """
         CREATE TABLE IF NOT EXISTS budget_settings (key TEXT PRIMARY KEY, doc JSONB NOT NULL, updated_at TIMESTAMPTZ NOT NULL DEFAULT now());
         """,
+        // 3: Ask's conversations, one row per conversation; the list reads `summary` alone (PostgresStore+Chats.swift).
+        """
+        CREATE TABLE IF NOT EXISTS budget_chats (id TEXT PRIMARY KEY, updated_at TIMESTAMPTZ NOT NULL, summary JSONB NOT NULL, doc JSONB NOT NULL);
+        CREATE INDEX IF NOT EXISTS budget_chats_updated ON budget_chats (updated_at DESC);
+        """,
     ]
 
     public func migrate() async throws {

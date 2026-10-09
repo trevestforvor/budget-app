@@ -39,6 +39,8 @@ public enum BudgetServerApp {
         // The ledger loads once at start (after migrations, which need the Postgres client running).
         let api = LedgerBudgetAPI(state: .empty, calendar: config.calendar, chatModel: chat, decisions: routing,
                                   persistence: store, deployment: deployment)
+        // Ask's conversations go where the store keeps them (Postgres); otherwise they stay in memory with the ledger.
+        if let chats = store as? any ChatSessionStore { await api.setChatSessionStore(chats) }
         let sync = SyncService(api: api, store: store, config: config, sealer: sealer, providers: providers, settings: settings, logger: logger)
         let morning = MorningSummary(api: api, store: store, sync: sync, settings: settings, transport: pushTransport ?? AHCTransport.shared,
                                      logger: logger, clock: clock)

@@ -159,7 +159,8 @@ struct ErrorMiddleware<Context: RequestContext>: RouterMiddleware {
 // MARK: - Request bodies
 
 struct ConfirmBody: Decodable { let categoryID: String }
-struct AskBody: Decodable { let question: String; let conversationID: String? }
+/// `conversationID` continues that conversation (`sessionID` is the same thing by its other name).
+struct AskBody: Decodable { let question: String; let conversationID: String?; let sessionID: String? }
 struct ProjectionBody: Decodable { let horizonMonths: Int; let goal: GoalQuery? }
 struct PlaidExchangeBody: Decodable { let publicToken: String; let institution: String }
 struct PlaidTokenBody: Decodable { let linkID: String? }
@@ -248,7 +249,7 @@ public func buildRouter(_ service: BudgetService, surface: Surface = .api) -> Ro
     }
     router.post("/v1/ask") { request, _ in
         let body = try await HTTP.body(AskBody.self, request)
-        return try HTTP.json(try await api.ask(body.question, conversationID: body.conversationID))
+        return try HTTP.json(try await api.ask(body.question, conversationID: body.conversationID ?? body.sessionID))
     }
     router.post("/v1/projection") { request, _ in
         let body = try await HTTP.body(ProjectionBody.self, request)
@@ -273,6 +274,7 @@ public func buildRouter(_ service: BudgetService, surface: Surface = .api) -> Ro
     addLinkRoutes(router, service)
     addImportRoutes(router, service)
     addMorningSummaryRoutes(router, service)
+    addAssistantRoutes(router, service)
     return router
 }
 
@@ -440,6 +442,7 @@ func addImportRoutes(_ router: Router<BasicRequestContext>, _ service: BudgetSer
         }
         if body.keepLedger != true {
             try await service.api.replaceState(await service.freshState(seedDemo: body.seedDemo == true))
+            try await service.api.clearChatSessions() // conversations about the old ledger go with it
             removed.insert(body.seedDemo == true ? "the ledger (replaced with the demo)" : "all transactions and accounts", at: 0)
         }
         return try HTTP.json(["reset": "true", "removed": removed.joined(separator: ", ")])

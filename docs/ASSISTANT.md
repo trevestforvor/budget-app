@@ -4,7 +4,7 @@ The `chat` model answers questions and can control the app. A separate decision 
 
 ## System prompt
 
-The demo ledger calls no model, so it has no prompt. Its answers are templated around tool results. The prompt the server gives the `chat` role is `AssistantPrompt.system(context)`, version `chat-2026-09-26.2`. It's rendered per request with today's date, the time zone, and the live category list with targets. A rendered copy is in [assistant/system-prompt.md](assistant/system-prompt.md), and the app shows the live one under Settings → Assistant → System prompt.
+The demo ledger calls no model, so it has no prompt. Its answers are templated around tool results. The prompt the server gives the `chat` role is `AssistantPrompt.system(context)`, version `chat-2026-10-09.1`. It's rendered per request with today's date, the time zone, the live category list with targets, and assistant memory. A rendered copy is in [assistant/system-prompt.md](assistant/system-prompt.md), and the app shows the live one under Settings → Assistant → System prompt.
 
 The prompt carries the rules a schema can't express:
 - **Numbers come from the ledger.** Every amount, difference, percentage and projection must appear in a tool result. For comparisons, the model calls `sumByCategory` with `compareTo` instead of subtracting.
@@ -14,6 +14,7 @@ The prompt carries the rules a schema can't express:
 - **Money in counts as income**: the category list marks Income and any category like card rewards "money in"; `sumByCategory` returns what one received, never spending.
 - **Read-only**: no moving money. Describe what the ledger shows; no investment, tax or legal advice.
 - **Style**: two or three sentences. Figures and proposals render as their own cards.
+- **Assistant memory**: facts the person asked Ask to keep in mind ("Saving for a trip to Lisbon in March"), newest first, in their own section capped at about 2,000 characters. The section says they're background, not ledger data. The model proposes a new one with `rememberFact` when asked to remember something or told something later conversations need, never a figure from a tool and never a budget change (that's a target).
 
 ## Tools
 
@@ -22,7 +23,7 @@ The single source of truth is `ToolCatalog`. The server sends its OpenAI-compati
 | Kind | Tools | What happens |
 |---|---|---|
 | read | `queryTransactions` (with `spent` and `income`, the Activity summary's totals), `sumByCategory` (with optional `compareTo`), `sumByMerchant`, `projectBalance`, `flexBudget`, `cashFlow` (income against spending by month, as Plan shows it), `categoryHistory` (one category month by month), `savingsCapacity`, `savingsGuidance`, `categorize`, `findRules` | Runs on the ledger; the result goes back to the model. Every "Ask about this" question in the app lands on one of these |
-| write | `setCategoryTarget`, `adjustCategoryTarget`, `removeCategoryTarget`, `setMerchantTarget`, `removeMerchantTarget`, `setMonthlySavings`, `createCategory`, `updateCategory`, `mergeCategory`, `createBudgetRule`, `updateBudgetRule`, `deleteBudgetRule`, `recategorize`, `editTransactions`, `updateDecisionPolicy` | Becomes a `ProposedAction` card with ledger-computed before/after effects. Nothing changes until the user taps Apply |
+| write | `setCategoryTarget`, `adjustCategoryTarget`, `removeCategoryTarget`, `setMerchantTarget`, `removeMerchantTarget`, `setMonthlySavings`, `createCategory`, `updateCategory`, `mergeCategory`, `createBudgetRule`, `updateBudgetRule`, `deleteBudgetRule`, `recategorize`, `editTransactions`, `updateDecisionPolicy`, `rememberFact` (assistant memory) | Becomes a `ProposedAction` card with ledger-computed before/after effects. Nothing changes until the user taps Apply |
 | client | `navigate` | A card that opens a screen (including `recurring`) focused on a category, budget month, range, search or horizon |
 
 Schema rules, chosen so constrained decoders (llama.cpp grammars, vLLM/SGLang guided decoding) can enforce them:
@@ -41,11 +42,15 @@ Schema rules, chosen so constrained decoders (llama.cpp grammars, vLLM/SGLang gu
 2. **Read** calls run through an `AgentToolbox`: `DemoToolbox` over the demo ledger now, Postgres on the server later. Money comes back in one en_US format, so grounding can match it.
 3. **Write and client** calls become proposals; the model is told a card was shown and nothing changed.
 4. **Invalid arguments** come back as `{"error", "problems", "fix"}` for the model to repair (counted as `repairs`).
-5. **The final prose is grounded** against every tool result, the prompt, and the question. An ungrounded figure gets one rewrite request; anything still ungrounded is reported in `AgentOutcome.ungrounded`.
+5. **The final prose is grounded** against every tool result (this turn's and those replayed from earlier in the conversation), the prompt without assistant memory, and the person's questions. An ungrounded figure gets one rewrite request; anything still ungrounded is reported in `AgentOutcome.ungrounded`.
 
 Verified live against `qwen3.8-27b`: 7 questions, every figure grounded, zero repairs, 1.6–5.6 s each. In an earlier raw probe without schema patterns, the model wrote `period: "Q3 2026"`. The pattern and description in the real schema fixed that, and the repair path covers it if it recurs.
 
 The app can run "demo ledger + live model" (Settings → Assistant model, or launch with `-live`). The agent loop then runs on the phone. That's a dev bridge until the server exists, not the intended thin-client shape.
+
+## Conversations
+
+Every question is kept in chat history (`ChatSessionStore`: Postgres on the server, memory in the demo; API in [API.md](API.md#assistant-memory-and-chat-history)). Asking with a conversation's id continues it: `LedgerBudgetAPI.ask` hands `AgentLoop` the latest six turns as history, the two newest with their tool calls and results, within about 16,000 characters. A grounding retry (the draft and the "[system check]" note) isn't kept. Grounding counts the replayed tool results and the person's earlier questions, never the model's earlier prose: an answer it gave before isn't a source. The app's Ask hub lists Recents (Today, then Older); opening one shows its turns and continues it.
 
 ## Grounding
 
