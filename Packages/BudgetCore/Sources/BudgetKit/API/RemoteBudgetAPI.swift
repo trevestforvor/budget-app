@@ -93,6 +93,7 @@ public struct RemoteBudgetAPI: BudgetAPI, MorningSummaryAPI, PaceAlertsAPI {
     public func monthlyRecap(month: String?) async throws -> MonthlyRecap {
         try await get("v1/recap/month", query: month.map { [URLQueryItem(name: "month", value: $0)] } ?? [])
     }
+    public func upcoming(days: Int) async throws -> Upcoming { try await get("v1/upcoming", query: [URLQueryItem(name: "days", value: String(days))]) }
 
     public func perform(_ action: AppAction) async throws -> ActionResult {
         guard !action.isClientOnly else { throw BudgetAPIError.rejected("\(action.toolName) is handled on the device.") }

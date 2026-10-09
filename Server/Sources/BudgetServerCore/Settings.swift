@@ -62,6 +62,9 @@ public actor ServerSettings {
               configValue: { $0.openRouterZeroRetention ? "true" : "false" }, builtInDefault: "false"),
         .init(key: "syncIntervalHours", group: "Sync", label: "Sync every (hours)", kind: .number, environmentVariable: "BUDGET_SYNC_INTERVAL_HOURS",
               help: "How often linked accounts are pulled. At least 0.25.", configValue: { String($0.syncIntervalHours) }, builtInDefault: "6.0"),
+        .init(key: "cardBills", group: "Sync", label: "Card bills (Plaid Liabilities)", kind: .bool, environmentVariable: "BUDGET_PLAID_LIABILITIES",
+              help: "Reads each Plaid-linked credit card's statement balance, minimum payment and due date, about once a day, for Upcoming and the morning summary. Plaid bills Liabilities per bank login once it's used, so it's off until you turn it on. A bank linked before needs one \"Grant card-bill access\" sign-in on Accounts; nothing is relinked or removed.",
+              configValue: { $0.plaidLiabilities ? "true" : "false" }, builtInDefault: "false"),
         .init(key: "timeZone", group: "Sync", label: "Time zone", kind: .timeZone, environmentVariable: "BUDGET_TIMEZONE",
               help: "Where months begin and end (e.g. America/Los_Angeles).", configValue: { $0.timeZone.identifier }, builtInDefault: "America/Los_Angeles"),
         .init(key: "publicURL", group: "Phone", label: "Server URL for the phone", kind: .url, environmentVariable: "BUDGET_PUBLIC_URL",
@@ -120,6 +123,8 @@ public actor ServerSettings {
     public var timeZone: TimeZone { value("timeZone").flatMap(TimeZone.init(identifier:)) ?? config.timeZone }
     public var publicURL: String? { value("publicURL") }
     public var dashboardURL: String? { value("dashboardURL") }
+    /// Whether to read card bills from Plaid Liabilities (billed per Item once used): off unless turned on.
+    public var cardBillsEnabled: Bool { value("cardBills") == "true" }
 
     public var calendar: Calendar {
         var calendar = Calendar(identifier: .gregorian)

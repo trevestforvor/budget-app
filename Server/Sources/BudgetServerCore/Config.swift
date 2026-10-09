@@ -64,6 +64,8 @@ public struct ServerConfig: Sendable {
     public var apnsKeyID: String?
     public var apnsTeamID: String?
     public var apnsTopic: String?
+    /// Card bills from Plaid Liabilities (BUDGET_PLAID_LIABILITIES). Off unless set: Plaid bills each Item once it's used.
+    public var plaidLiabilities = false
 
     /// Which variables were actually set (so the dashboard can tell "environment" from "default").
     public var environmentKeys: Set<String> = []
@@ -125,6 +127,7 @@ public struct ServerConfig: Sendable {
         c.apnsKeyID = value("APNS_KEY_ID")
         c.apnsTeamID = value("APNS_TEAM_ID")
         c.apnsTopic = value("APNS_TOPIC")
+        c.plaidLiabilities = ["1", "true", "yes"].contains(value("BUDGET_PLAID_LIABILITIES")?.lowercased() ?? "")
         return c
     }
 

@@ -16,6 +16,14 @@ extension Ledger {
     /// to keep a regular cadence. Interest is too small to count; a deposit well between paydays (a bonus, a
     /// reimbursement) isn't a payday. Nil when no regular pay shows.
     func recentPaychecks() -> Paychecks? {
+        guard let history = paydayHistory() else { return nil }
+        return Paychecks(perMonth: history.perMonth, latest: history.paydays.suffix(history.perMonth).map(\.amount))
+    }
+
+    /// Paydays as `recentPaychecks` reads them: the regular ones in the last 120 days, oldest first, each the sum of
+    /// its deposits, with the median gap between deposits (days) and how many make a month. Nil when no regular pay
+    /// shows. Upcoming income predicts from the same paydays (`PaySchedule`).
+    func paydayHistory() -> (paydays: [(date: Date, amount: Money)], medianGap: Double, perMonth: Int)? {
         let since = calendar.date(byAdding: .day, value: -120, to: now)!
         let deposits = transactions.filter { row in
             row.postedAt >= since && row.postedAt <= now && !row.isPending && !row.isHidden && !row.amount.isNegative
@@ -47,7 +55,7 @@ extension Ledger {
             paydays.append(day)
         }
         guard paydays.count >= perMonth else { return nil }
-        return Paychecks(perMonth: perMonth, latest: paydays.suffix(perMonth).map(\.amount))
+        return (paydays, median, perMonth)
     }
 
     /// The income the budget counts on this month: the last three months' average, or a month of the latest paychecks

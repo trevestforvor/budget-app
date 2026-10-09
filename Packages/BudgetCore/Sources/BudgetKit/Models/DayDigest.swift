@@ -45,7 +45,16 @@ public struct DayDigest: Codable, Hashable, Sendable {
     }
 
     public struct Fact: Codable, Hashable, Sendable {
-        public enum Kind: String, Codable, Sendable { case pace, firstTime, bills, safeToSpend, pending }
+        public enum Kind: String, Codable, Sendable {
+            /// `bills` also carries a card bill due in the next few days, or past due (server 0.5.0): a new kind would fail
+            /// to decode on an app from before this fallback.
+            case pace, firstTime, bills, safeToSpend, pending
+
+            /// A kind a later version adds reads as `.bills`, instead of failing a saved digest's load.
+            public init(from decoder: any Decoder) throws {
+                self = Kind(rawValue: try decoder.singleValueContainer().decode(String.self)) ?? .bills
+            }
+        }
         public var kind: Kind
         /// One plain sentence, amounts written out.
         public var text: String

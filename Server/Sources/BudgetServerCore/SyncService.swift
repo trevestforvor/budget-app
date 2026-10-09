@@ -118,6 +118,10 @@ public actor SyncService {
                 report = try await api.ingest(snapshot, batchID: batchID)
                 removed = try await api.removeSourceRows(.plaid, externalIDs: deleted)
                 link.cursor = next
+                // Best effort, after the rows are in: never fails the sync (CardBills.swift).
+                link.cardBills = await CardBillSync.refresh(enabled: await settings.cardBillsEnabled, source: source, snapshot: snapshot,
+                                                            previous: link.cardBills, requestedByPerson: retrying, api: api, now: Date(),
+                                                            institution: link.institution, logger: logger)
             case .teller:
                 guard let teller = await providers.teller() else { throw BudgetAPIError.rejected("Teller isn't set up on the server.") }
                 let snapshot = try await TellerSource(accessToken: token, transport: teller.transport).fetch(since: window(link))

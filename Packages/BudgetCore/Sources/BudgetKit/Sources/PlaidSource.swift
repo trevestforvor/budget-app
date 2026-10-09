@@ -24,7 +24,7 @@ public struct PlaidSource: TransactionSource {
     /// The Item's access token (from `exchange`).
     public let accessToken: String
     public let institution: String
-    private let transport: any HTTPTransport
+    let transport: any HTTPTransport
 
     public init(environment: Environment, credentials: Credentials, accessToken: String, institution: String,
                 transport: any HTTPTransport = URLSessionTransport()) {
@@ -52,11 +52,16 @@ public struct PlaidSource: TransactionSource {
     }
 
     /// `/link/token/create` — asks for transactions (with `daysRequested` of history, fixed at Item
-    /// creation: max 730), plus investments when the institution has them.
+    /// creation: max 730), with consent for investments (when the institution has them) and liabilities (card bills),
+    /// which are billed only once used. A Plaid account not enabled for Liabilities (INVALID_PRODUCT) links without it.
     /// - Parameter redirectURI: the Universal Link registered in the Dashboard, required for OAuth banks on iOS.
     /// - Parameter accessToken: set to open Link in update mode for an existing Item (re-auth).
+    /// - Parameter grantLiabilities: with `accessToken`, update mode that asks the person to consent to liabilities on
+    ///   the same Item (the card-bill grant). The Item and its access token stay as they are: nothing is exchanged after.
+    ///   Only ever started by the person's own click.
     public static func linkToken(environment: Environment, credentials: Credentials, userID: String, investments: Bool,
                                  daysRequested: Int = 730, redirectURI: String? = nil, accessToken: String? = nil,
+                                 grantLiabilities: Bool = false,
                                  transport: any HTTPTransport = URLSessionTransport()) async throws -> String {
         var body: [String: JSONValue] = [
             "client_name": .string("Budget"), "language": .string("en"), "country_codes": .array([.string("US")]),
@@ -64,13 +69,26 @@ public struct PlaidSource: TransactionSource {
         ]
         if let accessToken {
             body["access_token"] = .string(accessToken)
+            if grantLiabilities {
+                body["products"] = .array([])
+                body["additional_consented_products"] = .array([.string(liabilitiesProduct)])
+            }
         } else {
+            // Never in `products`: that list is a requirement every institution must meet, so it would hide banks.
             body["products"] = .array([.string("transactions")])
             body["transactions"] = .object(["days_requested": .number(Double(min(max(daysRequested, 1), 730)))])
-            if investments { body["additional_consented_products"] = .array([.string("investments")]) }
+            body["additional_consented_products"] = .array((investments ? ["investments"] : []).map(JSONValue.string) + [.string(liabilitiesProduct)])
         }
         if let redirectURI { body["redirect_uri"] = .string(redirectURI) }
-        let json = try await transport.json(try request(environment, "link/token/create", body, credentials))
+        let json: JSONValue
+        do {
+            json = try await transport.json(try request(environment, "link/token/create", body, credentials))
+        } catch let error as SourceHTTPError where accessToken == nil && PlaidAPIError(error)?.errorCode == "INVALID_PRODUCT" {
+            // A Plaid account without Liabilities access refuses its consent: link the bank without card bills rather
+            // than not at all (card bills then say "not supported").
+            body["additional_consented_products"] = investments ? .array([.string("investments")]) : nil
+            json = try await transport.json(try request(environment, "link/token/create", body, credentials))
+        }
         guard case let .object(o) = json, case let .string(token)? = o["link_token"] else { throw DecisionError.malformed("no link_token") }
         return token
     }
@@ -226,7 +244,7 @@ public struct PlaidSource: TransactionSource {
                                  name: displayName(a), kind: kind,
                                  balance: money(current * sign, currency),
                                  availableBalance: number(b, "available").map { money($0, currency) },
-                                 balanceDate: .now, transactions: [], holdings: [], mask: string(a, "mask"))
+                                 balanceDate: .now, transactions: [], holdings: [], mask: string(a, "mask"), providerType: type)
         }
     }
 

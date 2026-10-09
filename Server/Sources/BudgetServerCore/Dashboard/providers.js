@@ -146,6 +146,11 @@ export function reconnected(result) {
   if (!result.ok) return { ok: false, message: `${result.institution} is signed in, but the sync after it didn't finish.`, detail: result.error };
   return { ok: true, message: `${result.institution} is connected again · ${plural((result.report && result.report.rowsAdded) || 0, "new transaction")}` };
 }
+/// After granting card-bill access: the sync that follows asks Plaid again (`CardBillSync`).
+function granted(result) {
+  if (!result.ok) return { ok: false, message: `${result.institution} granted card-bill access, but the sync after it didn't finish.`, detail: result.error };
+  return { ok: true, message: `${result.institution}: card-bill access granted` };
+}
 function linked(result) {
   if (!result.ok) return { ok: false, message: `${result.institution} is linked, but its first sync didn't finish. It'll try again on its own.`, detail: result.error };
   return { ok: true, message: `Linked ${result.institution} · ${plural(result.report.rowsAdded, "new transaction")}` };
@@ -160,36 +165,41 @@ export function announce(outcome, where) {
 /// accounts and history carry on (there's nothing to exchange). Banks that sign in on their own site (OAuth) leave
 /// the page and come back with `?oauth_state_id=…`; `resume` picks the same session up again (the Link token and
 /// the link being repaired are kept in sessionStorage). Resolves once Link closes and its outcome is shown.
-export async function linkPlaid({ resume = false, update = null, where } = {}) {
+/// `grant` (with `update`) is the same update mode asking the person to add card-bill access (Plaid Liabilities) to
+/// that Item: same Item, same access, nothing exchanged. Only a click on "Grant card-bill access" starts it.
+export async function linkPlaid({ resume = false, update = null, grant = false, where } = {}) {
   let token, linkID;
   store.pending++;
   try {
     await loadScript(PLAID_JS);
     linkID = resume ? sessionStorage.getItem("plaidUpdateLink") : update ? update.id : null;
+    if (resume) grant = sessionStorage.getItem("plaidGrant") === "1";
     token = resume ? sessionStorage.getItem("plaidLinkToken")
-      : (await api("/v1/links/plaid/token", { method: "POST", body: linkID ? { linkID } : {} })).linkToken;
+      : (await api("/v1/links/plaid/token", { method: "POST", body: linkID ? (grant ? { linkID, grantCardBills: true } : { linkID }) : {} })).linkToken;
   } catch (error) { reportError(error, where); return; }
   finally { store.pending--; }
   const clean = () => {
     sessionStorage.removeItem("plaidLinkToken");
     sessionStorage.removeItem("plaidUpdateLink");
+    sessionStorage.removeItem("plaidGrant");
     if (resume) history.replaceState(null, "", location.pathname + "#/accounts");
   };
   if (!token) { clean(); reportError({ message: "The bank sign-in expired before it finished. Start again from Accounts." }, where); return; }
   sessionStorage.setItem("plaidLinkToken", token);
   // Which link a bank's own sign-in page is repairing, for when it comes back (?oauth_state_id); none for a new link.
   if (linkID) sessionStorage.setItem("plaidUpdateLink", linkID); else sessionStorage.removeItem("plaidUpdateLink");
+  if (linkID && grant) sessionStorage.setItem("plaidGrant", "1"); else sessionStorage.removeItem("plaidGrant");
   await new Promise((finish) => {
     window.Plaid.create({
       token, receivedRedirectUri: resume ? location.href : undefined,
       onSuccess: async (publicToken, metadata) => {
         clean();
-        toast(linkID ? "Signed in. Syncing…" : "Linking and syncing…");
+        toast(grant ? "Card-bill access granted. Checking…" : linkID ? "Signed in. Syncing…" : "Linking and syncing…");
         try {
           const result = linkID
             ? await api(`/v1/links/${encodeURIComponent(linkID)}/sync`, { method: "POST" })
             : await api("/v1/links/plaid/exchange", { method: "POST", body: { publicToken, institution: (metadata.institution && metadata.institution.name) || "Plaid" } });
-          announce(linkID ? reconnected(result) : linked(result), where);
+          announce(grant ? granted(result) : linkID ? reconnected(result) : linked(result), where);
         } catch (error) { reportError(error, where); }
         await afterWrite();
         finish();

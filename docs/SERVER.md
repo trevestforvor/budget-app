@@ -58,6 +58,7 @@ What stays environment-only: `HOST`, `PORT`, `DASHBOARD_PORT`, `BUDGET_API_TOKEN
 | `MODEL_NAME` | `qwen3.8-27b` | |
 | `OPENROUTER_API_KEY`, `OPENROUTER_ZDR=1` | — | Enables Jev as a decision provider |
 | `PLAID_CLIENT_ID`, `PLAID_SECRET`, `PLAID_ENV`, `PLAID_REDIRECT_URI` | —, —, `sandbox` | Both id and secret, or Plaid stays off |
+| `BUDGET_PLAID_LIABILITIES` | off | `1`/`true`: read card bills from Plaid Liabilities, at most once a day per Item. Plaid bills it per Item once used; the dashboard setting "Card bills (Plaid Liabilities)" wins ([API.md](API.md#upcoming-and-card-bills)) |
 | `TELLER_CERT_PATH`, `TELLER_KEY_PATH` | — | PEM files from `teller.zip` |
 | `BUDGET_SYNC_INTERVAL_HOURS` | 6 | |
 | `BUDGET_TIMEZONE` | `America/Los_Angeles` | Month boundaries |

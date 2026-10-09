@@ -441,6 +441,20 @@ public actor LedgerBudgetAPI: BudgetAPI {
         try await paceAlerts(asOf: nil)
     }
 
+    public func upcoming(days: Int) async throws -> Upcoming {
+        tick(); await pause(0.4)
+        return ledger.upcoming(days: days)
+    }
+
+    /// Stores each card's statement from its issuer (`SyncService`, after a Plaid sync with card bills on). Returns how
+    /// many cards took one.
+    @discardableResult
+    public func applyCardBills(_ bills: [SourceCardBill], source: SourceKind) async throws -> Int {
+        tick()
+        let now = clock?() ?? ledger.now
+        return try await write { ledger.applyCardBills(bills, source: source, at: now) }
+    }
+
     /// The morning summary for `day` ("2026-09-28", a day in the ledger's calendar): the ledger's figures and facts,
     /// retold by the chat model when one is configured (`DigestWriter`), with the template otherwise. `reuse` is an
     /// earlier digest of the day: while its facts still hold, its summary is kept and the model isn't asked again —

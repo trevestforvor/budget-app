@@ -10,6 +10,8 @@ struct HomeView: View {
     @State private var state: LoadState<Overview> = .loading
     /// The weekly recap: the checkup's headline, shown until dismissed for the week.
     @State private var recap: Checkup?
+    /// What's coming up: the next paycheck, and the recap's next seven days (`GET /v1/upcoming`).
+    @State private var upcoming: Upcoming?
     @State private var showsAccounts = false
     /// A recent row's details, as a sheet (as Activity opens them).
     @State private var detail: LedgerTransaction?
@@ -63,6 +65,7 @@ struct HomeView: View {
         let first = state.isLoading
         state = await state.orSaved(.overview, app)
         if first, recap == nil, let saved = state.value, showsRecap(saved) { recap = await app.saved(.checkup) }
+        if first, upcoming == nil { upcoming = await app.saved(.upcoming(days: UpcomingWindow.days)) }
         let updating = app.beginUpdating(showingSaved: first && state.value != nil)
         let (next, error) = await state.refreshing { try await api.overview() }
         app.endUpdating(updating)
@@ -71,6 +74,7 @@ struct HomeView: View {
             recap = (try? await api.checkup()) ?? recap
         }
         await loadMonthlyRecap()
+        upcoming = (try? await api.upcoming(days: UpcomingWindow.days)) ?? upcoming
         return error
     }
 
@@ -139,7 +143,7 @@ struct HomeView: View {
     private func content(_ overview: Overview) -> some View {
         let recapShown = showsRecap(overview) && recap != nil
         if recapShown, let recap {
-            WeeklyRecapCard(checkup: recap, days: overview.lastSevenDays ?? []) {
+            WeeklyRecapCard(checkup: recap, days: overview.lastSevenDays ?? [], comingUp: upcoming?.items(within: 7, calendar: .current) ?? []) {
                 app.showsCheckup = true
             } onDismiss: {
                 withAnimation(DSMotion.standard) { dismissedRecapWeek = week(of: overview) }
@@ -159,6 +163,10 @@ struct HomeView: View {
         cashHero(overview)
 
         MonthCard(overview: overview)
+
+        if let upcoming, upcoming.nextPaycheck != nil {
+            NextPaycheckCard(upcoming: upcoming) { app.route(Navigate(screen: .recurring)) }
+        }
 
         if let days = overview.lastSevenDays, !days.isEmpty {
             LastSevenDaysCard(days: days, spent: overview.lastSevenDaysSpent, asOf: overview.asOf)

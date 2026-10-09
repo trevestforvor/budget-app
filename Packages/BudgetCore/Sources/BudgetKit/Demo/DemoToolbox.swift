@@ -53,6 +53,7 @@ struct DemoToolbox: AgentToolbox {
         case "findSubscriptions": return findSubscriptions()
         case "recurringReview": return recurringReview()
         case "monthlyRecap": return try monthlyRecap(month: string("month"))
+        case "findUpcoming": return findUpcoming(days: int("days") ?? 30)
         case "findRules": return findRules()
         case "sumByTag": return try sumByTag(string("tag"), period: string("period"))
         case "netWorth": return try await netWorth(range: string("range"))

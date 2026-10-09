@@ -68,6 +68,7 @@ public enum SavedRead: Hashable, Sendable {
     case scenarios(horizonMonths: Int)
     case cashFlowSankey(month: String?)
     case monthlyRecap(month: String?)
+    case upcoming(days: Int)
 
     var key: String {
         switch self {
@@ -90,6 +91,7 @@ public enum SavedRead: Hashable, Sendable {
         case let .scenarios(horizon): "scenarios-\(horizon)"
         case let .cashFlowSankey(month): "flow-\(month ?? "current")"
         case let .monthlyRecap(month): "monthly-recap-\(month ?? "last")"
+        case let .upcoming(days): "upcoming-\(days)"
         }
     }
 }
@@ -201,6 +203,7 @@ public struct CachingBudgetAPI: BudgetAPI {
         guard let api = upstream as? any MonthlyRecapAPI else { throw BudgetAPIError.notFound }
         return try await read(.monthlyRecap(month: month)) { try await api.monthlyRecap(month: month) }
     }
+    public func upcoming(days: Int) async throws -> Upcoming { try await read(.upcoming(days: days)) { try await upstream.upcoming(days: days) } }
     public func assistantConfig() async throws -> AssistantConfig { try await read(.assistant) { try await upstream.assistantConfig() } }
 }
 

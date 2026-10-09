@@ -8,6 +8,8 @@ import SwiftUI
 struct WeeklyRecapCard: View {
     let checkup: Checkup
     let days: [DaySpend]
+    /// The next seven days of paychecks, bills and card bills (`Upcoming`); empty from a server without it.
+    var comingUp: [UpcomingItem] = []
     let onOpen: () -> Void
     let onDismiss: () -> Void
 
@@ -46,6 +48,10 @@ struct WeeklyRecapCard: View {
                         .accessibilityElement(children: .combine)
                         .accessibilityLabel("\(CheckupView.spoken(finding.status)): \(finding.title)")
                     }
+                }
+                if !comingUp.isEmpty {
+                    DSDivider()
+                    RecapComingUp(items: comingUp)
                 }
                 Button("Open the checkup", action: onOpen)
                     .buttonStyle(.ds(.quiet))

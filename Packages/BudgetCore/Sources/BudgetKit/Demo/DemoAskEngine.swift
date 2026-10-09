@@ -21,6 +21,7 @@ struct DemoAskEngine {
         if let r = tagIntent(q, conversationID) { return r }
         if let r = recapIntent(q, conversationID) { return r }
         if let r = recurringReviewIntent(q, conversationID) { return r }
+        if let r = upcomingIntent(q, conversationID) { return r }
         if let r = cancelIntent(q, conversationID) { return r }
         if let r = netWorthIntent(q, conversationID) { return r }
         if let r = subscriptionIntent(q, conversationID) { return r }
@@ -350,6 +351,35 @@ struct DemoAskEngine {
     // MARK: Near-term planning — same toolbox the live agent uses, templated prose
 
     var toolbox: DemoToolbox { DemoToolbox(ledger: ledger, decisions: nil) }
+
+    /// "When's my next paycheck?", "what's coming up?", "when is my card due?" → one findUpcoming call: the next
+    /// paycheck, then the next seven days, card bills apart.
+    private func upcomingIntent(_ q: String, _ cid: String) -> AskReply? {
+        let asks = ["paycheck", "payday", "get paid", "coming up", "upcoming", "due soon", "due this week", "card bill", "card due", "card payment due"]
+        guard asks.contains(where: q.contains) else { return nil }
+        let (_, figures) = toolbox.findUpcoming(days: 30)
+        let upcoming = ledger.upcoming(days: 30)
+        var lines: [String] = []
+        let day = Date.FormatStyle(timeZone: calendar.timeZone).weekday(.wide).month(.abbreviated).day()
+        if let pay = upcoming.nextPaycheck {
+            lines.append("Your next paycheck looks like \(pay.date.formatted(day)): about \(pay.amount.formatted()) from \(pay.title)"
+                         + (upcoming.payCadence.map { ", paid \($0)." } ?? "."))
+        } else {
+            lines.append("No regular paycheck shows in the last four months, so I can't say when the next one comes.")
+        }
+        let week = upcoming.nextSevenDays
+        if week.charges.minorUnits > 0 {
+            lines.append("In the next 7 days, bills and subscriptions come to about \(week.charges.formatted()).")
+        }
+        for bill in upcoming.cardBills where bill.status == .due || bill.status == .overdue {
+            guard let left = bill.remaining, let name = bill.accountName else { continue }
+            let when = bill.status == .overdue ? "is past due" : "is due \(bill.dueDate.map { $0.formatted(day) } ?? "soon")"
+            lines.append("\(name) \(when): \(left.formatted()) left on its statement"
+                         + (bill.minimumPayment.map { " (minimum \($0.formatted()))" } ?? "") + ".")
+        }
+        return reply(cid, text: lines.joined(separator: " "), figures: figures, tools: [call("findUpcoming", ["days": .number(30)])],
+                     followUps: ["Open my recurring charges", "What's safe to spend this month?"])
+    }
 
     /// "What subscriptions am I paying for?" → one findSubscriptions call.
     private func subscriptionIntent(_ q: String, _ cid: String) -> AskReply? {

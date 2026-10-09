@@ -43,6 +43,8 @@ struct SpendingView: View {
     @State private var rangeState: LoadState<SpendingSummary> = .loading
     /// This month's extras: what's due soon, and merchant caps.
     @State private var recurring: SubscriptionSummary?
+    /// Paychecks, bills and card bills coming up (`GET /v1/upcoming`); nil from a server without it.
+    @State private var expected: Upcoming?
     @State private var caps: [MerchantCap] = []
     /// The ledger's first row, so the switcher stops where the data does.
     @State private var earliest: Date?
@@ -139,6 +141,7 @@ struct SpendingView: View {
         state = await state.orSaved(.budget(month: key), app)
         if first, current {
             if recurring == nil { recurring = await app.saved(.subscriptions) }
+            if expected == nil { expected = await app.saved(.upcoming(days: UpcomingWindow.days)) }
             if caps.isEmpty, let saved: SpendingSummary = await app.saved(.spending(.thisMonth)) { caps = saved.merchantCaps }
         }
         async let found = current ? try? api.subscriptions() : nil
@@ -148,6 +151,8 @@ struct SpendingView: View {
         app.endUpdating(updating)
         state = next
         recurring = await found
+        // After the others, not as a third async let: three here abort the task allocator.
+        if current, let fresh = try? await api.upcoming(days: UpcomingWindow.days) { expected = fresh }
         caps = await summary?.merchantCaps ?? []
         return error
     }
@@ -459,7 +464,13 @@ struct SpendingView: View {
                 .accessibilityIdentifier("recurring")
             DSCard(padding: 0) {
                 VStack(alignment: .leading, spacing: 0) {
-                    if upcoming.isEmpty {
+                    if let expected, !expected.items.isEmpty {
+                        // Paychecks too, from a server with Upcoming.
+                        ForEach(Array(expected.items.prefix(4).enumerated()), id: \.element.id) { index, item in
+                            if index > 0 { DSDivider() }
+                            UpcomingRow(item: item, payCadence: expected.payCadence, subscription: found.items.first { $0.covers(item.title) })
+                        }
+                    } else if upcoming.isEmpty {
                         Text("Nothing recurring is due in the next 30 days.")
                             .dsFont(.callout).foregroundStyle(Color.ds.inkSecondary)
                             .padding(.vertical, DSSpace.md)

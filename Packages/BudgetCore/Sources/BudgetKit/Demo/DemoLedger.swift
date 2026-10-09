@@ -49,6 +49,8 @@ public struct LedgerState: Hashable, Codable, Sendable {
     public var planScenarios: [PlanScenario]
     /// The person's answers to "Did this stop?", keyed by `RecurringChoice.key`.
     public var recurringReviews: [String: RecurringReviewMark]
+    /// Each credit card's latest statement from its issuer (Plaid Liabilities), keyed by account id.
+    public var cardBills: [String: CardBill]
 
     public init(categories: [BudgetCategory], monthlyTargets: [String: Money] = [:], rules: [BudgetRule] = [],
                 decisionPolicy: DecisionPolicy = .default, merchantTargets: [String: Money] = [:], monthlySavings: Money? = nil,
@@ -58,7 +60,8 @@ public struct LedgerState: Hashable, Codable, Sendable {
                 assistantMemories: [AssistantMemory] = [],
                 manualAssets: [ManualAsset] = [],
                 planScenarios: [PlanScenario] = [],
-                recurringReviews: [String: RecurringReviewMark] = [:]) {
+                recurringReviews: [String: RecurringReviewMark] = [:],
+                cardBills: [String: CardBill] = [:]) {
         self.categories = categories; self.monthlyTargets = monthlyTargets; self.rules = rules; self.decisionPolicy = decisionPolicy
         self.merchantTargets = merchantTargets; self.monthlySavings = monthlySavings; self.accounts = accounts
         self.openingBalances = openingBalances; self.transactions = transactions; self.suggestions = suggestions; self.reviewReasons = reviewReasons
@@ -68,6 +71,7 @@ public struct LedgerState: Hashable, Codable, Sendable {
         self.manualAssets = manualAssets
         self.planScenarios = planScenarios
         self.recurringReviews = recurringReviews
+        self.cardBills = cardBills
     }
 
     enum CodingKeys: String, CodingKey {
@@ -77,6 +81,7 @@ public struct LedgerState: Hashable, Codable, Sendable {
         case manualAssets
         case planScenarios
         case recurringReviews
+        case cardBills
     }
 
     /// Fields added after a ledger was first saved decode as empty; rules saved before they had ids get them.
@@ -100,7 +105,8 @@ public struct LedgerState: Hashable, Codable, Sendable {
                   assistantMemories: try c.decodeIfPresent([AssistantMemory].self, forKey: .assistantMemories) ?? [],
                   manualAssets: try c.decodeIfPresent([ManualAsset].self, forKey: .manualAssets) ?? [],
                   planScenarios: try c.decodeIfPresent([PlanScenario].self, forKey: .planScenarios) ?? [],
-                  recurringReviews: try c.decodeIfPresent([String: RecurringReviewMark].self, forKey: .recurringReviews) ?? [:])
+                  recurringReviews: try c.decodeIfPresent([String: RecurringReviewMark].self, forKey: .recurringReviews) ?? [:],
+                  cardBills: try c.decodeIfPresent([String: CardBill].self, forKey: .cardBills) ?? [:])
     }
 
     /// A fresh ledger for a new install: the standard categories, no targets, no data. It lists no upgrades: the server
@@ -159,6 +165,8 @@ public struct Ledger: Sendable {
     /// The person's answers to "Did this stop?" (`LedgerState.recurringReviews`). An ended series leaves the usual month
     /// of bills and subscriptions, so a change is a change to what's worked out from the rows.
     var recurringReviews: [String: RecurringReviewMark] = [:] { didSet { rowsToken = RowsToken.next() } }
+    /// Each card's latest statement from its issuer (`LedgerState.cardBills`).
+    var cardBills: [String: CardBill] = [:]
 
     public init(state: LedgerState, now: Date, calendar: Calendar = .current) {
         self.now = now
@@ -182,6 +190,7 @@ public struct Ledger: Sendable {
         manualAssets = state.manualAssets
         planScenarios = state.planScenarios
         recurringReviews = state.recurringReviews
+        cardBills = state.cardBills
         pairLegacyTransfers()
         upgradeLegacyProvenance()
         applyOneTimeUpgrades()
@@ -203,7 +212,7 @@ public struct Ledger: Sendable {
                     merchantAliases: merchantAliases, forgottenMerchants: forgottenMerchants.sorted(), upgrades: upgrades.sorted(),
                     recurringChoices: recurringChoices, assistantMemories: assistantMemories,
                     manualAssets: manualAssets, planScenarios: planScenarios,
-                    recurringReviews: recurringReviews)
+                    recurringReviews: recurringReviews, cardBills: cardBills)
     }
 
     /// Makes an account's replayed balance end at its reported balance (providers report the
@@ -397,6 +406,7 @@ public struct Ledger: Sendable {
         addManualAssetExamples(today: today)
         addPlanScenarios()
         addRecurringExamples(today: today)
+        addDemoCardBill(owedByMonth: cardChargesByMonth)
         // The demo's rows include answers the model filed, so its settings say the model is on (Qwen Decide at 80%).
         decisionPolicy = DecisionPolicy(provider: .localDecide, autoAcceptPercent: 80, kinds: [.category])
     }

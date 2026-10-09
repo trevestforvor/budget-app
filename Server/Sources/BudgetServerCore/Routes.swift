@@ -166,7 +166,11 @@ struct AskBody: Decodable { let question: String; let conversationID: String?; l
 /// `scenarioID` (0.5.0) projects with a Plan scenario's changes on top; an older server ignores it.
 struct ProjectionBody: Decodable { let horizonMonths: Int; let goal: GoalQuery?; let scenarioID: String? }
 struct PlaidExchangeBody: Decodable { let publicToken: String; let institution: String }
-struct PlaidTokenBody: Decodable { let linkID: String? }
+struct PlaidTokenBody: Decodable {
+    let linkID: String?
+    /// With `linkID`: update mode asking the person to consent to liabilities (the dashboard's "Grant card-bill access").
+    var grantCardBills: Bool? = nil
+}
 struct TellerBody: Decodable { let accessToken: String; let enrollmentID: String?; let institution: String }
 struct TellerTokenBody: Decodable { let accessToken: String; let enrollmentID: String? }
 struct SimpleFINBody: Decodable { let setupToken: String }
@@ -273,6 +277,14 @@ public func buildRouter(_ service: BudgetService, surface: Surface = .api) -> Ro
     router.get("/v1/checkup") { _, _ in try HTTP.json(try await api.checkup()) }
     router.get("/v1/subscriptions") { _, _ in try HTTP.json(try await api.subscriptions()) }
     router.get("/v1/savings") { _, _ in try HTTP.json(try await api.savingsPlan()) }
+    /// `?days=30` (the default), 1–366.
+    router.get("/v1/upcoming") { request, _ in
+        let days = try request.uri.queryParameters.get("days").map { raw in
+            guard let n = Int(raw), (1...366).contains(n) else { throw BudgetAPIError.decoding("days must be a whole number from 1 to 366, got “\(raw)”") }
+            return n
+        } ?? 30
+        return try HTTP.json(try await api.upcoming(days: days))
+    }
 
     addTransactionToolRoutes(router, service)
     addLinkRoutes(router, service)
@@ -300,9 +312,12 @@ func addLinkRoutes(_ router: Router<BasicRequestContext>, _ service: BudgetServi
     /// A Link token for Plaid Link. With `linkID`, Link opens in update mode for that Item: the person signs in again
     /// and the Item (with its accounts and history) carries on — there's no public token to exchange afterwards, just
     /// `POST /v1/links/:id/sync`. An unknown or non-Plaid `linkID` is refused rather than starting a second Item.
+    /// `grantCardBills` with a `linkID` opens the same update mode to add liabilities consent (card bills) to that Item;
+    /// only the person's click on the dashboard asks for it.
     router.post("/v1/links/plaid/token") { request, _ in
         guard let plaid = try await service.providers.plaid() else { throw BudgetAPIError.rejected("Plaid isn't set up yet — add its keys on the dashboard (Connect a bank → Plaid).") }
         let body = (try? await HTTP.body(PlaidTokenBody.self, request)) ?? PlaidTokenBody(linkID: nil)
+        if body.grantCardBills == true, body.linkID == nil { throw BudgetAPIError.rejected("Granting card-bill access needs the link it's for.") }
         var accessToken: String?
         if let linkID = body.linkID {
             guard let link = try await service.store.links().first(where: { $0.id == linkID }) else { throw BudgetAPIError.notFound }
@@ -311,7 +326,8 @@ func addLinkRoutes(_ router: Router<BasicRequestContext>, _ service: BudgetServi
         }
         let token = try await PlaidSource.linkToken(environment: plaid.environment, credentials: .init(clientID: plaid.clientID, secret: plaid.secret),
                                                     userID: "owner", investments: true, redirectURI: plaid.redirectURI,
-                                                    accessToken: accessToken, transport: service.providers.transport)
+                                                    accessToken: accessToken, grantLiabilities: body.grantCardBills == true,
+                                                    transport: service.providers.transport)
         return try HTTP.json(["linkToken": token])
     }
 

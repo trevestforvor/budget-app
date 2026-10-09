@@ -34,6 +34,9 @@ struct PlanView: View {
 
     private var selectedScenario: PlanScenario? { scenarios?.scenarios.first { $0.id == scenarioID } }
 
+    /// The next 30 days of paychecks, bills and card bills (`GET /v1/upcoming`); nil from a server without it.
+    @State private var upcoming: Upcoming?
+
     var body: some View {
         NavigationStack {
             ScrollView {
@@ -69,6 +72,7 @@ struct PlanView: View {
                                      onEditScenario: { scenarioEdit = ScenarioEdit(scenario: $0) },
                                      onNew: { scenarioEdit = ScenarioEdit(scenario: nil) })
                     }
+                    if let upcoming, !upcoming.items.isEmpty { NextThirtyDaysCard(upcoming: upcoming) }
                     if let savings {
                         if let history = savings.history, history.count > 1 { CashFlowCard(plan: savings, history: history) }
                         savingsCard(savings)
@@ -128,6 +132,7 @@ struct PlanView: View {
         if case let .success(fresh) = await list { scenarios = fresh }
         // A scenario deleted elsewhere falls back to the plain forecast.
         if let id = self.scenarioID, let scenarios, !scenarios.scenarios.contains(where: { $0.id == id }) { self.scenarioID = nil }
+        if let fresh = try? await api.upcoming(days: UpcomingWindow.days) { upcoming = fresh }
         return error
     }
 
