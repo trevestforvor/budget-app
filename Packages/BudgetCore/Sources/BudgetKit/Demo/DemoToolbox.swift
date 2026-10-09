@@ -49,6 +49,7 @@ struct DemoToolbox: AgentToolbox {
         case "savingsCapacity": return savingsCapacity(months: int("months") ?? 3)
         case "savingsGuidance": return savingsGuidance()
         case "runCheckup": return runCheckup()
+        case "checkPace": return checkPace()
         case "findSubscriptions": return findSubscriptions()
         case "findRules": return findRules()
         case "sumByTag": return try sumByTag(string("tag"), period: string("period"))

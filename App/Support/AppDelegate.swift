@@ -32,13 +32,19 @@ final class AppDelegate: NSObject, UIApplicationDelegate, UNUserNotificationCent
         DispatchQueue.main.async { completionHandler([.banner, .list]) }
     }
 
-    /// A tapped summary opens Activity on its day.
+    /// A tapped summary opens Activity on its day; a tapped pace alert, the budget, category or merchant it's about.
     nonisolated func userNotificationCenter(_ center: UNUserNotificationCenter, didReceive response: UNNotificationResponse,
                                             withCompletionHandler completionHandler: @escaping @Sendable () -> Void) {
-        let day = response.notification.request.content.userInfo["day"] as? String
+        let info = response.notification.request.content.userInfo
+        let payload = Dictionary(info.compactMap { key, value in (key as? String).flatMap { k in (value as? String).map { (k, $0) } } },
+                                 uniquingKeysWith: { first, _ in first })
         DispatchQueue.main.async {
             MainActor.assumeIsolated {
-                if let day { MorningSummaryModel.shared.open(day: day) }
+                if payload["kind"] == "pace" {
+                    MorningSummaryModel.shared.openPace(payload)
+                } else if let day = payload["day"] {
+                    MorningSummaryModel.shared.open(day: day)
+                }
             }
             completionHandler()
         }

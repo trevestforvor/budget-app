@@ -20,6 +20,7 @@ struct DemoAskEngine {
         if let r = cancelIntent(q, conversationID) { return r }
         if let r = subscriptionIntent(q, conversationID) { return r }
         if let r = checkupIntent(q, conversationID) { return r }
+        if let r = paceIntent(q, conversationID) { return r }
         if let r = decisionIntent(q, conversationID) { return r }
         if let r = ruleIntent(q, conversationID) { return r }
         if let r = createCategoryIntent(q, conversationID) { return r }

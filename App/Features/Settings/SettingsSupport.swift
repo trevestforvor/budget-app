@@ -7,6 +7,7 @@ enum SettingsRoute: Hashable {
     case categories, rules, recurring, review, targets, pay, accounts, memory, privacy, advanced
     /// What Ask keeps in mind — not `memory`, which is how Budget files merchants.
     case assistantMemory
+    case paceAlerts
 }
 
 /// The server fields as typed in Settings. The app keeps using what it has until Settings closes; then the draft is

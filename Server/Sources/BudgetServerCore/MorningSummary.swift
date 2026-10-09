@@ -16,6 +16,8 @@ struct StoredDevice: Codable, Hashable, Sendable {
     var lastAttempt: Date?
     var lastError: String?
     var updatedAt: Date
+    /// The pace alerts this phone asked for; nil for none (an app before them never asks).
+    var paceAlerts: PaceAlertPreferences?
 }
 
 /// Yesterday's spending, sent to each phone at 9:30 in whatever time zone it last reported — so it follows a trip. The
@@ -28,10 +30,9 @@ public actor MorningSummary {
     private let store: any ServerStore
     private let sync: SyncService
     private let settings: ServerSettings
-    private let transport: any HTTPTransport
+    private let push: PushSender
     private let logger: Logger
     private let clock: @Sendable () -> Date
-    private var cachedToken: (credentials: APNsClient.Credentials, token: String, issuedAt: Date)?
 
     /// How long after its time a phone is still due, and how long a failed attempt waits before the next.
     static let graceMinutes = 180
@@ -40,13 +41,13 @@ public actor MorningSummary {
     static let freshSync: TimeInterval = 2 * 3600
     static let keptDigests = 14
 
-    public init(api: LedgerBudgetAPI, store: any ServerStore, sync: SyncService, settings: ServerSettings, transport: any HTTPTransport,
+    public init(api: LedgerBudgetAPI, store: any ServerStore, sync: SyncService, settings: ServerSettings, push: PushSender,
                 logger: Logger, clock: @escaping @Sendable () -> Date = { Date() }) {
         self.api = api
         self.store = store
         self.sync = sync
         self.settings = settings
-        self.transport = transport
+        self.push = push
         self.logger = logger
         self.clock = clock
     }
@@ -61,7 +62,7 @@ public actor MorningSummary {
         try await store.saveSetting("devices", HTTP.encoder.encode(devices))
     }
 
-    private func update(_ token: String, _ change: (inout StoredDevice) -> Void) async throws -> StoredDevice {
+    func update(_ token: String, _ change: (inout StoredDevice) -> Void) async throws -> StoredDevice {
         var all = try await devices()
         guard let index = all.firstIndex(where: { $0.token == token }) else { throw BudgetAPIError.notFound }
         change(&all[index])
@@ -81,6 +82,8 @@ public actor MorningSummary {
         device.timeZone = r.timeZone
         device.enabled = r.enabled
         (device.hour, device.minute) = (r.hour, r.minute)
+        // An app that doesn't send a choice (one from before pace alerts) leaves the last one standing.
+        if let pace = r.paceAlerts { device.paceAlerts = pace }
         device.updatedAt = clock()
         all.removeAll { $0.token == token }
         all.append(device)
@@ -90,7 +93,7 @@ public actor MorningSummary {
 
     func status(_ d: StoredDevice) async -> DeviceStatus {
         DeviceStatus(enabled: d.enabled, timeZone: d.timeZone, hour: d.hour, minute: d.minute, lastSentDay: d.lastSentDay, lastError: d.lastError,
-                     pushConfigured: await credentials() != nil)
+                     pushConfigured: await credentials() != nil, paceAlerts: d.paceAlerts)
     }
 
     // MARK: Schedule
@@ -169,11 +172,7 @@ public actor MorningSummary {
         var outcome: APNsClient.Outcome
         var sentWith: DeviceRegistration.Environment?
         do {
-            guard let credentials = await credentials() else {
-                throw BudgetAPIError.rejected("The server has no APNs key yet. Add it on the dashboard, under Notifications.")
-            }
-            let client = try APNsClient(credentials: credentials, transport: transport)
-            let providerToken = try signedToken(for: client, now: now)
+            guard await credentials() != nil else { throw BudgetAPIError.rejected(PushSender.noKey) }
             await syncIfStale(now: now)
             let digest = try await digest(day: day)
             if waitForBank, !digest.received {
@@ -184,15 +183,8 @@ public actor MorningSummary {
             let alert = APNsClient.Alert(title: digest.title("Yesterday"), body: digest.summary, collapseID: "summary-\(day)",
                                          threadID: "morning-summary", userInfo: ["day": day], expiration: now.addingTimeInterval(6 * 3600))
             guard let device = try await devices().first(where: { $0.token == token }) else { throw BudgetAPIError.notFound }
-            outcome = await client.send(alert, to: token, environment: device.environment, providerToken: providerToken)
-            sentWith = device.environment
-            // A token from the other environment (a TestFlight build after a development one) is refused as bad; try
-            // the other host once before giving up on it.
-            if case .badToken = outcome {
-                let other: DeviceRegistration.Environment = device.environment == .production ? .sandbox : .production
-                let retry = await client.send(alert, to: token, environment: other, providerToken: providerToken)
-                if retry == .sent { (outcome, sentWith) = (.sent, other) }
-            }
+            // A token from the other environment is tried once on the other host (`PushSender.send`).
+            (outcome, sentWith) = await push.send(alert, to: token, environment: device.environment, now: now)
         } catch {
             outcome = .failed((error as? BudgetAPIError)?.localizedDescription ?? String(describing: error))
         }
@@ -209,6 +201,7 @@ public actor MorningSummary {
             case let .badToken(reason):
                 // Dead for good: stop until the phone registers a new token.
                 device.enabled = false
+                device.paceAlerts = nil
                 device.lastError = "APNs no longer accepts this phone's token (\(reason)). Turn the summary off and on again in Settings."
             case let .failed(message):
                 device.lastError = message
@@ -223,20 +216,8 @@ public actor MorningSummary {
                                        lastError: "This phone isn't registered.", updatedAt: now)
     }
 
-    /// The APNs key, key id, team and topic, when all are set.
-    func credentials() async -> APNsClient.Credentials? {
-        guard let key = await settings.value("apnsKey"), let keyID = await settings.value("apnsKeyID"),
-              let team = await settings.value("apnsTeamID"), let topic = await settings.value("apnsTopic") else { return nil }
-        return APNsClient.Credentials(key: key, keyID: keyID, teamID: team, topic: topic)
-    }
-
-    /// The provider token, kept for 45 minutes (APNs takes one for an hour and refuses new ones more often than every 20).
-    private func signedToken(for client: APNsClient, now: Date) throws -> String {
-        if let cached = cachedToken, cached.credentials == client.credentials, now.timeIntervalSince(cached.issuedAt) < 45 * 60 { return cached.token }
-        let token = try client.token(issuedAt: now)
-        cachedToken = (client.credentials, token, now)
-        return token
-    }
+    /// The APNs key, key id, team and topic, when all are set (`PushSender`).
+    func credentials() async -> APNsClient.Credentials? { await push.credentials() }
 
     private func syncIfStale(now: Date) async {
         let links = ((try? await store.links()) ?? []).filter { $0.status != .needsReauth }

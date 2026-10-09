@@ -42,9 +42,11 @@ public enum BudgetServerApp {
         // Ask's conversations go where the store keeps them (Postgres); otherwise they stay in memory with the ledger.
         if let chats = store as? any ChatSessionStore { await api.setChatSessionStore(chats) }
         let sync = SyncService(api: api, store: store, config: config, sealer: sealer, providers: providers, settings: settings, logger: logger)
-        let morning = MorningSummary(api: api, store: store, sync: sync, settings: settings, transport: pushTransport ?? AHCTransport.shared,
-                                     logger: logger, clock: clock)
-        return (BudgetService(api: api, store: store, sync: sync, morning: morning, config: config, sealer: sealer, providers: providers,
+        // One sender for every notification, so they share one APNs provider token.
+        let push = PushSender(settings: settings, transport: pushTransport ?? AHCTransport.shared)
+        let morning = MorningSummary(api: api, store: store, sync: sync, settings: settings, push: push, logger: logger, clock: clock)
+        let pace = PaceAlertSender(api: api, store: store, morning: morning, push: push, logger: logger, clock: clock)
+        return (BudgetService(api: api, store: store, sync: sync, morning: morning, pace: pace, config: config, sealer: sealer, providers: providers,
                               settings: settings, logger: logger), postgres)
     }
 
@@ -115,6 +117,7 @@ public enum BudgetServerApp {
             try await prepare(service)
             Task { await service.sync.runScheduler() }
             Task { await service.morning.runScheduler() }
+            Task { await service.pace.runScheduler() }
         }
         try await app.runService()
     }

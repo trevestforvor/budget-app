@@ -208,3 +208,11 @@ extension CachingBudgetAPI: MorningSummaryAPI {
         return api
     }
 }
+
+/// Pace alerts are worked out on the server at the moment they're asked for: no saved copy.
+extension CachingBudgetAPI: PaceAlertsAPI {
+    public func paceAlerts() async throws -> PaceAlerts {
+        guard let api = upstream as? any PaceAlertsAPI else { throw BudgetAPIError.notFound }
+        return try await api.paceAlerts()
+    }
+}
