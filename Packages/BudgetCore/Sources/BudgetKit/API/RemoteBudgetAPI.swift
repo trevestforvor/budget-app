@@ -120,7 +120,7 @@ public struct RemoteBudgetAPI: BudgetAPI, MorningSummaryAPI {
         return tail.map { withID.appending(path: $0) } ?? withID
     }
 
-    private func get<T: Decodable>(_ path: String, id: String? = nil, then tail: String? = nil, query: [URLQueryItem] = []) async throws -> T {
+    func get<T: Decodable>(_ path: String, id: String? = nil, then tail: String? = nil, query: [URLQueryItem] = []) async throws -> T {
         var components = URLComponents(url: endpoint(path, id: id, then: tail), resolvingAgainstBaseURL: false)!
         if !query.isEmpty { components.queryItems = query }
         return try decode(try await load(URLRequest(url: components.url!)))

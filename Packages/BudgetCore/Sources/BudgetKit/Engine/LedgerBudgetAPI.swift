@@ -78,7 +78,7 @@ public typealias DemoBudgetAPI = LedgerBudgetAPI
 /// The Budget API over a `Ledger`. The server runs it against Postgres-backed state with real
 /// sources and models; the app's demo mode runs it over fixtures. Same code, same numbers.
 public actor LedgerBudgetAPI: BudgetAPI {
-    private var ledger: Ledger
+    var ledger: Ledger
     private let latency: Duration
     private let clock: (@Sendable () -> Date)?
     /// When set, Ask runs the real agent loop; otherwise the templated demo engine answers.
@@ -88,6 +88,9 @@ public actor LedgerBudgetAPI: BudgetAPI {
     private var deployment: DeploymentInfo
     private var escalatedAccepts = 0
     private var escalationNote: String?
+    /// Daily balances recorded at sync, for net worth history (`LedgerBudgetAPI+NetWorth.swift`). Kept apart from the
+    /// ledger: it grows every day.
+    var balanceHistory: any BalanceHistoryStore = MemoryBalanceHistory()
 
     /// Server: persisted state, the wall clock, configured models.
     public init(state: LedgerState, calendar: Calendar = .current, clock: @escaping @Sendable () -> Date = { .now },
@@ -124,6 +127,7 @@ public actor LedgerBudgetAPI: BudgetAPI {
             return link
         }
         deployment = DeploymentInfo(endpoint: "demo://ledger", version: "demo", sources: [.teller, .plaid, .fileImport], institutions: institutions)
+        balanceHistory = MemoryBalanceHistory(ledger.demoBalanceSnapshots())
     }
 
     /// The demo connection that waits for a sign-in (balance-only, so no spending figure depends on it).
@@ -160,11 +164,11 @@ public actor LedgerBudgetAPI: BudgetAPI {
 
     // MARK: Plumbing
 
-    private func tick() {
+    func tick() {
         if let clock { ledger.now = clock() }
     }
 
-    private func pause(_ factor: Double = 1) async {
+    func pause(_ factor: Double = 1) async {
         guard latency > .zero else { return }
         try? await Task.sleep(for: latency * factor)
     }
@@ -176,7 +180,7 @@ public actor LedgerBudgetAPI: BudgetAPI {
     private var waitingWriters: [CheckedContinuation<Void, Never>] = []
 
     /// Makes `change` (synchronous, so nothing else runs in the middle of it) and saves it, taking its turn.
-    private func write<T>(_ change: () throws -> T) async throws -> T {
+    func write<T>(_ change: () throws -> T) async throws -> T {
         if writing { await withCheckedContinuation { waitingWriters.append($0) } } else { writing = true }
         defer { if waitingWriters.isEmpty { writing = false } else { waitingWriters.removeFirst().resume() } }
         let before = ledger.state
@@ -199,7 +203,7 @@ public actor LedgerBudgetAPI: BudgetAPI {
 
     private var toolbox: DemoToolbox {
         DemoToolbox(ledger: ledger, decisions: try? decisions.model(for: ledger.decisionPolicy.isActive ? ledger.decisionPolicy.provider : .localDecide),
-                    institutions: deployment.institutions)
+                    institutions: deployment.institutions, balanceHistory: balanceHistory)
     }
 
     // MARK: BudgetAPI
@@ -435,7 +439,7 @@ public actor LedgerBudgetAPI: BudgetAPI {
 
         // Then it's written in one step with no suspension before the save: the rows are added to the ledger as it is now,
         // and answers are kept only for rows nobody changed while the model was asked.
-        return try await write {
+        let written = try await write {
             var written = try ledger.prepareIngest(snapshot, batchID: batchID, into: targetAccountID)
             let kept = outcome.unchanged(since: asked, in: ledger)
             ledger.apply(kept)
@@ -456,6 +460,8 @@ public actor LedgerBudgetAPI: BudgetAPI {
             }
             return written
         }
+        await recordBalances(from: snapshot, into: targetAccountID)
+        return written
     }
 
     /// At most this many waiting rows are asked about again per ingest.

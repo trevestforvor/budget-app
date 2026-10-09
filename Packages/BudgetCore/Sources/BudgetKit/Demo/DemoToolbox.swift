@@ -6,6 +6,8 @@ struct DemoToolbox: AgentToolbox {
     let ledger: DemoLedger
     let decisions: (any DecisionModel)?
     var institutions: [InstitutionLink] = []
+    /// Recorded daily balances, for `netWorth`; nil reads as none recorded.
+    var balanceHistory: (any BalanceHistoryStore)? = nil
 
     /// What the model may file under: categories merged away are left out.
     var categories: [BudgetCategory] { ledger.activeCategories }
@@ -50,6 +52,7 @@ struct DemoToolbox: AgentToolbox {
         case "runCheckup": return runCheckup()
         case "findSubscriptions": return findSubscriptions()
         case "findRules": return findRules()
+        case "netWorth": return try await netWorth(range: string("range"))
         case "categorize": return try await categorize(args["transactionIDs"])
         default: throw BudgetAPIError.rejected("Unknown read tool \(tool).")
         }

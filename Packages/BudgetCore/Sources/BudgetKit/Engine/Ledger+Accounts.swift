@@ -3,7 +3,8 @@ import Foundation
 extension Ledger {
     // MARK: Balances
 
-    /// Every account's balance summed by kind. Cards are negative in the ledger; `cardsOwed` turns that around.
+    /// Every account's balance summed by kind. Cards are negative in the ledger; `cardsOwed` turns that around. Assets and
+    /// debts kept by hand count in net worth.
     func balances() -> Balances {
         func total(_ kind: AccountKind) -> Money {
             accounts.filter { $0.kind == kind }.map { balance(of: $0.id, through: now) }.sum()
@@ -11,8 +12,11 @@ extension Ledger {
         let cash = cash(through: now)
         let cardsOwed = -total(.credit)
         let investments = total(.investment)
-        return Balances(cash: cash, cardsOwed: cardsOwed, investments: investments, netWorth: cash - cardsOwed + investments,
-                        cashAfterCards: cash - cardsOwed)
+        let (otherAssets, otherDebts) = manualTotals()
+        return Balances(cash: cash, cardsOwed: cardsOwed, investments: investments,
+                        netWorth: cash - cardsOwed + investments + otherAssets - otherDebts, cashAfterCards: cash - cardsOwed,
+                        otherAssets: manualAssets.contains { !$0.isLiability } ? otherAssets : nil,
+                        otherDebts: manualAssets.contains(where: \.isLiability) ? otherDebts : nil)
     }
 
     // MARK: Data health
