@@ -42,6 +42,8 @@ final class AppModel {
     var selectedTab: AppTab = .home
     var showsSettings = false
     var showsCheckup = false
+    /// Net worth over time, pushed on Home (from its balances).
+    var showsNetWorth = false
     /// Opportunity cost, over whichever tab is showing.
     var showsOpportunity = false
     /// A price for opportunity cost to open with (`-price`, for screenshots); consumed by it.
@@ -271,6 +273,7 @@ extension AppAction {
         case .createBudgetRule where hasRuleConditions: ServerStatus.rulesWithConditionsSince
         case let .editTransactions(p) where p.isYearly != nil: ServerStatus.yearlyAndRecurringSince
         case .setRecurring: ServerStatus.yearlyAndRecurringSince
+        case .saveManualAsset, .removeManualAsset: ServerStatus.netWorthSince
         default: nil
         }
     }

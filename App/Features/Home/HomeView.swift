@@ -43,6 +43,7 @@ struct HomeView: View {
             .transactionDetailSheet(item: $detail)
             .navigationDestination(isPresented: $app.showsCheckup) { CheckupView() }
             .navigationDestination(isPresented: $showsAccounts) { AccountsView() }
+            .navigationDestination(isPresented: $app.showsNetWorth) { NetWorthView() }
             .sheet(isPresented: $app.showsSettings) { SettingsView() }
         }
         .task(id: app.revision) { await load() }
@@ -141,7 +142,7 @@ struct HomeView: View {
         }
 
         if let balances = overview.balances {
-            BalancesCard(balances: balances) { showsAccounts = true }
+            BalancesCard(balances: balances, onOpenAccounts: { showsAccounts = true }, onOpenNetWorth: { app.showsNetWorth = true })
         }
 
         recent(overview.recent)
