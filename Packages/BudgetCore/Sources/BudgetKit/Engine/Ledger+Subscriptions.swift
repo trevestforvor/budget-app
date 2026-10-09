@@ -29,7 +29,8 @@ extension Ledger {
         let (cadence, billings) = (series.cadence, series.billings)
         let amounts = billings.map(\.amount.minorUnits)
         let last = billings.last!
-        let next = last.date.addingTimeInterval(cadence.days * 86_400)
+        // A calendar step, as Upcoming places it: a monthly charge on the 1st is next due on the 1st, not 30.4 days on.
+        let next = Self.recurrence(after: last.date, cadence: cadence, number: 1, calendar: calendar)
         let status: Subscription.Status = now.timeIntervalSince(next) > cadence.grace * 86_400 ? .missed : .active
         let monthly = Double(last.amount.minorUnits) * 30.4 / cadence.days
         let previous = amounts.count >= 2 && amounts[amounts.count - 2] != amounts.last! ? Money(minorUnits: amounts[amounts.count - 2]) : nil

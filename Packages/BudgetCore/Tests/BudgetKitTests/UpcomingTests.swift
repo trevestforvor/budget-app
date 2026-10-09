@@ -301,9 +301,43 @@ struct UpcomingTests {
         }
         let ledger = PayRows.ledger(rows)
         let charges = ledger.upcoming(days: 120).items.filter { $0.title == "Stream Box" }
-        // The first is the recurring list's own next expected charge; the rest stay on the 30th.
-        #expect(PayRows.days(charges, ledger) == ["2026-09-29", "2026-10-30", "2026-11-30", "2026-12-30"])
+        // Every one stays on the 30th, the first included, and it's the recurring list's own next expected charge.
+        #expect(PayRows.days(charges, ledger) == ["2026-09-30", "2026-10-30", "2026-11-30", "2026-12-30"])
         #expect(Set(charges.map(\.id)).count == charges.count)
+        #expect(ledger.subscriptions().items.first { $0.merchant == "Stream Box" }.map { ledger.dayKey($0.nextExpected) } == "2026-09-30")
+    }
+
+    /// Rows posted Plaid-style, at noon UTC on the day.
+    static func utcRows(_ merchant: String, _ amount: Decimal, _ category: String, _ days: [(Int, Int, Int)]) -> [LedgerTransaction] {
+        var utc = Calendar(identifier: .gregorian)
+        utc.timeZone = TimeZone(identifier: "UTC")!
+        return days.enumerated().map { index, d in
+            LedgerTransaction(id: "\(merchant)-\(index)", accountID: "chk", postedAt: utc.date(from: DateComponents(year: d.0, month: d.1, day: d.2, hour: 12))!,
+                              merchant: merchant, rawDescription: merchant.uppercased(), amount: Money(amount),
+                              categorization: Categorization(categoryID: category, confidence: 1, tier: .rule, needsReview: false),
+                              isPending: false, source: .plaid)
+        }
+    }
+
+    @Test("Rent on the 1st is next due on the 1st, not 30.4 days on: never the 31st, and not late on the morning it's due")
+    func firstOfMonth() {
+        let rows = Self.utcRows("Oak Apartments", -2_000, "housing", [(2026, 10, 1), (2026, 11, 1), (2026, 12, 1), (2027, 1, 1)])
+        func at(_ m: Int, _ d: Int, hour: Int) -> Date { Fixture.calendar.date(from: DateComponents(year: 2027, month: m, day: d, hour: hour))! }
+        let mid = PayRows.ledger(rows, now: at(1, 20, hour: 10))
+        let rent = mid.upcoming(days: 45).items.filter { $0.title == "Oak Apartments" }
+        #expect(PayRows.days(rent, mid) == ["2027-02-01", "2027-03-01"])
+        let morning = PayRows.ledger(rows, now: at(2, 1, hour: 8))
+        let due = morning.upcoming(days: 30).items.filter { $0.title == "Oak Apartments" }
+        #expect(PayRows.days(due, morning).first == "2027-02-01")
+        #expect(due.first?.isLate == nil)
+    }
+
+    @Test("A charge on the 31st takes February's last day, then March 31st: one a month, none skipped or doubled")
+    func endOfMonth() {
+        let rows = Self.utcRows("StreamCo", -15.99, "subscriptions", [(2026, 10, 31), (2026, 11, 30), (2026, 12, 31), (2027, 1, 31)])
+        let ledger = PayRows.ledger(rows, now: Fixture.calendar.date(from: DateComponents(year: 2027, month: 2, day: 10, hour: 10))!)
+        let charges = ledger.upcoming(days: 60).items.filter { $0.title == "StreamCo" }
+        #expect(PayRows.days(charges, ledger) == ["2027-02-28", "2027-03-31"])
     }
 
     @Test("Asking for an out-of-range window is clamped")

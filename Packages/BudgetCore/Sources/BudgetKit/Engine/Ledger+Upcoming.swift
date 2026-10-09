@@ -189,11 +189,11 @@ extension Ledger {
         }
 
         for item in subscriptions().items where item.status == .active {
-            // Only the first can be late (an active charge is within its grace, which is shorter than its cadence). The
-            // first is the list's own next expected charge; later ones keep the last charge's day of the month (a
-            // monthly one on the 15th stays on the 15th), not a fixed count of days that drifts across short months.
+            // Only the first can be late (an active charge is within its grace, which is shorter than its cadence). Every
+            // one, the first included, keeps the last charge's day of the month (a monthly one on the 1st stays on the
+            // 1st, one on the 31st takes a short month's last day), not a fixed count of days that drifts.
             var occurrence = 1
-            var next = item.nextExpected
+            var next = Self.recurrence(of: item, number: 1, calendar: calendar)
             while true {
                 let day = calendar.startOfDay(for: next)
                 let late = day < today
@@ -254,14 +254,19 @@ extension Ledger {
     /// The `number`th charge after `item`'s last one: weeks for a weekly one, calendar months (1, 3 or 12) for the
     /// rest, so it keeps its day of the month (the 31st falls on a shorter month's last day).
     static func recurrence(of item: Subscription, number: Int, calendar: Calendar) -> Date {
+        recurrence(after: item.lastCharged, cadence: item.cadence, number: number, calendar: calendar)
+    }
+
+    /// The `number`th charge after one on `last` at `cadence` (see `recurrence(of:number:calendar:)`).
+    static func recurrence(after last: Date, cadence: Subscription.Cadence, number: Int, calendar: Calendar) -> Date {
         let months: Int
-        switch item.cadence {
-        case .weekly: return calendar.date(byAdding: .day, value: 7 * number, to: item.lastCharged)!
+        switch cadence {
+        case .weekly: return calendar.date(byAdding: .day, value: 7 * number, to: last)!
         case .monthly: months = 1
         case .quarterly: months = 3
         case .yearly: months = 12
         }
-        return calendar.date(byAdding: .month, value: months * number, to: item.lastCharged)!
+        return calendar.date(byAdding: .month, value: months * number, to: last)!
     }
 
     /// Each kind's amounts, as magnitudes.
