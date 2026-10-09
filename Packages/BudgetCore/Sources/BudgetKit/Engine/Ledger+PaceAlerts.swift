@@ -19,7 +19,9 @@ extension Ledger {
         let flex = flexBudget()
         var everyday: PaceStatus?
         if flex.expectedIncome.minorUnits > 0, flex.flexNumber.minorUnits > 0 {
-            let status = Self.paceStatus(spent: flex.flexSpent, limit: flex.flexNumber, day: day, days: days, accrues: true)
+            // A charge spread over the year counts its twelfth in full from the 1st: only the rest accrues through the month.
+            let spread = (budgetTotals(from: month.start, to: month.end)[.everyday] ?? []).filter { $0.isYearly == true }.map(\.spent).sum()
+            let status = Self.paceStatus(spent: flex.flexSpent, limit: flex.flexNumber, day: day, days: days, accrues: true, fixed: spread)
             everyday = status
             if let threshold = Self.threshold(status, kind: .everyday, accrues: true) {
                 alerts.append(Self.alert(.everyday, threshold, id: "everyday", name: "Everyday", status: status, daysLeft: days - day + 1,
@@ -63,10 +65,13 @@ extension Ledger {
     // MARK: The arithmetic
 
     /// One target's month so far on day `day` of `days`. A total that `accrues` is projected at its pace so far; one
-    /// that lands once is projected at what it is.
-    static func paceStatus(spent: Money, limit: Money, day: Int, days: Int, accrues: Bool) -> PaceStatus {
+    /// that lands once is projected at what it is. `fixed` is the part of `spent` that already counts in full for the
+    /// month (a yearly charge's twelfth): it's carried as is, and only the rest is projected.
+    static func paceStatus(spent: Money, limit: Money, day: Int, days: Int, accrues: Bool, fixed: Money = .zero) -> PaceStatus {
+        let fixedPart = Money(minorUnits: min(max(fixed.minorUnits, 0), max(spent.minorUnits, 0)))
+        let accruing = spent - fixedPart
         let projected: Money? = day >= PaceAlerts.firstProjectingDay
-            ? (accrues ? Money(minorUnits: Int64((Double(spent.minorUnits) * Double(days) / Double(max(day, 1))).rounded())) : spent)
+            ? (accrues ? Money(minorUnits: Int64((Double(accruing.minorUnits) * Double(days) / Double(max(day, 1))).rounded())) + fixedPart : spent)
             : nil
         let left = limit - spent
         let daysLeft = Int64(max(days - day + 1, 1))

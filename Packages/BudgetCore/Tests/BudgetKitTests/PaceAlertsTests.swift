@@ -128,7 +128,9 @@ struct PaceAlertsTests {
         let flex = ledger.flexBudget()
         let status = try #require(report.everyday)
         #expect(status.spent == flex.flexSpent && status.limit == flex.flexNumber)
-        let projected = Money(minorUnits: Int64((Double(flex.flexSpent.minorUnits) * 30 / 25).rounded()))
+        let month = ledger.interval(for: .thisMonth)
+        let spread = (ledger.budgetTotals(from: month.start, to: month.end)[.everyday] ?? []).filter { $0.isYearly == true }.map(\.spent).sum()
+        let projected = Money(minorUnits: Int64((Double((flex.flexSpent - spread).minorUnits) * 30 / 25).rounded())) + spread
         #expect(status.projected == projected)
         if flex.safeToSpend.minorUnits > 0 { #expect(status.perDayLeft == flex.perDayLeft) }
         if ProcessInfo.processInfo.environment["PRINT_PACE"] != nil {
@@ -139,6 +141,40 @@ struct PaceAlertsTests {
                 for a in r.alerts { print("  [\(a.id)] \(a.title) — \(a.body)") }
             }
         }
+    }
+
+    @Test("A yearly charge's twelfth counts in full from the 1st: only the rest of everyday spending is projected")
+    func everydaySpreadIsNotProjected() throws {
+        let utc: Calendar = { var c = Calendar(identifier: .gregorian); c.timeZone = TimeZone(identifier: "UTC")!; return c }()
+        func day(_ m: Int, _ d: Int) -> Date { utc.date(from: DateComponents(year: 2026, month: m, day: d, hour: 12))! }
+        func row(_ id: String, _ date: Date, _ amount: Decimal, _ merchant: String, _ category: String) -> LedgerTransaction {
+            LedgerTransaction(id: id, accountID: "chk", postedAt: date, merchant: merchant, rawDescription: merchant.uppercased(), amount: Money(amount),
+                              categorization: Categorization(categoryID: category, confidence: 1, tier: .rule, needsReview: false),
+                              isPending: false, source: .plaid)
+        }
+        // $4,000 paid each month; $2,400 of car insurance spread over the year ($200 a month); $900 of groceries by Oct 8.
+        var rows = (6...10).map { row("pay\($0)", day($0, 1), 4_000, "Bright Labs", "income") }
+        var insurance = row("ins", day(9, 2), -2_400, "Geico", "transport")
+        insurance.isYearly = true
+        rows.append(insurance)
+        for m in 6...9 { for (i, d) in [3, 9, 14, 21, 27].enumerated() { rows.append(row("gro\(m)-\(i)", day(m, d), -300, "Market \(m)\(i)", "groceries")) } }
+        rows += [row("oct1", day(10, 3), -450, "Shop A", "groceries"), row("oct2", day(10, 6), -450, "Shop B", "groceries")]
+        var state = LedgerState.empty
+        state.accounts = [Account(id: "chk", name: "Checking", institution: "Bank", kind: .checking, balance: Money(5_000), source: .plaid)]
+        state.transactions = rows.sorted { $0.postedAt > $1.postedAt }
+        let ledger = Ledger(state: state, now: Fixture.calendar.date(from: DateComponents(year: 2026, month: 10, day: 8, hour: 23))!,
+                            calendar: Fixture.calendar)
+        let flex = ledger.flexBudget()
+        let report = ledger.paceAlerts()
+        let status = try #require(report.everyday)
+        #expect(status.spent == flex.flexSpent && flex.flexSpent == Money(1_100))
+        // $900 over 8 of 31 days is $3,487.50, plus the $200 twelfth: $3,687.50, under the budget.
+        #expect(status.projected == Money(3_687.50))
+        #expect(status.projected! < flex.flexNumber)
+        #expect(!report.alerts.contains { $0.kind == .everyday })
+        // The arithmetic: a fixed part is carried, never more than what's spent.
+        #expect(Ledger.paceStatus(spent: Money(1_100), limit: Money(4_000), day: 8, days: 31, accrues: true, fixed: Money(200)).projected == Money(3_687.50))
+        #expect(Ledger.paceStatus(spent: Money(100), limit: Money(4_000), day: 8, days: 31, accrues: true, fixed: Money(200)).projected == Money(100))
     }
 
     @Test("The demo has something to show: the everyday pace, targets past a threshold, and a cap once one is set")
