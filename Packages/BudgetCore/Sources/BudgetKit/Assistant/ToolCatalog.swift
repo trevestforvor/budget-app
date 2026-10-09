@@ -290,13 +290,13 @@ public enum ToolCatalog {
                      mergeableCategoryIDs: active.filter { $0.countsAsSpending || $0.isMoneyIn }.map(\.id))
     }
 
-    public static func definitions(for categories: [BudgetCategory]? = nil) -> [ToolDefinition] {
-        (categories.map { specs(for: $0) } ?? specs).map(\.definition)
+    public static func definitions(for categories: [BudgetCategory]? = nil, capabilities: AskCapabilities = .all) -> [ToolDefinition] {
+        specs(categories.map { specs(for: $0) } ?? specs, for: capabilities).map(\.definition)
     }
 
-    /// The `tools` array for an OpenAI-compatible chat completion request.
-    public static func openAITools(for categories: [BudgetCategory]? = nil) -> JSONValue {
-        .array(definitions(for: categories).map { d in
+    /// The `tools` array for an OpenAI-compatible chat completion request, without what the asking app can't take.
+    public static func openAITools(for categories: [BudgetCategory]? = nil, capabilities: AskCapabilities = .all) -> JSONValue {
+        .array(definitions(for: categories, capabilities: capabilities).map { d in
             .object(["type": .string("function"), "function": .object([
                 "name": .string(d.name), "description": .string(d.description), "parameters": d.parameters,
             ])])
@@ -307,9 +307,9 @@ public enum ToolCatalog {
     /// suitable for sending back to the model so it can repair the call.
     @discardableResult
     public static func validateArguments(tool: String, json: Data, categoryIDs: [String]? = nil, spendingCategoryIDs: [String]? = nil,
-                                         mergeableCategoryIDs: [String]? = nil) throws -> JSONValue {
-        guard let spec = (categoryIDs.map { specs(categoryIDs: $0, spendingCategoryIDs: spendingCategoryIDs, mergeableCategoryIDs: mergeableCategoryIDs) } ?? specs)
-            .first(where: { $0.name == tool }) else {
+                                         mergeableCategoryIDs: [String]? = nil, capabilities: AskCapabilities = .all) throws -> JSONValue {
+        let all = categoryIDs.map { specs(categoryIDs: $0, spendingCategoryIDs: spendingCategoryIDs, mergeableCategoryIDs: mergeableCategoryIDs) } ?? specs
+        guard let spec = specs(all, for: capabilities).first(where: { $0.name == tool }) else {
             throw ToolArgumentError(tool: tool, problems: ["unknown tool"])
         }
         let value: JSONValue

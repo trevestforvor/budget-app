@@ -65,9 +65,11 @@ public struct RemoteBudgetAPI: BudgetAPI, MorningSummaryAPI, PaceAlertsAPI {
     }
 
     /// Ask runs the assistant on the server — several model calls with tools between — so it gets minutes, not seconds.
+    /// It declares what this app can take back (`AskCapabilities`); a server before 0.5.0 ignores the field.
     public func ask(_ question: String, conversationID: String?) async throws -> AskReply {
-        struct Body: Encodable { let question: String; let conversationID: String? }
-        return try await send("POST", "v1/ask", body: Body(question: question, conversationID: conversationID), timeout: Self.askTimeout)
+        struct Body: Encodable { let question: String; let conversationID: String?; let capabilities: [String] }
+        return try await send("POST", "v1/ask", body: Body(question: question, conversationID: conversationID, capabilities: AskCapabilities.all.names),
+                              timeout: Self.askTimeout)
     }
 
     /// How long a request waits for the server; Ask waits `askTimeout`.

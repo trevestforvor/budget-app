@@ -335,6 +335,12 @@ public actor LedgerBudgetAPI: BudgetAPI {
     /// Answers within a conversation: a known `conversationID` continues it (the model sees the turns before), a new one
     /// or none starts one. Either way the turn is kept in chat history (`LedgerBudgetAPI+Assistant.swift`).
     public func ask(_ question: String, conversationID: String?) async throws -> AskReply {
+        try await ask(question, conversationID: conversationID, capabilities: .all)
+    }
+
+    /// `ask`, for an app that can take back only `capabilities` (`AskCapabilities`): tools and fields it can't are never
+    /// offered, and any proposal it couldn't show or apply as proposed is left out of the reply.
+    public func ask(_ question: String, conversationID: String?, capabilities: AskCapabilities) async throws -> AskReply {
         tick()
         // The id names a kept conversation (and a path segment), so it's short and not blank; apps send a UUID.
         let given = conversationID?.trimmingCharacters(in: .whitespacesAndNewlines)
@@ -342,21 +348,24 @@ public actor LedgerBudgetAPI: BudgetAPI {
             throw BudgetAPIError.rejected("A conversation id is at most \(ChatSession.maxIDLength) characters.")
         }
         let id = given.flatMap { $0.isEmpty ? nil : $0 } ?? UUID().uuidString
-        let history = await chatHistory(for: id)
-        let reply: AskReply
+        let (history, existed) = await chatHistory(for: id)
+        var reply: AskReply
         let transcript: [ChatMessage]
         if let chatModel {
-            let outcome = try await AgentLoop(model: chatModel, toolbox: toolbox).run(question, conversationID: id, history: history)
+            let outcome = try await AgentLoop(model: chatModel, toolbox: toolbox, capabilities: capabilities)
+                .run(question, conversationID: id, history: history)
             reply = outcome.reply
             transcript = Array(outcome.transcript.dropFirst(1 + history.count))
         } else {
             await pause(2.5)
             let recorded = (try? await balanceHistory.balanceSnapshots()) ?? []
-            reply = DemoAskEngine(ledger: ledger, institutions: deployment.institutions, balanceSnapshots: recorded)
+            reply = DemoAskEngine(ledger: ledger, institutions: deployment.institutions, balanceSnapshots: recorded, capabilities: capabilities)
                 .answer(question, conversationID: id)
             transcript = []
         }
-        await recordTurn(question, reply: reply, transcript: transcript, in: id)
+        // The backstop: an app that can't decode a proposal fails the whole reply.
+        reply.proposedActions.removeAll { !capabilities.allows($0.action) }
+        await recordTurn(question, reply: reply, transcript: transcript, in: id, existed: existed)
         return reply
     }
 

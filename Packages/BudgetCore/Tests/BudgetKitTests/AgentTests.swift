@@ -47,6 +47,42 @@ struct AgentLoopTests {
         #expect(first.messages.first?.content?.contains("Numbers come from the ledger") == true)
     }
 
+    @Test("An app that can't take rememberFact or the 0.5.0 transaction fields is never offered them, and calls to them are repaired")
+    func capabilities() async throws {
+        func tools(_ capabilities: AskCapabilities) -> [String: JSONValue] {
+            guard case let .array(list) = ToolCatalog.openAITools(capabilities: capabilities) else { return [:] }
+            var byName: [String: JSONValue] = [:]
+            for case let .object(tool) in list {
+                if case let .object(function)? = tool["function"], case let .string(name)? = function["name"] { byName[name] = function["parameters"] }
+            }
+            return byName
+        }
+        func fields(_ schema: JSONValue?) -> Set<String> {
+            guard case let .object(o)? = schema, case let .object(properties)? = o["properties"] else { return [] }
+            return Set(properties.keys)
+        }
+        let legacy = tools(.legacy), all = tools(.all)
+        #expect(legacy["rememberFact"] == nil && all["rememberFact"] != nil)
+        #expect(fields(legacy["editTransactions"]).isDisjoint(with: ["fileSimilar", "addTags", "removeTags"]))
+        #expect(fields(all["editTransactions"]).isSuperset(of: ["fileSimilar", "addTags", "removeTags", "note"]))
+        #expect(fields(legacy["editTransactions"]).contains("note"))
+        #expect(AskCapabilities(names: nil) == .legacy && AskCapabilities(names: ["rememberFact", "someday"]) == .rememberFact)
+        #expect(AskCapabilities(names: AskCapabilities.all.names) == .all)
+
+        let model = ScriptedModel([
+            .call("rememberFact", #"{"fact":"Saving for Lisbon"}"#),
+            .call("editTransactions", #"{"transactionIDs":["x"],"categoryID":"dining","fileSimilar":true}"#),
+            .say("Okay."),
+        ])
+        let outcome = try await AgentLoop(model: model, toolbox: toolbox, capabilities: .legacy).run("Remember Lisbon, and file these as dining")
+        #expect(outcome.repairs == 2)
+        #expect(outcome.reply.proposedActions.isEmpty)
+        // Without fileSimilar or tags, an edit is something an old app applies as proposed.
+        #expect(AskCapabilities.legacy.allows(.editTransactions(EditTransactions(transactionIDs: ["x"], categoryID: "dining"))))
+        #expect(!AskCapabilities.legacy.allows(.editTransactions(EditTransactions(transactionIDs: ["x"], addTags: ["trip"]))))
+        #expect(!AskCapabilities.legacy.allows(.rememberFact(RememberFact(fact: "Lisbon"))))
+    }
+
     @Test("Invalid arguments go back to the model as repairable errors")
     func repair() async throws {
         let model = ScriptedModel([

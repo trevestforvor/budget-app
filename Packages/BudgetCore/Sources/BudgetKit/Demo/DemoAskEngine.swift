@@ -8,6 +8,8 @@ struct DemoAskEngine {
     var institutions: [InstitutionLink] = []
     /// Recorded daily balances, for net worth's change over time.
     var balanceSnapshots: [BalanceSnapshot] = []
+    /// What the asking app can take back (`AskCapabilities`).
+    var capabilities: AskCapabilities = .all
     static let modelLabel = "demo · templated, no model"
 
     var calendar: Calendar { ledger.calendar }
@@ -574,6 +576,9 @@ struct DemoAskEngine {
         // "Remember what we spent on dining?" is a question, not something to keep.
         guard !fact.isEmpty, !fact.hasSuffix("?") else { return nil }
         let sentence = fact.prefix(1).uppercased() + fact.dropFirst()
+        guard capabilities.contains(.rememberFact) else {
+            return reply(cid, text: "This version of the app can't keep things in assistant memory. Update the app to use it.")
+        }
         return proposal(.rememberFact(RememberFact(fact: sentence)), cid, lead: "I can keep that in mind for later conversations.")
     }
 

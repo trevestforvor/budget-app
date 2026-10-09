@@ -89,6 +89,14 @@ public struct JSONSchema: Hashable, Sendable {
         return s
     }
 
+    /// This object schema without `names` among its properties (or required).
+    public func removingProperties(_ names: Set<String>) -> JSONSchema {
+        var s = self
+        for name in names { s.properties[name] = nil }
+        s.required.removeAll { names.contains($0) }
+        return s
+    }
+
     public static func string(_ description: String, enum values: [String]? = nil, pattern: String? = nil, format: String? = nil, minLength: Int? = nil, maxLength: Int? = nil) -> JSONSchema {
         var s = JSONSchema(kind: .string, description: description)
         s.enumValues = values

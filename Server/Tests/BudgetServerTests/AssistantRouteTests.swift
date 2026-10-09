@@ -105,6 +105,24 @@ struct AssistantRouteTests {
         #expect(try await service.api.chatSession(id: (try await service.api.chatSessions())[0].id).turns.count == 2)
     }
 
+    @Test("An app that declares no capabilities (before 0.5.0) never gets a card it can't decode; one that declares them does")
+    func capabilities() async throws {
+        let (app, _) = try await TestServer.app()
+        try await app.test(.router) { client in
+            let old = try await client.execute(uri: "/v1/ask", method: .post, headers: TestServer.auth,
+                                               body: TestServer.body(#"{"question":"Remember that we're saving for Lisbon"}"#))
+            #expect(old.status == .ok)
+            // What a 0.4 app decodes: no rememberFact anywhere in the reply.
+            #expect(!String(buffer: old.body).contains("rememberFact"))
+            #expect(try Self.decode(AskReply.self, old.body).proposedActions.isEmpty)
+            let new = try await client.execute(uri: "/v1/ask", method: .post, headers: TestServer.auth,
+                                               body: TestServer.body(#"{"question":"Remember that we're saving for Lisbon","capabilities":["rememberFact","transactionTools","later"]}"#))
+            let proposed = try Self.decode(AskReply.self, new.body).proposedActions
+            #expect(proposed.count == 1)
+            if case .rememberFact? = proposed.first?.action {} else { Issue.record("expected a rememberFact card") }
+        }
+    }
+
     @Test("Resetting the ledger clears its conversations")
     func resetClears() async throws {
         let (app, service) = try await TestServer.app()

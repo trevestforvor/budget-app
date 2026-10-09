@@ -41,12 +41,15 @@ public struct AgentLoop: Sendable {
     public var toolbox: any AgentToolbox
     public var thinking: Bool
     public var maxSteps: Int
+    /// What the asking app can take back: tools and fields it can't are never offered (`AskCapabilities`).
+    public var capabilities: AskCapabilities
 
-    public init(model: any ChatModel, toolbox: any AgentToolbox, thinking: Bool = false, maxSteps: Int = 8) {
+    public init(model: any ChatModel, toolbox: any AgentToolbox, thinking: Bool = false, maxSteps: Int = 8, capabilities: AskCapabilities = .all) {
         self.model = model
         self.toolbox = toolbox
         self.thinking = thinking
         self.maxSteps = maxSteps
+        self.capabilities = capabilities
     }
 
     public func run(_ question: String, conversationID: String = UUID().uuidString, history: [ChatMessage] = []) async throws -> AgentOutcome {
@@ -54,7 +57,7 @@ public struct AgentLoop: Sendable {
         let ids = categories.map(\.id)
         let spendingIDs = categories.filter(\.countsAsSpending).map(\.id)
         let mergeableIDs = categories.filter { $0.countsAsSpending || $0.isMoneyIn }.map(\.id)
-        let tools = ToolCatalog.openAITools(for: categories)
+        let tools = ToolCatalog.openAITools(for: categories, capabilities: capabilities)
         let context = toolbox.assistantContext
         let prompt = AssistantPrompt.system(context)
 
@@ -80,7 +83,8 @@ public struct AgentLoop: Sendable {
                     let result: JSONValue
                     do {
                         let arguments = try ToolCatalog.validateArguments(tool: call.name, json: Data(call.arguments.utf8),
-                                                                           categoryIDs: ids, spendingCategoryIDs: spendingIDs, mergeableCategoryIDs: mergeableIDs)
+                                                                           categoryIDs: ids, spendingCategoryIDs: spendingIDs, mergeableCategoryIDs: mergeableIDs,
+                                                                           capabilities: capabilities)
                         calls.append(ToolCall(id: call.id, name: call.name, arguments: call.arguments))
                         switch ToolCatalog.spec(named: call.name)?.kind {
                         case .read?:
