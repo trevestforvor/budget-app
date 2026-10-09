@@ -119,7 +119,8 @@ struct PlaidTests {
         let token = try await PlaidSource.linkToken(environment: .sandbox, credentials: Self.credentials, userID: "me", investments: true, transport: transport)
         #expect(token == "link-sandbox-123")
         guard case let .object(body)? = transport.body(of: "/link/token/create") else { Issue.record("no body"); return }
-        #expect(body["additional_consented_products"] == .array([.string("investments")]))
+        // Consented, billed only once used: liabilities is what card bills read (PlaidLiabilitiesTests).
+        #expect(body["additional_consented_products"] == .array([.string("investments"), .string("liabilities")]))
         #expect(body["transactions"] == .object(["days_requested": .number(730)])) // two years, fixed at Item creation
         let exchanged = try await PlaidSource.exchange(publicToken: "public-1", environment: .sandbox, credentials: Self.credentials, transport: transport)
         #expect(exchanged.accessToken == "access-sandbox-9")

@@ -56,6 +56,14 @@ public protocol BudgetAPI: Sendable {
     func preview(_ action: AppAction) async throws -> ActionPreview
     /// The system prompt and tool schemas the chat model runs with, for inspection.
     func assistantConfig() async throws -> AssistantConfig
+    /// What's expected from today through `days` ahead: paychecks, bills, subscriptions and card bills, day by day
+    /// (`GET /v1/upcoming`). Servers before `ServerStatus.upcomingSince` answer `.notFound`.
+    func upcoming(days: Int) async throws -> Upcoming
+}
+
+extension BudgetAPI {
+    /// A client with no upcoming view (an older stub) has nothing to say.
+    public func upcoming(days: Int) async throws -> Upcoming { throw BudgetAPIError.notFound }
 }
 
 public enum BudgetAPIError: LocalizedError, Equatable {

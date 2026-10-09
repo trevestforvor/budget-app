@@ -63,6 +63,7 @@ public enum SavedRead: Hashable, Sendable {
     case spending(SpendingRange)
     case categoryHistory(id: String, months: Int)
     case projection(horizonMonths: Int)
+    case upcoming(days: Int)
 
     var key: String {
         switch self {
@@ -81,6 +82,7 @@ public enum SavedRead: Hashable, Sendable {
         case let .spending(range): "spending-\(range.rawValue)"
         case let .categoryHistory(id, months): "category-history-\(id)-\(months)"
         case let .projection(horizon): "projection-\(horizon)"
+        case let .upcoming(days): "upcoming-\(days)"
         }
     }
 }
@@ -183,6 +185,7 @@ public struct CachingBudgetAPI: BudgetAPI {
     public func savingsPlan() async throws -> SavingsPlan { try await read(.savings) { try await upstream.savingsPlan() } }
     public func checkup() async throws -> Checkup { try await read(.checkup) { try await upstream.checkup() } }
     public func subscriptions() async throws -> SubscriptionSummary { try await read(.subscriptions) { try await upstream.subscriptions() } }
+    public func upcoming(days: Int) async throws -> Upcoming { try await read(.upcoming(days: days)) { try await upstream.upcoming(days: days) } }
     public func assistantConfig() async throws -> AssistantConfig { try await read(.assistant) { try await upstream.assistantConfig() } }
 }
 

@@ -41,22 +41,27 @@ public struct LedgerState: Hashable, Codable, Sendable {
     public var upgrades: [String]
     /// The person's say on which merchants recur, keyed by `RecurringChoice.key`.
     public var recurringChoices: [String: RecurringChoice]
+    /// Each credit card's latest statement from its issuer (Plaid Liabilities), keyed by account id.
+    public var cardBills: [String: CardBill]
 
     public init(categories: [BudgetCategory], monthlyTargets: [String: Money] = [:], rules: [BudgetRule] = [],
                 decisionPolicy: DecisionPolicy = .default, merchantTargets: [String: Money] = [:], monthlySavings: Money? = nil,
                 accounts: [Account] = [], openingBalances: [String: Money] = [:], transactions: [LedgerTransaction] = [],
                 suggestions: [String: [CategorySuggestion]] = [:], reviewReasons: [String: String] = [:], merchantAliases: [String: String] = [:],
-                forgottenMerchants: [String] = [], upgrades: [String] = [], recurringChoices: [String: RecurringChoice] = [:]) {
+                forgottenMerchants: [String] = [], upgrades: [String] = [], recurringChoices: [String: RecurringChoice] = [:],
+                cardBills: [String: CardBill] = [:]) {
         self.categories = categories; self.monthlyTargets = monthlyTargets; self.rules = rules; self.decisionPolicy = decisionPolicy
         self.merchantTargets = merchantTargets; self.monthlySavings = monthlySavings; self.accounts = accounts
         self.openingBalances = openingBalances; self.transactions = transactions; self.suggestions = suggestions; self.reviewReasons = reviewReasons
         self.merchantAliases = merchantAliases; self.forgottenMerchants = forgottenMerchants; self.upgrades = upgrades
         self.recurringChoices = recurringChoices
+        self.cardBills = cardBills
     }
 
     enum CodingKeys: String, CodingKey {
         case categories, monthlyTargets, rules, decisionPolicy, merchantTargets, monthlySavings, accounts, openingBalances, transactions
         case suggestions, reviewReasons, merchantAliases, forgottenMerchants, upgrades, recurringChoices
+        case cardBills
     }
 
     /// Fields added after a ledger was first saved decode as empty; rules saved before they had ids get them.
@@ -76,7 +81,8 @@ public struct LedgerState: Hashable, Codable, Sendable {
                   merchantAliases: try c.decodeIfPresent([String: String].self, forKey: .merchantAliases) ?? [:],
                   forgottenMerchants: try c.decodeIfPresent([String].self, forKey: .forgottenMerchants) ?? [],
                   upgrades: try c.decodeIfPresent([String].self, forKey: .upgrades) ?? [],
-                  recurringChoices: try c.decodeIfPresent([String: RecurringChoice].self, forKey: .recurringChoices) ?? [:])
+                  recurringChoices: try c.decodeIfPresent([String: RecurringChoice].self, forKey: .recurringChoices) ?? [:],
+                  cardBills: try c.decodeIfPresent([String: CardBill].self, forKey: .cardBills) ?? [:])
     }
 
     /// A fresh ledger for a new install: the standard categories, no targets, no data. It lists no upgrades: the server
@@ -126,6 +132,8 @@ public struct Ledger: Sendable {
     var upgrades: Set<String> = []
     /// The person's say on which merchants recur (`LedgerState.recurringChoices`).
     var recurringChoices: [String: RecurringChoice] = [:] { didSet { rowsToken = RowsToken.next() } }
+    /// Each card's latest statement from its issuer (`LedgerState.cardBills`).
+    var cardBills: [String: CardBill] = [:]
 
     public init(state: LedgerState, now: Date, calendar: Calendar = .current) {
         self.now = now
@@ -145,6 +153,7 @@ public struct Ledger: Sendable {
         forgottenMerchants = Set(state.forgottenMerchants)
         upgrades = Set(state.upgrades)
         recurringChoices = state.recurringChoices
+        cardBills = state.cardBills
         pairLegacyTransfers()
         upgradeLegacyProvenance()
         applyOneTimeUpgrades()
@@ -164,7 +173,7 @@ public struct Ledger: Sendable {
                     merchantTargets: merchantTargets, monthlySavings: monthlySavings, accounts: accounts,
                     openingBalances: openingBalances, transactions: transactions, suggestions: suggestions, reviewReasons: reviewReasons,
                     merchantAliases: merchantAliases, forgottenMerchants: forgottenMerchants.sorted(), upgrades: upgrades.sorted(),
-                    recurringChoices: recurringChoices)
+                    recurringChoices: recurringChoices, cardBills: cardBills)
     }
 
     /// Makes an account's replayed balance end at its reported balance (providers report the
@@ -352,6 +361,7 @@ public struct Ledger: Sendable {
             accounts[index].balance = balance(of: accounts[index].id, through: now)
         }
         addActivityExamples(today: today)
+        addDemoCardBill(owedByMonth: cardChargesByMonth)
         // The demo's rows include answers the model filed, so its settings say the model is on (Qwen Decide at 80%).
         decisionPolicy = DecisionPolicy(provider: .localDecide, autoAcceptPercent: 80, kinds: [.category])
     }

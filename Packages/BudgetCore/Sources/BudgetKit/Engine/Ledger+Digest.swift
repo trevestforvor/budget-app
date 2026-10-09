@@ -64,6 +64,7 @@ extension Ledger {
                         + (flex.perDayLeft.map { ", \(Self.amount($0)) a day." } ?? "."))
                 : .init(kind: .safeToSpend, text: "Everyday spending is \(Self.amount(flex.safeToSpend.magnitude)) past this month's safe to spend."))
         }
+        facts += dueSoonFacts(from: end)
         let pending = charges.filter(\.isPending).count
         if pending > 0 {
             facts.append(.init(kind: .pending, text: pending == 1 ? "One charge is still pending, so the total can change."

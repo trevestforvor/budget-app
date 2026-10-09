@@ -329,6 +329,25 @@
   },
   {
     "function" : {
+      "description" : "What's expected from today through `days` ahead, soonest first: paychecks predicted from the user's pay schedule (date, payer, the typical recent paycheck), bills and subscriptions the recurring list expects, and card bills from the card issuer (what's left of the statement balance, the minimum and the due date; paid or past due). Returns totals by kind for the window and for the next seven days, the next paycheck and how often pay comes. Card bills pay for spending already made, so never add them to bills and subscriptions. Use it for questions about the next paycheck, what's coming up or due, and card bills.",
+      "name" : "findUpcoming",
+      "parameters" : {
+        "additionalProperties" : false,
+        "properties" : {
+          "days" : {
+            "description" : "How many days ahead, today included.",
+            "maximum" : 90,
+            "minimum" : 1,
+            "type" : "integer"
+          }
+        },
+        "type" : "object"
+      }
+    },
+    "type" : "function"
+  },
+  {
+    "function" : {
       "description" : "A full checkup in one call: this month's pace and safe to spend, categories over or on pace to exceed their targets, merchant caps and top merchants, recurring charges and price increases, unusual transactions, saving and emergency cushion, the cash outlook, and data health. Each finding is good, watch or act. Use it when the user asks how they're doing overall, to check everything, or for a review — then lead with what needs action.",
       "name" : "runCheckup",
       "parameters" : {
