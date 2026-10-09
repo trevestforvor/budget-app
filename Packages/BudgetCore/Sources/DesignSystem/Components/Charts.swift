@@ -26,7 +26,8 @@ public struct DSBandPoint: Identifiable, Hashable, Sendable {
 }
 
 /// Low, wide line chart: cyan for what happened, dashed iris for what the ledger projects,
-/// a soft band for the projection's range, and an optional goal rule.
+/// a soft band for the projection's range, an optional goal rule, and an optional second projection to compare
+/// against (a Plan scenario's plain forecast), finer and in `inkTertiary`.
 public struct DSLineChart: View {
     public enum Style: Sendable { case sparkline, full }
 
@@ -34,22 +35,25 @@ public struct DSLineChart: View {
     private let projected: [DSChartPoint]
     private let band: [DSBandPoint]
     private let goal: Double?
+    private let comparison: [DSChartPoint]
     private let style: Style
     private let currencyCode: String
     private let summary: String
 
-    public init(actual: [DSChartPoint], projected: [DSChartPoint] = [], band: [DSBandPoint] = [], goal: Double? = nil, style: Style = .sparkline, currencyCode: String = "USD", accessibilitySummary: String) {
+    public init(actual: [DSChartPoint], projected: [DSChartPoint] = [], band: [DSBandPoint] = [], goal: Double? = nil, style: Style = .sparkline, currencyCode: String = "USD",
+                comparison: [DSChartPoint] = [], accessibilitySummary: String) {
         self.actual = actual
         self.projected = projected
         self.band = band
         self.goal = goal
+        self.comparison = comparison
         self.style = style
         self.currencyCode = currencyCode
         self.summary = accessibilitySummary
     }
 
     private var domain: ClosedRange<Double> {
-        let values = actual.map(\.value) + projected.map(\.value) + band.flatMap { [$0.low, $0.high] } + (goal.map { [$0] } ?? [])
+        let values = actual.map(\.value) + projected.map(\.value) + comparison.map(\.value) + band.flatMap { [$0.low, $0.high] } + (goal.map { [$0] } ?? [])
         guard let lo = values.min(), let hi = values.max() else { return 0...1 }
         let pad = max((hi - lo) * 0.12, 1)
         return (lo - pad)...(hi + pad)
@@ -95,6 +99,12 @@ public struct DSLineChart: View {
                     .interpolationMethod(.catmullRom)
                     // The line's own light, cast a little below it.
                     .shadow(color: Color.ds.accent.opacity(0.3), radius: 4, y: 2)
+            }
+            ForEach(comparison) { point in
+                LineMark(x: .value("Date", point.date), y: .value("Balance", point.value), series: .value("Series", "Comparison"))
+                    .foregroundStyle(Color.ds.inkTertiary)
+                    .lineStyle(StrokeStyle(lineWidth: 1, lineCap: .round, dash: [2, 3]))
+                    .interpolationMethod(.catmullRom)
             }
             ForEach(projected) { point in
                 LineMark(x: .value("Date", point.date), y: .value("Balance", point.value), series: .value("Series", "Projected"))

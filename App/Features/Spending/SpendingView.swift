@@ -50,6 +50,8 @@ struct SpendingView: View {
     @State private var targetEdit: TargetEdit?
     @State private var savings: SavingsPlan?
     @State private var editsSavings = false
+    /// Top categories as tiles, or the month as a flow (remembered).
+    @AppStorage("spending.breakdown") private var breakdown: SpendingBreakdown = .categories
 
     private struct TargetEdit: Identifiable {
         let category: BudgetCategory
@@ -198,7 +200,13 @@ struct SpendingView: View {
             DSStateView(systemImage: "tray", title: budget.isCurrent ? "No spending yet" : "No spending",
                         message: budget.isCurrent ? "Spending in \(name) shows up here as it happens." : "Nothing was spent in \(name).")
         } else {
-            tiles(top, monthKey: budget.month)
+            DSSegmented("Show", selection: $breakdown, options: SpendingBreakdown.allCases) { $0.title }
+                .accessibilityIdentifier("spendingBreakdown")
+            if breakdown == .flow {
+                SpendingFlowCard(month: budget.month, isCurrent: budget.isCurrent)
+            } else {
+                tiles(top, monthKey: budget.month)
+            }
         }
 
         // Everyday first: it's what safe to spend is made of.
