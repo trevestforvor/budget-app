@@ -89,6 +89,7 @@ struct ActivityView: View {
                             filter.needsReviewOnly = true
                         }
                     }
+                    if phase == .loaded, !query.isEmpty, !isSelecting { MerchantSearchLink(query: query, rows: rows) }
                     content
                 }
                 .padding(.horizontal, DSSpace.gutter)

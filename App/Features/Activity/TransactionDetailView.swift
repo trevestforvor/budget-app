@@ -60,6 +60,7 @@ struct TransactionDetailView: View {
                         header
                         if needsReview { reviewCard }
                         detailsCard
+                        if let order = row.orderMatch { OrderItemsCard(order: order) }
                         provenanceCard
                         footer
                     }
@@ -503,6 +504,12 @@ struct TransactionDetailView: View {
 
     private var footer: some View {
         VStack(alignment: .leading, spacing: DSSpace.sm) {
+            if app.merchants != nil {
+                NavigationLink("About \(row.merchant)") { MerchantDetailView(merchant: row.merchant) }
+                    .buttonStyle(.ds(.quiet))
+                    .frame(minHeight: DSSize.hitTarget)
+                    .accessibilityIdentifier("merchantLink")
+            }
             Button("All from \(row.merchant)") {
                 app.route(Navigate(screen: .activity, search: row.merchant))
                 if presentation != .pushed { dismiss() }
