@@ -1,7 +1,8 @@
 // Review → Needs a category: the review queue in groups (same account, same direction, same bank descriptor once
 // numbers are stripped), biggest first, from GET /dash/review/groups. Picking a category files exactly the group's
 // transactions (editTransactions with their ids, never confirm's fan-out), with 5 s to undo. "Make a rule" opens the
-// rule drawer on Categories & rules, filled in from the group. Keyboard: j/k move between groups, 1–3 pick a
+// rule drawer on Categories & rules, filled in from the group. Once a group is filed, the merchant's other transactions filed
+// some other way are offered in one click (editTransactions with fileSimilar; the ones you filed yourself stay). Keyboard: j/k move between groups, 1–3 pick a
 // suggestion, o opens the other categories, / searches, u undoes.
 import { fill, h, api, store, heavy, forget, button, callout, tag, afterWrite, reportError, toast, runToastAction, money, count, plural,
   dateShort, accountName, categoryName, categoryTag, fileable, categoryOptions, emptyState, skeleton } from "./core.js";
@@ -125,6 +126,7 @@ async function file(v, g, categoryID, control) {
     toast(n === 1 ? `Filed ${g.merchant} under ${categoryName(categoryID)}` : `Filed ${count(n)} ${g.merchant} transactions under ${categoryName(categoryID)}`,
       { action: result.undo ? { label: "Undo", run: () => undo(v, result.undo) } : null });
     afterWrite();
+    offerSimilar(v, g, categoryID);
   } catch (error) {
     row.classList.remove("filing");
     row.querySelectorAll("button, select").forEach((el) => { el.disabled = false; });
@@ -134,6 +136,35 @@ async function file(v, g, categoryID, control) {
       reload(v);
     } else reportError(error, flash);
   } finally { store.pending--; }
+}
+
+/// "Also file the other 6 from Blue Bottle as Dining?": what the ledger says filing similar rows would add (its preview,
+/// the rows beyond the group's), offered under the list. Nothing to add, or a server before 0.5.0 (which files only the
+/// group, so its preview reaches no more), offers nothing.
+async function offerSimilar(v, g, categoryID) {
+  const body = { type: "editTransactions", transactionIDs: g.transactionIDs, categoryID, fileSimilar: true };
+  let preview;
+  try { preview = await api("/v1/actions/preview", { method: "POST", body }); } catch { return; }
+  const more = (preview.matchCount || 0) - g.transactionIDs.length;
+  const flash = view === v ? v.panel.querySelector("#groups-flash") : null;
+  if (more <= 0 || !flash) return;
+  const name = categoryName(categoryID);
+  const go = button(`File ${plural(more, "more", "more")} as ${name}`, { kind: "tinted", compact: true, onclick: async (e) => {
+    const control = e.currentTarget;
+    control.disabled = true;
+    store.pending++;
+    try {
+      const result = await api("/v1/actions", { method: "POST", body });
+      fill(flash);
+      toast(`Filed ${plural(more, "more transaction")} under ${name}`, { action: result.undo ? { label: "Undo", run: () => undo(v, result.undo) } : null });
+      afterWrite();
+    } catch (error) { control.disabled = false; reportError(error, flash); } finally { store.pending--; }
+  } });
+  fill(flash, callout({ tone: "info", role: "status", dismiss: true,
+    title: `Also file ${more === 1 ? "the other one" : `the other ${count(more)}`} from ${g.merchant} as ${name}?`,
+    body: ["The same merchant or bank description, filed some other way now.", ((preview.detail || "").match(/The \d+ you filed yourself[^.]*\./) || [])[0]]
+      .filter(Boolean).join(" "),
+    actions: [go] }));
 }
 
 async function undo(v, action) {
