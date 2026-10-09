@@ -657,3 +657,23 @@ input.input.above { width: 120px; }
   .cov-cell { border-radius: 2px; }
   .drawer-foot { padding-left: var(--gutter); padding-right: var(--gutter); }
 }
+
+/* Net worth (networth.js), on Accounts: the summary and its line, what you own and owe, the hand-kept form */
+.networth .section-head { flex-wrap: wrap; }
+.nw-summary { display: grid; gap: var(--s-xs); }
+.nw-change.up { color: var(--inflow); }
+.nw-change.down { color: var(--ink-secondary); }
+.nw-chart { display: block; width: 100%; height: 180px; margin-top: var(--s-sm); overflow: visible; }
+.nw-line { fill: none; stroke: var(--accent); stroke-width: 2; stroke-linecap: round; stroke-linejoin: round; vector-effect: non-scaling-stroke;
+  filter: drop-shadow(0 2px 4px rgb(0 179 221 / .30)); }
+.nw-line.estimated { stroke: var(--iris); stroke-width: 1.5; stroke-dasharray: 4 4; filter: none; }
+.nw-stop-top { stop-color: var(--accent); stop-opacity: .26; }
+.nw-stop-mid { stop-color: var(--accent); stop-opacity: .08; }
+.nw-stop-end { stop-color: var(--accent); stop-opacity: 0; }
+.nw-note { display: flex; align-items: baseline; gap: var(--s-xs); margin: var(--s-xs) 0 0; color: var(--ink-secondary); }
+.nw-lists { display: grid; grid-template-columns: repeat(2, minmax(0, 1fr)); gap: var(--s-md); margin-top: var(--s-md); }
+.nw-list-head { display: flex; align-items: baseline; justify-content: space-between; gap: var(--s-sm); margin-bottom: var(--s-xs); }
+.nw-list-head h3 { margin: 0; }
+.nw-form { display: grid; gap: var(--s-sm); margin-top: var(--s-md); }
+.nw-form h3, .nw-form > .help { margin: 0; }
+@media (max-width: 640px) { .nw-lists { grid-template-columns: minmax(0, 1fr); } }

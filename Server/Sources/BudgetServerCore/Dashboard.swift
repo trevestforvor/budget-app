@@ -250,6 +250,7 @@ enum DashboardAssets {
         "rules.js": Asset(PackageResources.rules_js, "text/javascript; charset=utf-8"),
         "categories.js": Asset(PackageResources.categories_js, "text/javascript; charset=utf-8"),
         "groups.js": Asset(PackageResources.groups_js, "text/javascript; charset=utf-8"),
+        "networth.js": Asset(PackageResources.networth_js, "text/javascript; charset=utf-8"),
         "icon-64.png": Asset(PackageResources.icon_64_png, "image/png"),
         "icon-180.png": Asset(PackageResources.icon_180_png, "image/png"),
     ]

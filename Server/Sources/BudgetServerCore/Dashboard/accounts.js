@@ -4,6 +4,7 @@ import { fill, h, api, store, heavy, pageHead, sectionHead, button, busy, armed,
   institutionGroups, syncProblem, providerDetail, syncNow, describeSync, afterWrite, reportError, toast, rowMoney, plural, dateShort, dateFull,
   dateTime, KIND, SOURCE, emptyState, drawer, closeDrawer } from "./core.js";
 import { connectPanes, framedNote, linkPlaid, relinkTeller, reconnected, announce } from "./providers.js";
+import { netWorthSection } from "./networth.js";
 
 // MARK: Actions on one institution
 
@@ -168,7 +169,7 @@ export default {
   unmount() { closeDrawer(); },
   /// Light refresh: redraw unless a menu is open or a remove is waiting for its second click.
   refresh() {
-    if (!this.root || isArmed(this.root) || this.root.querySelector(".menu[open]")) return;
+    if (!this.root || isArmed(this.root) || this.root.querySelector(".menu[open]") || this.root.querySelector(".nw-form :focus")) return;
     this.render();
   },
   toggleDetails(key) { if (this.open.has(key)) this.open.delete(key); else this.open.add(key); this.render(); },
@@ -196,7 +197,8 @@ export default {
         actions: [button("Connect a bank", { kind: "secondary", onclick: () => openDrawer() }), h("a", { class: "btn quiet", href: "#/imports" }, "Import statements")] })),
       linked.length ? h("div", { class: "stack" }, linked.map((g) => institutionCard(g, this))) : null,
       statements.length ? [sectionHead("From statements", h("a", { class: "btn quiet", href: "#/imports" }, "Import a statement")),
-        h("div", { class: "stack" }, statements.map((g) => institutionCard(g, this)))] : null);
+        h("div", { class: "stack" }, statements.map((g) => institutionCard(g, this)))] : null,
+      netWorthSection());
   },
 };
 
