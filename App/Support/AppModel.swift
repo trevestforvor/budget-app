@@ -271,6 +271,7 @@ extension AppAction {
         case .createBudgetRule where hasRuleConditions: ServerStatus.rulesWithConditionsSince
         case let .editTransactions(p) where p.isYearly != nil: ServerStatus.yearlyAndRecurringSince
         case .setRecurring: ServerStatus.yearlyAndRecurringSince
+        case .reviewRecurring: ServerStatus.recurringReviewSince
         default: nil
         }
     }

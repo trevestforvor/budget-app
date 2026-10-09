@@ -2,7 +2,7 @@
 // filed. Rules live with the categories they file under (Categories & rules); "Make a rule" on a group opens there.
 // The light refresh never redraws an open tab; only the tab counts update.
 import { fill, h, api, store, heavy, cached, pageHead, button, busy, armed, callout, tag, afterWrite, reportError, toast, money, count, plural,
-  dateShort, SOURCE, accountName, categoryTag, emptyState, skeleton, closeDrawer } from "./core.js";
+  dateShort, SOURCE, accountName, categoryTag, emptyState, skeleton, closeDrawer, rowMoney } from "./core.js";
 import { arrowKeys } from "./providers.js";
 import { renderGroups } from "./groups.js";
 
@@ -11,6 +11,7 @@ const TABS = [
   // Decisions (groups), as the phone's badge counts them; the tab itself says how many transactions they file.
   { id: "categories", label: "Needs a category", count: () => store.overview.reviewDecisions ?? store.overview.reviewCount, render: renderGroups },
   { id: "duplicates", label: "Duplicates", count: () => (cached("dupes") ? cached("dupes").pairs.length : 0), tone: "watch", render: renderDuplicates },
+  { id: "recurring", label: "Recurring", count: () => recurringCount(), tone: "watch", render: renderRecurring },
   { id: "recheck", label: "Re-check filings", count: () => 0, render: renderRecheck },
 ];
 
@@ -48,6 +49,72 @@ function drawDuplicates(panel, r) {
         h("td", { "data-label": "Sync:" }, h("div", { class: "cell-title" }, p.syncedDescription), h("div", { class: "cell-sub" }, `${SOURCE[p.syncedSource] || p.syncedSource} · ${dateShort(p.syncedDate)}`)),
         h("td", { class: "numcol t-amount-row", "data-label": "" }, money(p.amount)))))),
     h("div", { class: "card-foot" }, remove, look)));
+}
+
+// MARK: Recurring
+
+/// The last /v1/recurring/review answer (server 0.5.0): "Did this stop?" and "Is this recurring?", as the phone asks them.
+let recurring = null;
+const recurringCount = () => (recurring ? recurring.candidates.length + recurring.maybeStopped.length : 0);
+const loadRecurring = async () => (recurring = await api("/v1/recurring/review"));
+const CADENCE = { weekly: "Weekly", monthly: "Monthly", quarterly: "Every 3 months", yearly: "Yearly" };
+
+function renderRecurring(panel) {
+  fill(panel, skeleton(4));
+  loadRecurring().then(() => drawRecurring(panel), (error) => fill(panel, callout({ tone: "watch", title: error.message, detail: error.detail,
+    actions: [button("Try again", { compact: true, onclick: () => renderRecurring(panel) })] })));
+}
+
+/// One answer through /v1/actions, then the queue again. The phone's toast offers Undo; here the answer's undo is a button.
+async function answerRecurring(panel, body, e) {
+  await busy(e.currentTarget, "Saving…", async () => {
+    const r = await api("/v1/actions", { method: "POST", body });
+    toast(r.message || "Saved", r.undo ? { action: { label: "Undo", run: async () => {
+      await api("/v1/actions", { method: "POST", body: r.undo });
+      await afterWrite();
+      renderRecurring(panel);
+    } } } : {});
+    await afterWrite();
+    renderRecurring(panel);
+  });
+}
+
+function recurringRow(s, label, detail, actions) {
+  return h("div", { class: "row" },
+    h("div", { class: "grow" },
+      h("div", { class: "title wrap" }, s.merchant, " ", tag(label, label === "Review" ? "watch" : "info")),
+      h("div", { class: "sub wrap" }, detail)),
+    rowMoney(s.amount),
+    h("div", { class: "actions" }, actions));
+}
+
+function drawRecurring(panel) {
+  const r = recurring;
+  const stopped = r.maybeStopped, candidates = r.candidates, ended = r.ended || [];
+  if (!stopped.length && !candidates.length && !ended.length) {
+    fill(panel, h("section", { class: "card" }, emptyState({ title: "Nothing to check on recurring",
+      body: "When a recurring charge goes quiet, or new charges start to repeat, Budget asks about them here and on the phone." })));
+    return;
+  }
+  fill(panel,
+    stopped.length ? h("section", { class: "card stack", "aria-labelledby": "rec-stopped" },
+      h("h2", { class: "t-headline", id: "rec-stopped" }, "Did this stop?"),
+      h("p", { class: "t-callout muted" }, "No charge for about a cycle and a half. If you canceled it, it comes off the list and out of the usual month of bills and subscriptions now. If it's still active, Budget asks again a cycle later."),
+      h("div", { class: "rows" }, stopped.map((s) => recurringRow(s, "Recurring", `${CADENCE[s.cadence] || s.cadence} · no charge since ${dateShort(s.lastCharged)}`, [
+        button("Yes, I canceled it", { kind: "tinted", compact: true, onclick: (e) => answerRecurring(panel, { type: "reviewRecurring", merchant: s.merchant, answer: "stopped" }, e) }),
+        button("Still active", { compact: true, onclick: (e) => answerRecurring(panel, { type: "reviewRecurring", merchant: s.merchant, answer: "stillActive" }, e) }),
+      ])))) : null,
+    candidates.length ? h("section", { class: "card stack", "aria-labelledby": "rec-new" },
+      h("h2", { class: "t-headline", id: "rec-new" }, "Is this recurring?"),
+      h("p", { class: "t-callout muted" }, "These repeat on a schedule but don't have enough history for the recurring list yet. Yes puts them on it, so the budget plans for them."),
+      h("div", { class: "rows" }, candidates.map((s) => recurringRow(s, "Review", `Charged ${plural(s.charges, "time")} · ${(CADENCE[s.cadence] || s.cadence).toLowerCase()} · next around ${dateShort(s.nextExpected)}`, [
+        button("Yes", { kind: "tinted", compact: true, onclick: (e) => answerRecurring(panel, { type: "setRecurring", merchant: s.merchant, isRecurring: true, cadence: s.cadence, amount: (s.amount.minor / 100).toFixed(2) }, e) }),
+        button("Not recurring", { compact: true, onclick: (e) => answerRecurring(panel, { type: "setRecurring", merchant: s.merchant, isRecurring: false }, e) }),
+      ])))) : null,
+    ended.length ? h("section", { class: "card stack", "aria-labelledby": "rec-ended" },
+      h("h2", { class: "t-headline", id: "rec-ended" }, "You said these stopped"),
+      h("div", { class: "rows" }, ended.map((m) => h("div", { class: "row" }, h("div", { class: "grow" }, h("div", { class: "title" }, m)),
+        button("Put back", { kind: "quiet", compact: true, onclick: (e) => answerRecurring(panel, { type: "reviewRecurring", merchant: m, restores: true }, e) }))))) : null);
 }
 
 // MARK: Re-check filings
@@ -116,6 +183,8 @@ export default {
         sub: "File what's waiting a group at a time, clear out duplicates, and have the model look again. It's the same ledger your phone shows." }),
       tablist, this.panel);
     this.show(sub);
+    // The recurring tab's count, before it's opened.
+    loadRecurring().then(() => this.updateCounts(), () => {});
   },
   navigate({ sub }) { this.show(sub); },
   unmount() { closeDrawer(); },

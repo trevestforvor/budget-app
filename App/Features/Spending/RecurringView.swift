@@ -17,6 +17,8 @@ struct RecurringView: View {
     @State private var mode: Mode = .upcoming
     @State private var adding = false
     @State private var toast: DSToastMessage?
+    /// "Is this recurring?" and "Did this stop?"; nil from a server without the review.
+    @State private var review: RecurringReview?
 
     var body: some View {
         List {
@@ -69,6 +71,7 @@ struct RecurringView: View {
         let (next, error) = await state.refreshing { try await api.subscriptions() }
         app.endUpdating(updating)
         state = next
+        review = try? await (api as? any RecurringReviewAPI)?.recurringReview()
         return error
     }
 
@@ -80,6 +83,10 @@ struct RecurringView: View {
                      caption: "Subscriptions \(found.subscriptionsMonthly.formatted(fractionDigits: 0)) a month · bills \(found.billsMonthly.formatted(fractionDigits: 0)) a month")
             .padding(.top, DSSpace.sm)
             .plainRow()
+
+        if let review, review.count > 0 || review.ended?.isEmpty == false {
+            RecurringReviewCard(review: review, toast: $toast).id(review).plainRow()
+        }
 
         if found.items.isEmpty {
             DSStateView(systemImage: "repeat", title: "No repeat charges yet",
