@@ -273,6 +273,7 @@ public func buildRouter(_ service: BudgetService, surface: Surface = .api) -> Ro
     addLinkRoutes(router, service)
     addImportRoutes(router, service)
     addMorningSummaryRoutes(router, service)
+    addNetWorthRoutes(router, service)
     return router
 }
 
@@ -440,6 +441,7 @@ func addImportRoutes(_ router: Router<BasicRequestContext>, _ service: BudgetSer
         }
         if body.keepLedger != true {
             try await service.api.replaceState(await service.freshState(seedDemo: body.seedDemo == true))
+            try await service.api.resetBalanceHistory(seedDemo: body.seedDemo == true)
             removed.insert(body.seedDemo == true ? "the ledger (replaced with the demo)" : "all transactions and accounts", at: 0)
         }
         return try HTTP.json(["reset": "true", "removed": removed.joined(separator: ", ")])

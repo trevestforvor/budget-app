@@ -38,6 +38,12 @@ public final class PostgresStore: ServerStore, Sendable {
         """
         CREATE TABLE IF NOT EXISTS budget_settings (key TEXT PRIMARY KEY, doc JSONB NOT NULL, updated_at TIMESTAMPTZ NOT NULL DEFAULT now());
         """,
+        // 3: each account's balance at the end of a day, recorded at sync (net worth history; `PostgresBalanceHistory`).
+        """
+        CREATE TABLE IF NOT EXISTS budget_balances (
+            account_id TEXT NOT NULL, day TEXT NOT NULL, minor BIGINT NOT NULL, currency TEXT NOT NULL,
+            updated_at TIMESTAMPTZ NOT NULL DEFAULT now(), PRIMARY KEY (account_id, day));
+        """,
     ]
 
     public func migrate() async throws {

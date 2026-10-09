@@ -39,6 +39,7 @@ public enum BudgetServerApp {
         // The ledger loads once at start (after migrations, which need the Postgres client running).
         let api = LedgerBudgetAPI(state: .empty, calendar: config.calendar, chatModel: chat, decisions: routing,
                                   persistence: store, deployment: deployment)
+        await api.useBalanceHistory(balanceHistory(for: store, logger: logger))
         let sync = SyncService(api: api, store: store, config: config, sealer: sealer, providers: providers, settings: settings, logger: logger)
         let morning = MorningSummary(api: api, store: store, sync: sync, settings: settings, transport: pushTransport ?? AHCTransport.shared,
                                      logger: logger, clock: clock)
@@ -88,6 +89,7 @@ public enum BudgetServerApp {
             let fresh = await service.freshState(seedDemo: service.config.seedDemo)
             try await service.store.replaceLedger(fresh)
             await service.api.load(fresh)
+            if service.config.seedDemo { try await service.api.resetBalanceHistory(seedDemo: true) }
             service.logger.info(service.config.seedDemo ? "seeded the demo ledger (BUDGET_SEED_DEMO)" : "new empty ledger — link an account or import a file")
         }
         await apply(service)
