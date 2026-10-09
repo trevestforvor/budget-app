@@ -193,7 +193,13 @@ public struct DSSankeyChart: View {
                 ForEach(layout.bars, id: \.node.id) { bar in
                     let width = layout.labelWidth[bar.node.column] ?? 0
                     VStack(alignment: .leading, spacing: 0) {
-                        Text(bar.node.label).dsFont(.label).foregroundStyle(Color.ds.ink)
+                        HStack(spacing: 5) {
+                            // A label nudged off its bar still says which bar it is: its colour.
+                            if bar.node.column == layout.labelX.keys.max() {
+                                Circle().fill(Self.color(bar.node.tone)).frame(width: 6, height: 6)
+                            }
+                            Text(bar.node.label).dsFont(.label).foregroundStyle(Color.ds.ink)
+                        }
                         Text(bar.node.valueText).dsFont(.caption).monospacedDigit().foregroundStyle(Color.ds.inkSecondary)
                     }
                     .lineLimit(1)

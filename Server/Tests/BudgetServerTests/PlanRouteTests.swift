@@ -93,6 +93,15 @@ struct PlanRouteTests {
         }
     }
 
+    @Test("The dashboard's overview draws the flow from /v1/flow, in SVG built in the DOM")
+    func dashboardFlowCode() throws {
+        let flow = try #require(DashboardAssets.files["flow.js"]).bytes
+        let source = String(decoding: flow, as: UTF8.self)
+        #expect(source.contains(#"api(key === months[0].key ? "/v1/flow""#))
+        #expect(source.contains("createElementNS"))
+        #expect(String(decoding: DashboardAssets.files["overview.js"]!.bytes, as: UTF8.self).contains(#"import { flowCard } from "./flow.js""#))
+    }
+
     @Test("The dashboard reads the month's flow without a token")
     func dashboardFlow() async throws {
         let (app, _) = try await TestServer.app(surface: .dashboard)

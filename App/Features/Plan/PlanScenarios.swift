@@ -111,7 +111,7 @@ struct ScenarioCard: View {
         HStack(spacing: DSSpace.sm) {
             Button { onEditEvent(scenario, event) } label: {
                 HStack(spacing: DSSpace.sm) {
-                    DSGlyph(systemImage: event.kind == .income ? "arrow.down" : "arrow.up", tone: event.kind == .income ? .cyan : .orchid)
+                    DSGlyph(systemImage: event.kind == .income ? "arrow.down" : "arrow.up", tone: event.kind == .income ? .cyan : .violet)
                     VStack(alignment: .leading, spacing: 2) {
                         Text(event.name).dsFont(.body)
                             .foregroundStyle(event.isEnabled ? Color.ds.ink : Color.ds.inkSecondary)
