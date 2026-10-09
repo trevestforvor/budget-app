@@ -7,6 +7,7 @@ import SwiftUI
 /// debts you keep by hand, which open to edit.
 struct NetWorthView: View {
     @Environment(AppModel.self) private var app
+    @Environment(\.dynamicTypeSize) private var dynamicTypeSize
     @State private var range: NetWorthRange = .threeMonths
     @State private var state: LoadState<NetWorth> = .loading
     /// A server before 0.5.0 has no net worth history.
@@ -128,8 +129,13 @@ struct NetWorthView: View {
                             accessibilitySummary: "Net worth since \(Self.day(worth.start)), from \(worth.points.first?.netWorth.formatted(fractionDigits: 0) ?? "") to \(worth.netWorth.formatted(fractionDigits: 0))")
                     .frame(height: 180)
                 if worth.estimatedThrough != nil {
-                    HStack(alignment: .firstTextBaseline, spacing: DSSpace.xs) {
+                    // Side by side, the tag and its note both cut mid-word at accessibility sizes: stacked there.
+                    let layout = dynamicTypeSize.isAccessibilitySize
+                        ? AnyLayout(VStackLayout(alignment: .leading, spacing: DSSpace.xs))
+                        : AnyLayout(HStackLayout(alignment: .firstTextBaseline, spacing: DSSpace.xs))
+                    layout {
                         DSTag("Estimated", tint: Color.ds.iris)
+                            .fixedSize()
                         Text(worth.note ?? "Part of this range is estimated.")
                             .dsFont(.caption)
                             .foregroundStyle(Color.ds.inkSecondary)
@@ -167,14 +173,29 @@ struct NetWorthView: View {
         }
     }
 
+    /// One line of detail (institution and mask, or "Added by you"); the change since the range's start sits under
+    /// the amount in caption ink (the hero already says since when), and a partly estimated balance is a small tag.
     @ViewBuilder
     private func row(_ line: NetWorthLine, since: Date) -> some View {
-        let change = line.change.flatMap { $0 == .zero ? nil : "\($0.signedWhole) since \(Self.day(since))" }
-        let detail = [line.detail, line.isManual == true ? "Added by you" : nil, line.isEstimated == true ? "Partly estimated" : nil, change]
-            .compactMap { $0 }.joined(separator: " · ")
+        let change = line.change.flatMap { $0 == .zero ? nil : $0 }
+        let detail = [line.detail, line.isManual == true ? "Added by you" : nil].compactMap { $0 }.joined(separator: " · ")
         let label = DSListRow(line.name, detail: detail.isEmpty ? nil : detail, systemImage: Self.symbol(line), tone: Self.tone(line.group)) {
             HStack(spacing: DSSpace.xs) {
-                DSAmountText(line.value.decimal, currencyCode: line.value.currencyCode)
+                VStack(alignment: dynamicTypeSize.isAccessibilitySize ? .leading : .trailing, spacing: 2) {
+                    DSAmountText(line.value.decimal, currencyCode: line.value.currencyCode)
+                    if let change {
+                        Text(change.signedWhole)
+                            .dsFont(.caption)
+                            // Neutral ink: on a debt a rise is bad news, so the money-in tint would mislead.
+                            .foregroundStyle(Color.ds.inkSecondary)
+                            .accessibilityLabel("\(change.signedWhole) since \(Self.day(since))")
+                    }
+                    if line.isEstimated == true {
+                        DSTag("Estimated", tint: Color.ds.iris)
+                            .fixedSize()
+                            .accessibilityLabel("Partly estimated")
+                    }
+                }
                 if line.isManual == true {
                     Image(systemName: "chevron.right")
                         .font(.system(size: DSIconSize.xs, weight: .semibold))

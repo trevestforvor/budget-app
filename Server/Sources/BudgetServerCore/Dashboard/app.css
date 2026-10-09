@@ -17,6 +17,7 @@ button, input, select, textarea { font: inherit; color: inherit; }
 .muted { color: var(--ink-secondary); }
 .faint { color: var(--ink-tertiary); }
 .grow { flex: 1; min-width: 0; }
+.nowrap { white-space: nowrap; }
 .sr-only { position: absolute; width: 1px; height: 1px; padding: 0; margin: -1px; overflow: hidden; clip: rect(0 0 0 0); white-space: nowrap; border: 0; }
 .skip { position: absolute; left: var(--s-md); top: -60px; z-index: 50; padding: var(--s-sm) var(--s-md); border-radius: var(--r-control); background: var(--ink); color: var(--ink-inverse); }
 .skip:focus { top: var(--s-md); }

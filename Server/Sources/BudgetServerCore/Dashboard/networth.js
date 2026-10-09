@@ -83,12 +83,14 @@ function breakdown(title, total, lines, since) {
 }
 
 function line(l, since) {
-  const change = l.change && l.change.minor ? `${money(l.change, { cents: false, sign: true })} since ${since}` : null;
-  const sub = [l.detail, l.isManual ? "added by you" : null, l.isEstimated ? "partly estimated" : null, change].filter(Boolean).join(" · ");
+  // The change keeps its sign with its number: a line may break before it, never between "−" and "$1,350".
+  const change = l.change && l.change.minor ? h("span", { class: "nowrap" }, `${money(l.change, { cents: false, sign: true })} since ${since}`) : null;
+  const words = [l.detail, l.isManual ? "added by you" : null, l.isEstimated ? "partly estimated" : null].filter(Boolean).join(" · ");
+  const sub = words || change ? [words, words && change ? " · " : null, change].filter(Boolean) : null;
   const item = l.isManual ? (view.data.manualAssets || []).find((a) => a.id === l.id) : null;
   return h("div", { class: "row" },
     h("span", { class: `glyph tone-${GROUP_TONE[l.group] || "amber"}`, "aria-hidden": "true" }, l.name.slice(0, 2).toUpperCase()),
-    h("div", { class: "grow" }, h("div", { class: "title" }, l.name), sub ? h("div", { class: "sub" }, sub) : null),
+    h("div", { class: "grow" }, h("div", { class: "title" }, l.name), sub ? h("div", { class: "sub" }, ...sub) : null),
     rowMoney(l.value),
     item ? button("Edit", { kind: "quiet", "aria-label": `Edit ${l.name}`, onclick: () => {
       view.editing = item;

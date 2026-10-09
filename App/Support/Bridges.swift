@@ -38,14 +38,20 @@ extension BalancePoint {
 }
 
 extension Money {
-    /// "+$1,204" / "−$310" for change captions.
+    /// "+$1,204" / "−$310" for change captions. The sign never ends a line on its own (`keepingSign`).
     var signedWhole: String {
-        (isNegative ? "" : "+") + formatted(fractionDigits: 0)
+        Self.keepingSign((isNegative ? "" : "+") + formatted(fractionDigits: 0))
     }
 
     /// "+$100.00" / "−$25.50".
     var signedString: String {
-        (isNegative ? "" : "+") + formatted()
+        Self.keepingSign((isNegative ? "" : "+") + formatted())
+    }
+
+    /// A word joiner (U+2060) after a leading sign: text may wrap before "−$1,350" but never between "−" and "$1,350".
+    static func keepingSign(_ text: String) -> String {
+        guard let first = text.first, "+-−–".contains(first) else { return text }
+        return String(first) + "\u{2060}" + text.dropFirst()
     }
 }
 
