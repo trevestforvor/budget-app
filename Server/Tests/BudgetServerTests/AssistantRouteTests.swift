@@ -113,4 +113,14 @@ struct AssistantRouteTests {
         #expect(try await service.api.chatSessions().isEmpty)
         #expect(try await service.api.assistantMemories().isEmpty)
     }
+
+    @Test("The dashboard's Assistant page is embedded, linked from the rail, and writes only through api()")
+    func dashboardPage() throws {
+        let page = String(decoding: DashboardAssets.page.bytes, as: UTF8.self)
+        let module = try #require(DashboardAssets.files["assistant.js"].map { String(decoding: $0.bytes, as: UTF8.self) })
+        #expect(page.contains(##"<a href="#/assistant" data-view="assistant">"##))
+        #expect(String(decoding: try #require(DashboardAssets.files["app.js"]).bytes, as: UTF8.self).contains(#"import assistant from "./assistant.js""#))
+        #expect(module.contains(#"api("/v1/assistant/memories", { method: "POST", body: { text } })"#))
+        #expect(module.contains("armed(")) // forgetting and deleting ask twice
+    }
 }
