@@ -110,6 +110,11 @@ struct PaceAlertScheduleTests {
         var long = alert
         (long.kind, long.targetID, long.link) = (.merchant, String(repeating: "Very Long Merchant ", count: 6), .merchant("x"))
         #expect(PaceAlertSender.notification(long, month: "2026-10", now: .now).collapseID.utf8.count <= 64)
+        // Cut between characters: a byte cut through "é" would turn into a longer replacement character.
+        long.targetID = "xx" + String(repeating: "Café ", count: 12)
+        let cut = PaceAlertSender.notification(long, month: "2026-10", now: .now).collapseID
+        #expect(cut.utf8.count <= 64 && !cut.contains("\u{FFFD}"))
+        #expect(PaceAlertSender.utf8Prefix("ab\u{e9}", maxBytes: 3) == "ab" && PaceAlertSender.utf8Prefix("ab\u{e9}", maxBytes: 4) == "ab\u{e9}")
         var everyday = alert
         (everyday.kind, everyday.targetID, everyday.link) = (.everyday, "everyday", .budget)
         #expect(PaceAlertSender.notification(everyday, month: "2026-10", now: .now).userInfo == ["kind": "pace", "month": "2026-10", "to": "budget"])

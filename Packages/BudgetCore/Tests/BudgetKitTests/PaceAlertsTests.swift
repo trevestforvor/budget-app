@@ -167,6 +167,23 @@ struct PaceAlertsTests {
         #expect(!past.isEmpty && !figures.isEmpty)
     }
 
+    @Test("An empty ledger has no everyday budget and nothing to alert, on any day of the month")
+    func empty() {
+        for day in [1, 8, 31] {
+            let report = Ledger(state: .empty, now: Self.at(day), calendar: Fixture.calendar).paceAlerts()
+            #expect(report.everyday == nil && report.alerts.isEmpty && report.day == day && report.daysInMonth == 31)
+        }
+    }
+
+    @Test("Ask: a savings goal or a change with an amount isn't a pace question")
+    func askLeavesGoalsAlone() async throws {
+        let api = Fixture.api()
+        for question in ["Am I on pace to save $5,000 by June?", "Set the dining target to $500 so I don't go over"] {
+            let reply = try await api.ask(question, conversationID: nil)
+            #expect(!reply.toolCalls.map(\.name).contains("checkPace"), "\(question)")
+        }
+    }
+
     // MARK: On the wire
 
     @Test("Round trip, and kinds or thresholds a later server sends read as unknown")

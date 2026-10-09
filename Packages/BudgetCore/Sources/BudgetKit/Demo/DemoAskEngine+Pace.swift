@@ -6,6 +6,9 @@ extension DemoAskEngine {
     func paceIntent(_ q: String, _ cid: String) -> AskReply? {
         let asks = ["on pace", "my pace", "going over", "go over", "overspend", "over budget", "pace alert"]
         guard asks.contains(where: q.contains) else { return nil }
+        // "Am I on pace to save $5,000 by June?" is a goal, and "set dining to $500 so I don't go over" a change: both
+        // belong to the intents after this one.
+        guard !["save", "saving", "goal", "afford", "set aside"].contains(where: q.contains), !q.contains("$") else { return nil }
         let out = DemoToolbox(ledger: ledger, decisions: nil).checkPace()
         let report = ledger.paceAlerts()
         var lines: [String] = []

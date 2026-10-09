@@ -75,13 +75,15 @@ struct PaceAlertsView: View {
             "\(s.spent.formatted(fractionDigits: 0)) of \(s.limit.formatted(fractionDigits: 0)) so far"
         }
         return Button { morning.open(alert ?? Self.budgetAlert, month: state.value?.month ?? "") } label: {
-            DSListRow(alert?.title ?? "Everyday is on track", detail: detail, systemImage: "gauge.with.dots.needle.67percent",
+            // Not "on track": a projection a few dollars over doesn't alert, and saying so would contradict the detail.
+            DSListRow(alert?.title ?? "Everyday budget", detail: detail, systemImage: "gauge.with.dots.needle.67percent",
                       tone: alert == nil ? .cyan : .orchid) {
                 DSListValue("\(s.usedPercent)%", showsChevron: true)
             }
         }
         .buttonStyle(.plain)
         .accessibilityHint("Opens this month's budget")
+        .accessibilityIdentifier("paceEverydayNow")
     }
 
     private func alertRow(_ alert: PaceAlert, month: String) -> some View {
@@ -94,6 +96,7 @@ struct PaceAlertsView: View {
         }
         .buttonStyle(.plain)
         .accessibilityHint(alert.kind == .merchant ? "Shows \(alert.name) charges in Activity" : "Opens the category")
+        .accessibilityIdentifier("paceAlert-\(alert.id)")
     }
 
     // MARK: State

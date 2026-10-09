@@ -78,9 +78,23 @@ public actor PaceAlertSender {
         }
         // APNs takes a collapse id of at most 64 bytes; a long merchant name is cut, which only means two such alerts
         // in one month could replace each other on screen.
-        let collapse = String(decoding: Data("pace-\(month)-\(alert.targetKey)".utf8).prefix(64), as: UTF8.self)
+        let collapse = utf8Prefix("pace-\(month)-\(alert.targetKey)", maxBytes: 64)
         return APNsClient.Alert(title: alert.title, body: alert.body, collapseID: collapse, threadID: "pace-alerts", userInfo: info,
                                 expiration: now.addingTimeInterval(12 * 3600))
+    }
+
+    /// The longest start of `text` that fits in `maxBytes` of UTF-8, cut between characters (cutting the bytes could
+    /// split one, and its replacement character would make the string longer than the limit).
+    static func utf8Prefix(_ text: String, maxBytes: Int) -> String {
+        var out = ""
+        var bytes = 0
+        for character in text {
+            let size = character.utf8.count
+            guard bytes + size <= maxBytes else { break }
+            out.append(character)
+            bytes += size
+        }
+        return out
     }
 
     // MARK: Sending
@@ -97,7 +111,7 @@ public actor PaceAlertSender {
             return
         }
         var sent = await sentLog()
-        let before = sent
+        var saved = sent
         // Only this month and the one before are worth keeping, and only for phones still registered.
         let tokens = Set(devices.map(\.token))
         for (token, ids) in sent {
@@ -133,8 +147,21 @@ public actor PaceAlertSender {
                 break
             }
             sent[device.token] = marked.isEmpty ? nil : marked.sorted()
+            // Saved phone by phone, so a process that stops partway through doesn't send these again.
+            if sent != saved, await save(sent) { saved = sent }
         }
-        if sent != before { try? await store.saveSetting(Self.sentKey, HTTP.encoder.encode(sent)) }
+        if sent != saved { _ = await save(sent) }
+    }
+
+    /// Writes the sent log; false when the store refused it.
+    private func save(_ log: [String: [String]]) async -> Bool {
+        do {
+            try await store.saveSetting(Self.sentKey, HTTP.encoder.encode(log))
+            return true
+        } catch {
+            logger.error("pace alerts: couldn't save what was sent: \(error)")
+            return false
+        }
     }
 
     /// Phone token → what went out to it ("2026-10|everyday:everyday:projectedOver").
