@@ -61,6 +61,7 @@ struct SettingsView: View {
         case .memory: MemoryView()
         case .privacy: PrivacyView()
         case .advanced: AdvancedSettingsView(draft: draft) { dismiss() }
+        case .paceAlerts: PaceAlertsView()
         }
     }
 
@@ -158,34 +159,52 @@ struct SettingsView: View {
 
     private var morning: MorningSummaryModel { .shared }
 
-    /// The morning summary, with a server of your own (the demo has nothing to send from).
+    /// The morning summary, with a server of your own, and pace alerts.
     @ViewBuilder
     private var notificationsSection: some View {
-        if morning.available {
-            DSListSection("Notifications", footer: morning.problem ?? morningNote) {
-                DSToggleRow("Morning summary", detail: morningDetail, systemImage: "sun.horizon", tone: .amber,
-                            isOn: Binding(get: { morning.enabled }, set: { on in Task { await morning.setEnabled(on) } }))
-                    .disabled(morning.working)
-                    .accessibilityIdentifier("settingsMorningSummary")
-                if morning.enabled {
-                    HStack(spacing: DSSpace.sm) {
-                        DSListRow("Time", detail: "Wherever your phone is", systemImage: "clock", tone: .amber)
-                        DatePicker("Time", selection: morningTime, displayedComponents: .hourAndMinute)
-                            .labelsHidden()
-                            .fixedSize()
-                            .disabled(morning.working)
-                            .accessibilityIdentifier("settingsMorningSummaryTime")
-                    }
-                    Button { Task { await morning.sendTest() } } label: {
-                        DSListRow("Send one now", detail: "Yesterday's summary, to this phone", systemImage: "paperplane", tone: .azure)
-                    }
-                    .buttonStyle(.plain)
-                    .disabled(morning.working)
-                    .accessibilityIdentifier("settingsMorningSummaryTest")
+        // The demo has nothing to send from, but shows what pace alerts would say.
+        if morning.available || app.isDemo {
+            DSListSection("Notifications", footer: morning.available ? morning.problem ?? morningNote : nil) {
+                if morning.available { morningRows }
+                NavigationLink(value: SettingsRoute.paceAlerts) {
+                    DSListRow("Pace alerts", detail: paceDetail, systemImage: "gauge.with.dots.needle.67percent", tone: .orchid)
                 }
+                .accessibilityIdentifier("settingsPaceAlerts")
             }
             .task { await morning.refreshPermission() }
         }
+    }
+
+    @ViewBuilder
+    private var morningRows: some View {
+        DSToggleRow("Morning summary", detail: morningDetail, systemImage: "sun.horizon", tone: .amber,
+                    isOn: Binding(get: { morning.enabled }, set: { on in Task { await morning.setEnabled(on) } }))
+            .disabled(morning.working)
+            .accessibilityIdentifier("settingsMorningSummary")
+        if morning.enabled {
+            HStack(spacing: DSSpace.sm) {
+                DSListRow("Time", detail: "Wherever your phone is", systemImage: "clock", tone: .amber)
+                DatePicker("Time", selection: morningTime, displayedComponents: .hourAndMinute)
+                    .labelsHidden()
+                    .fixedSize()
+                    .disabled(morning.working)
+                    .accessibilityIdentifier("settingsMorningSummaryTime")
+            }
+            Button { Task { await morning.sendTest() } } label: {
+                DSListRow("Send one now", detail: "Yesterday's summary, to this phone", systemImage: "paperplane", tone: .azure)
+            }
+            .buttonStyle(.plain)
+            .disabled(morning.working)
+            .accessibilityIdentifier("settingsMorningSummaryTest")
+        }
+    }
+
+    /// Which pace alerts are on, in a few words.
+    private var paceDetail: String {
+        guard morning.available else { return "What's running ahead this month" }
+        let on = [(PaceAlert.Kind.everyday, "everyday"), (.category, "targets"), (.merchant, "caps")].filter { morning.wantsPace($0.0) }.map(\.1)
+        guard !on.isEmpty else { return "Off" }
+        return "On for " + ListFormatter.localizedString(byJoining: on)
     }
 
     /// The summary's time as a date today, for the picker; setting it tells the server.
