@@ -125,7 +125,7 @@ struct CategoriesView: View {
                         DSListValue("\(target.shortString) a month")
                     }
                     Image(systemName: "chevron.right")
-                        .font(.system(size: 13, weight: .semibold))
+                        .font(.system(size: DSIconSize.xs, weight: .semibold))
                         .foregroundStyle(Color.ds.inkTertiary)
                         .accessibilityHidden(true)
                 }
@@ -281,18 +281,17 @@ struct CategoryEditorSheet: View {
         HStack(spacing: DSSpace.md) {
             DSGlyph(systemImage: symbol, tone: tone, size: 56)
             VStack(alignment: .leading, spacing: 2) {
-                Text("Name").dsFont(.caption).foregroundStyle(Color.ds.inkSecondary)
                 if isSystem {
+                    Text("Name").dsFont(.label).foregroundStyle(Color.ds.inkSecondary)
                     Text(name).dsFont(.headline).foregroundStyle(Color.ds.ink)
                     Text("Built in, so its name stays.").dsFont(.caption).foregroundStyle(Color.ds.inkTertiary)
                 } else {
-                    TextField("Name", text: $name, prompt: Text("Pets, Gifts, Kids…"))
-                        .dsFont(.headline)
-                        .foregroundStyle(Color.ds.ink)
-                        .textInputAutocapitalization(.words)
-                        .submitLabel(.done)
-                        .accessibilityIdentifier("categoryName")
-                    DSDivider()
+                    DSField("Name", isEmpty: name.isEmpty, onClear: { name = "" }) {
+                        TextField("Name", text: $name, prompt: Text("Pets, Gifts, Kids…"))
+                            .textInputAutocapitalization(.words)
+                            .submitLabel(.done)
+                            .accessibilityIdentifier("categoryName")
+                    }
                 }
             }
         }
@@ -304,11 +303,8 @@ struct CategoryEditorSheet: View {
         VStack(alignment: .leading, spacing: DSSpace.sm) {
             DSEyebrow("Type")
             if original == nil {
-                Picker("Type", selection: $kind.animation(DSMotion.standard)) {
-                    ForEach(CategoryKind.allCases, id: \.self) { Text($0.label).tag($0) }
-                }
-                .segmentedUnlessLargeText()
-                .accessibilityIdentifier("categoryType")
+                DSSegmented("Type", selection: $kind, options: CategoryKind.allCases) { $0.label }
+                    .accessibilityIdentifier("categoryType")
             } else {
                 Text(isNeither ? "Not spending" : kind.label)
                     .dsFont(.headline)
@@ -334,10 +330,7 @@ struct CategoryEditorSheet: View {
     private var budgetType: some View {
         VStack(alignment: .leading, spacing: DSSpace.sm) {
             DSEyebrow("Budget type")
-            Picker("Budget type", selection: $group) {
-                ForEach(CategoryGroup.allCases, id: \.self) { Text($0.label).tag($0) }
-            }
-            .segmentedUnlessLargeText()
+            DSSegmented("Budget type", selection: $group, options: CategoryGroup.allCases) { $0.label }
             Text(Self.explanation(group))
                 .dsFont(.caption)
                 .foregroundStyle(Color.ds.inkSecondary)
@@ -359,16 +352,10 @@ struct CategoryEditorSheet: View {
     private var icon: some View {
         VStack(alignment: .leading, spacing: DSSpace.sm) {
             DSEyebrow("Icon")
-            HStack(spacing: DSSpace.xs) {
-                Image(systemName: "magnifyingglass").foregroundStyle(Color.ds.inkTertiary).accessibilityHidden(true)
+            DSField(nil, style: .search, isEmpty: symbolQuery.isEmpty, onClear: { symbolQuery = "" }) {
                 TextField("Search icons", text: $symbolQuery, prompt: Text("Search: coffee, pets, gym…"))
-                    .dsFont(.body)
-                    .foregroundStyle(Color.ds.ink)
                     .autocorrectionDisabled()
             }
-            .padding(.horizontal, DSSpace.sm)
-            .frame(minHeight: 44)
-            .background(RoundedRectangle(cornerRadius: DSRadius.control, style: .continuous).fill(Color.ds.surface))
             let found = DSSymbol.search(symbolQuery, in: symbols)
             if found.isEmpty {
                 Text("No icon matches “\(symbolQuery)”.").dsFont(.callout).foregroundStyle(Color.ds.inkSecondary)
@@ -385,7 +372,7 @@ struct CategoryEditorSheet: View {
             if let usage {
                 if usage.rows == 0, usage.rules == 0 {
                     Button("Delete \(category.name)") { confirmsDelete = true }
-                        .buttonStyle(.ds(.secondary, fullWidth: true))
+                        .buttonStyle(.ds(.destructive, fullWidth: true))
                     Text("Nothing is filed under it, so it can simply go.")
                         .dsFont(.caption).foregroundStyle(Color.ds.inkSecondary)
                 } else {
@@ -401,7 +388,7 @@ struct CategoryEditorSheet: View {
                     .fixedSize(horizontal: false, vertical: true)
                 Button("Try again") { Task { await loadUsage() } }
                     .buttonStyle(.ds(.quiet))
-                    .frame(minHeight: 44)
+                    .frame(minHeight: DSSize.hitTarget)
             } else {
                 Text("Counting what's filed under it…").dsFont(.caption).foregroundStyle(Color.ds.inkSecondary)
             }
@@ -411,7 +398,7 @@ struct CategoryEditorSheet: View {
     private var saveBar: some View {
         VStack(spacing: 0) {
             Button(isSaving ? "Saving…" : original == nil ? "Add category" : "Save") { Task { await save() } }
-                .buttonStyle(.ds(.primary, fullWidth: true))
+                .buttonStyle(.ds(.primary, size: .large, fullWidth: true))
                 .disabled(isSaving || !canSave)
                 .accessibilityIdentifier("saveCategory")
         }

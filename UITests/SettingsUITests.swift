@@ -194,7 +194,7 @@ final class SettingsUITests: XCTestCase {
         snapshot("picker-new-category")
         new.tap()
         XCTAssertTrue(app.navigationBars["New category"].waitForExistence(timeout: 5), "the Settings editor, not a second one")
-        XCTAssertTrue(app.segmentedControls["categoryType"].buttons["Money in"].isSelected, "a rule for money coming in starts a money-in category")
+        XCTAssertTrue(app.otherElements["categoryType"].buttons["Money in"].isSelected, "a rule for money coming in starts a money-in category")
         app.navigationBars["New category"].buttons["Cancel"].tap()
         XCTAssertTrue(app.navigationBars["File it under"].waitForExistence(timeout: 5), "cancelling goes back to the picker")
         app.navigationBars["File it under"].buttons["Cancel"].tap()
@@ -205,7 +205,7 @@ final class SettingsUITests: XCTestCase {
         new.tap()
         let name = app.textFields["categoryName"]
         XCTAssertTrue(name.waitForExistence(timeout: 5))
-        XCTAssertTrue(app.segmentedControls["categoryType"].buttons["Spending"].isSelected)
+        XCTAssertTrue(app.otherElements["categoryType"].buttons["Spending"].isSelected)
         name.tap()
         name.typeText("Pottery test")
         snapshot("picker-new-category-editor")

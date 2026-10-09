@@ -28,14 +28,13 @@ struct RenameMerchantSheet: View {
         NavigationStack {
             List {
                 DSListSection("Merchant", footer: merchantFooter) {
-                    TextField("Name", text: $name)
-                        .dsFont(.body)
-                        .foregroundStyle(Color.ds.ink)
-                        .textInputAutocapitalization(.words)
-                        .submitLabel(.done)
-                        .focused($focused)
-                        .frame(minHeight: 52)
-                        .accessibilityIdentifier("merchantName")
+                    DSField(nil, style: .inline, isFocused: focused) {
+                        TextField("Name", text: $name)
+                            .textInputAutocapitalization(.words)
+                            .submitLabel(.done)
+                            .focused($focused)
+                            .accessibilityIdentifier("merchantName")
+                    }
                 }
                 if !isGeneric {
                     DSListSection(footer: "Every “\(transaction.rawDescription)” transaction, and new ones as they arrive.") {
@@ -84,18 +83,18 @@ struct NoteSheet: View {
         NavigationStack {
             List {
                 DSListSection(footer: "Only you see notes. Search finds them.") {
-                    TextField("What was this for?", text: $text, axis: .vertical)
-                        .lineLimit(3...8)
-                        .dsFont(.body)
-                        .foregroundStyle(Color.ds.ink)
-                        .focused($focused)
-                        .padding(.vertical, DSSpace.sm)
-                        .accessibilityIdentifier("noteField")
+                    DSField(nil, style: .inline, isFocused: focused) {
+                        TextField("What was this for?", text: $text, axis: .vertical)
+                            .lineLimit(3...8)
+                            .focused($focused)
+                            .padding(.vertical, DSSpace.xxs)
+                            .accessibilityIdentifier("noteField")
+                    }
                 }
                 if !initial.isEmpty {
                     DSListSection {
                         Button("Remove note", role: .destructive) { save("") }
-                            .frame(minHeight: 52)
+                            .frame(minHeight: DSSize.listRow)
                     }
                 }
             }

@@ -117,24 +117,6 @@ struct LedgerRow: View {
     }
 }
 
-/// A segmented picker at ordinary sizes; a menu at accessibility sizes, where segment labels don't scale and would stay
-/// tiny beside everything else (the labels around it carry the meaning).
-private struct SegmentedUnlessLargeText: ViewModifier {
-    @Environment(\.dynamicTypeSize) private var dynamicTypeSize
-
-    func body(content: Content) -> some View {
-        if dynamicTypeSize.isAccessibilitySize {
-            content.pickerStyle(.menu).tint(Color.ds.ink)
-        } else {
-            content.pickerStyle(.segmented)
-        }
-    }
-}
-
-extension View {
-    func segmentedUnlessLargeText() -> some View { modifier(SegmentedUnlessLargeText()) }
-}
-
 struct LoadingPlaceholder: View {
     var text = "Reading the ledger…"
     var body: some View {

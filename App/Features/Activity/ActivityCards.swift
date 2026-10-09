@@ -114,10 +114,10 @@ struct ActivitySummaryCard: View {
                         withAnimation(DSMotion.standard) { isCollapsed.toggle() }
                     } label: {
                         Image(systemName: "chevron.up")
-                            .font(.system(size: 14, weight: .semibold))
+                            .font(.system(size: DSIconSize.sm, weight: .semibold))
                             .foregroundStyle(Color.ds.inkSecondary)
                             .rotationEffect(.degrees(isCollapsed ? 180 : 0))
-                            .frame(width: 44, height: 44)
+                            .frame(width: DSSize.hitTarget, height: DSSize.hitTarget)
                             .contentShape(Rectangle())
                     }
                     .buttonStyle(.plain)

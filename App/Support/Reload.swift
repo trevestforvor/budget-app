@@ -42,7 +42,7 @@ struct ReloadControl: ViewModifier {
                         .foregroundStyle(note.failed ? Color.ds.caution : Color.ds.inkSoft)
                         .padding(.horizontal, 12)
                         .padding(.vertical, 7)
-                        .background(.regularMaterial, in: Capsule())
+                        .glassEffect(.regular, in: .capsule)
                         .padding(.top, 6)
                         .transition(.move(edge: .top).combined(with: .opacity))
                         .accessibilityElement(children: .combine)

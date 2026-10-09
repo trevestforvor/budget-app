@@ -111,7 +111,7 @@ function institutionCard(g, view) {
   const act = g.state.tone === "act";
   const head = h("div", { class: "inst-head" }, glyph(g.name),
     h("div", { class: "grow" }, h("h2", { class: "t-headline", id }, g.name), statusLine(g.state)),
-    g.kind === "linked" && !act ? button("Sync now", { compact: true, class: "btn secondary compact hide-phone", dataset: { sync: g.key }, "aria-label": `Sync ${g.name} now`,
+    g.kind === "linked" && !act ? button("Sync now", { compact: true, class: "btn tinted compact hide-phone", dataset: { sync: g.key }, "aria-label": `Sync ${g.name} now`,
       onclick: (e) => syncInstitution(g, e.currentTarget) }) : null,
     g.kind === "statements" ? h("a", { class: "btn secondary compact", href: `#/imports?account=${encodeURIComponent(g.accounts[0].id)}`, "aria-label": `Import a statement for ${g.name}` }, "Import") : null,
     // Accounts whose connection is gone keep their history; they can be linked again or kept current with statements.

@@ -96,7 +96,7 @@ struct CategoryPickerView: View {
                 HStack(spacing: DSSpace.xs) {
                     if let trailing { DSListValue(trailing) }
                     Image(systemName: "checkmark")
-                        .font(.system(size: 15, weight: .semibold))
+                        .font(.system(size: DSIconSize.sm, weight: .semibold))
                         .foregroundStyle(Color.ds.accent)
                         .opacity(isSelected ? 1 : 0)
                         .accessibilityHidden(true)

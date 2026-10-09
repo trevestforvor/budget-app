@@ -23,12 +23,11 @@ struct TargetEditorSheet: View {
                         Text(category.name).dsFont(.display).foregroundStyle(Color.ds.ink)
                             .fixedSize(horizontal: false, vertical: true)
                     }
-                    TextField("Amount", value: $amount, format: .currency(code: "USD").precision(.fractionLength(0...2)))
-                        .keyboardType(.decimalPad)
-                        .dsFont(.amountXL)
-                        .foregroundStyle(Color.ds.ink)
-                        .overlay(alignment: .bottom) { DSDivider() }
-                        .accessibilityLabel("Monthly target for \(category.name)")
+                    DSAmountField(currencySymbol: nil, alignment: .leading) {
+                        TextField("Amount", value: $amount, format: .currency(code: "USD").precision(.fractionLength(0...2)))
+                            .keyboardType(.decimalPad)
+                            .accessibilityLabel("Monthly target for \(category.name)")
+                    }
                     Text("Targets are flexible: going over is flagged, never blocked.")
                         .dsFont(.caption).foregroundStyle(Color.ds.inkSecondary)
                         .fixedSize(horizontal: false, vertical: true)
@@ -54,7 +53,7 @@ struct TargetEditorSheet: View {
                 Text(errorMessage).dsFont(.callout).foregroundStyle(Color.ds.caution).fixedSize(horizontal: false, vertical: true)
             }
             Button(isSaving ? "Saving…" : "Save target") { Task { await run(.setCategoryTarget(SetCategoryTarget(categoryID: category.id, monthlyAmount: DecimalAmount(Money(amount))))) } }
-                .buttonStyle(.ds(.primary, fullWidth: true))
+                .buttonStyle(.ds(.primary, size: .large, fullWidth: true))
                 .disabled(isSaving || amount <= 0)
             if current != nil {
                 Button("Remove target") { Task { await run(.removeCategoryTarget(RemoveCategoryTarget(categoryID: category.id))) } }

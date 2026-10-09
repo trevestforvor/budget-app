@@ -68,7 +68,7 @@ struct PrivacyView: View {
                         Label(clearedCopy ? "Offline copy cleared" : "Clear offline copy", systemImage: clearedCopy ? "checkmark" : "trash")
                             .dsFont(.body)
                             .foregroundStyle(clearedCopy ? Color.ds.inkSecondary : Color.ds.accent)
-                            .frame(maxWidth: .infinity, minHeight: 52, alignment: .leading)
+                            .frame(maxWidth: .infinity, minHeight: DSSize.listRow, alignment: .leading)
                             .contentShape(Rectangle())
                     }
                     .buttonStyle(.plain)

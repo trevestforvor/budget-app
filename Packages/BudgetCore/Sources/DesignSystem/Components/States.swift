@@ -41,7 +41,8 @@ public struct DSStateView: View {
 }
 
 /// Something that needs the person — a connection to sign in again, an offline copy, two rules
-/// that disagree. A tinted edge and icon (caution by default) and one full-width secondary action.
+/// that disagree. A lit card washed in the tint (caution washes down from the top edge; any other
+/// tint blooms from the corner), a tinted icon, and one full-width secondary action.
 public struct DSNoticeCard: View {
     private let title: String
     private let message: String
@@ -86,17 +87,7 @@ public struct DSNoticeCard: View {
         }
         .padding(DSSpace.md + 2)
         .frame(maxWidth: .infinity, alignment: .leading)
-        .background {
-            RoundedRectangle(cornerRadius: DSRadius.card, style: .continuous)
-                .fill(Color.ds.surface)
-                .overlay {
-                    RoundedRectangle(cornerRadius: DSRadius.card, style: .continuous).fill(tint.opacity(0.06))
-                }
-        }
-        .overlay {
-            RoundedRectangle(cornerRadius: DSRadius.card, style: .continuous)
-                .strokeBorder(tint.opacity(0.4), lineWidth: 1)
-        }
+        .dsPanel(wash: tint == Color.ds.caution ? .caution : .tint(tint, intensity: 0.14))
     }
 }
 

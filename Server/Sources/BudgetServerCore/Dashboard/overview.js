@@ -119,7 +119,7 @@ function connectionsCard() {
     h("div", { class: "tiles" }, groups.map((g) => h("a", { class: "tile", href: `#/accounts?bank=${encodeURIComponent(g.key)}` },
       glyph(g.name), h("div", { class: "grow" }, h("div", { class: "name" }, g.name), tileStatus(g))))),
     h("div", { class: "card-foot" },
-      links.length ? button("Sync everything now", { compact: true, onclick: (e) => runSync(e.currentTarget) }) : h("a", { class: "btn secondary compact", href: "#/accounts?connect=1" }, "Connect a bank"),
+      links.length ? button("Sync everything now", { kind: "tinted", compact: true, onclick: (e) => runSync(e.currentTarget) }) : h("a", { class: "btn secondary compact", href: "#/accounts?connect=1" }, "Connect a bank"),
       h("span", { class: "t-caption faint" }, links.length ? `Syncs every ${hours === 1 ? "hour" : `${hours} hours`} on its own.` : "Linked banks stay current on their own.")));
 }
 
@@ -166,8 +166,8 @@ function categoriesCard() {
     h("h2", { class: "t-eyebrow card-title", id: "cat-title" }, "How transactions got their category"),
     total ? [
       h("div", { class: "bar", role: "img", "aria-label": tiers.map(([k, label]) => `${tierName(k, label)} ${count(st.byTier[k])}`).join(", ") },
-        tiers.map(([k, , c]) => h("span", { class: `c-${c}`, css: { "--w": `${(100 * st.byTier[k]) / total}%` } }))),
-      h("div", { class: "legend" }, tiers.map(([k, label, c]) => h("div", {}, h("span", { class: `sw c-${c}` }), tierName(k, label), h("b", {}, count(st.byTier[k]))))),
+        tiers.map(([k, , c]) => h("span", { class: `tone-${c}`, css: { "--w": `${(100 * st.byTier[k]) / total}%` } }))),
+      h("div", { class: "legend" }, tiers.map(([k, label, c]) => h("div", {}, h("span", { class: `sw tone-${c}` }), tierName(k, label), h("b", {}, count(st.byTier[k]))))),
     ] : h("p", { class: "empty-line" }, "No transactions yet."),
     h("dl", { class: "kv" },
       h("dt", {}, "Decision model"), h("dd", {}, p.provider === "off" ? tag("Off") : tag(providerName(p.provider), "info")),
@@ -187,7 +187,7 @@ export default {
     const today = new Date().toLocaleDateString("en-US", { weekday: "long", month: "long", day: "numeric" });
     const n = items.length;
     fill(this.root, 
-      pageHead({ eyebrow: today, title: n ? `${spell(n)} thing${n === 1 ? " needs" : "s need"} you.` : "Everything's up to date.",
+      pageHead({ eyebrow: today, bloom: "data", title: n ? `${spell(n)} thing${n === 1 ? " needs" : "s need"} you.` : "Everything's up to date.",
         sub: n ? "The budget itself lives on your phone." : "Syncs, imports and categories are current. The budget itself lives on your phone." }),
       h("section", { class: "card attention", "aria-labelledby": "att-title" },
         h("h2", { class: "t-eyebrow card-title", id: "att-title" }, "Needs attention"),

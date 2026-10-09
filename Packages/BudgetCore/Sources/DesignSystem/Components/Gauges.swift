@@ -210,7 +210,8 @@ public struct DSArcGauge<Center: View>: View {
         ZStack {
             Group {
                 arc(to: 1).stroke(Color.ds.hairlineStrong, style: style)
-                arc(to: filled).stroke(isOver ? Color.ds.caution : tint, style: style)
+                // The fill gathers strength along the arc (G11), as the progress bar does.
+                arc(to: filled).stroke(isOver ? AnyShapeStyle(Color.ds.caution) : AnyShapeStyle(arcFill), style: style)
             }
             .animation(DSMotion.gentle, value: filled)
             .accessibilityElement()
@@ -223,6 +224,12 @@ public struct DSArcGauge<Center: View>: View {
             if isOver { DSTag.over() }
         }
         .aspectRatio(1, contentMode: .fit)
+    }
+
+    /// Tint at 85% at the start of the arc to full at its end, turned to match where the arc begins.
+    private var arcFill: AngularGradient {
+        AngularGradient(stops: [.init(color: tint.opacity(0.85), location: 0), .init(color: tint, location: Self.sweep)],
+                        center: .center, angle: .degrees(135))
     }
 
     private func arc(to share: Double) -> some Shape {

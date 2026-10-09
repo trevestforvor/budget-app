@@ -69,7 +69,7 @@ function renderRecheck(panel) {
       h("p", { class: "t-callout muted" }, waiting
         ? `Runs the current settings over the ${plural(waiting, "transaction")} waiting, one question per merchant. Anything it's sure about is filed; the rest keeps waiting for you.`
         : "Nothing is waiting for a category right now."),
-      h("div", { class: "actions" }, button("Re-check now", { compact: true, disabled: off || !waiting, onclick: (e) => busy(e.currentTarget, "Re-checking…", async () => {
+      h("div", { class: "actions" }, button("Re-check now", { kind: "ai", compact: true, disabled: off || !waiting, onclick: (e) => busy(e.currentTarget, "Re-checking…", async () => {
         const r = await api("/v1/actions", { method: "POST", body: { type: "updateDecisionPolicy", rerunPending: true } });
         toast(r.message || "Re-checked");
         await afterWrite();
@@ -86,7 +86,7 @@ async function previewMoves(target) {
       h("div", { class: "grow" }, h("div", { class: "title" }, m.merchant),
         h("div", { class: "sub" }, categoryTag(m.from), " → ", categoryTag(m.to), ` · ${plural(m.transactions, "transaction")}`)),
       m.confidence != null ? tag(`${Math.round(m.confidence * 100)}% sure`, "info") : null))),
-    h("div", { class: "card-foot" }, button(`Move ${plural(r.movedMerchants, "merchant")}`, { kind: "accent", onclick: (e) => armed(e.currentTarget, "Click again to move them", async () => {
+    h("div", { class: "card-foot" }, button(`Move ${plural(r.movedMerchants, "merchant")}`, { kind: "tinted", onclick: (e) => armed(e.currentTarget, "Click again to move them", async () => {
       try {
         const done = await api("/dash/recheck-filed", { method: "POST", body: { apply: true } });
         toast(done.message || "Moved");

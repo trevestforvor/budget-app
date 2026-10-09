@@ -144,7 +144,7 @@ private struct RuleRow: View {
                 .fixedSize(horizontal: false, vertical: true)
             HStack(spacing: DSSpace.xs) {
                 Image(systemName: "arrow.turn.down.right")
-                    .font(.system(size: 12, weight: .semibold))
+                    .font(.system(size: DSIconSize.xs, weight: .semibold))
                     .foregroundStyle(Color.ds.inkTertiary)
                 DSGlyph(systemImage: category?.symbol ?? "questionmark", tone: CategoryStyle.tone(for: category), size: 22,
                         emphasis: summary.rule.isEnabled && !summary.isDead ? .normal : .muted)
@@ -162,7 +162,7 @@ private struct RuleRow: View {
             }
         }
         .padding(.vertical, DSSpace.sm)
-        .frame(maxWidth: .infinity, minHeight: 52, alignment: .leading)
+        .frame(maxWidth: .infinity, minHeight: DSSize.listRow, alignment: .leading)
         .contentShape(Rectangle())
         .accessibilityElement(children: .combine)
         .accessibilityHint("Edit")
@@ -193,6 +193,8 @@ struct RuleEditorSheet: View {
 
     let subject: Subject
 
+    private enum RangeEnd: Hashable { case min, max }
+
     @Environment(AppModel.self) private var app
     @Environment(\.dismiss) private var dismiss
     @State private var descriptor = ""
@@ -200,6 +202,8 @@ struct RuleEditorSheet: View {
     @State private var direction: TransactionFilter.Direction?
     @State private var minText = ""
     @State private var maxText = ""
+    /// Which end of the amount range is being typed, so the row shows one focus bar for both.
+    @FocusState private var rangeFocus: RangeEnd?
     @State private var accountID: String?
     @State private var categoryID: String?
     @State private var isEnabled = true
@@ -277,34 +281,34 @@ struct RuleEditorSheet: View {
     private var conditions: some View {
         DSListSection("When a transaction matches",
                       footer: "Capitals, spaces, punctuation and numbers are ignored, so “Google Fi” also catches “GOOGLE*FI 4DFLFD”. Fill in only what you need; everything you fill in has to match.") {
-            SettingsField("Bank description contains") {
+            DSField("Bank description contains", style: .inline, isCode: true) {
                 TextField("Bank description contains", text: $descriptor, prompt: Text("PAYROLL, UBER, WITHDRAWAL…"))
-                    .dsFont(.mono)
                     .textInputAutocapitalization(.characters)
-                    .autocorrectionDisabled()
                     .accessibilityIdentifier("ruleDescriptor")
             }
-            SettingsField("Merchant name contains") {
+            DSField("Merchant name contains", style: .inline) {
                 TextField("Merchant name contains", text: $merchant, prompt: Text("Any merchant"))
                     .autocorrectionDisabled()
                     .accessibilityIdentifier("ruleMerchant")
             }
-            SettingsField("Money") {
-                Picker("Money", selection: $direction) {
-                    Text("Either way").tag(TransactionFilter.Direction?.none)
-                    Text("Going out").tag(TransactionFilter.Direction?.some(.moneyOut))
-                    Text("Coming in").tag(TransactionFilter.Direction?.some(.moneyIn))
-                }
-                .segmentedUnlessLargeText()
-                .padding(.vertical, DSSpace.xxs)
+            VStack(alignment: .leading, spacing: DSSpace.xxs) {
+                Text("Money").dsFont(.label).foregroundStyle(Color.ds.inkSecondary).accessibilityHidden(true)
+                DSSegmented("Money", selection: $direction, options: [
+                    (value: TransactionFilter.Direction?.none, title: "Either way"),
+                    (value: .some(.moneyOut), title: "Going out"),
+                    (value: .some(.moneyIn), title: "Coming in"),
+                ])
             }
-            SettingsField("Amount") {
+            .padding(.vertical, DSSpace.xs)
+            DSField("Amount", style: .inline, isFocused: rangeFocus != nil) {
                 HStack(spacing: DSSpace.sm) {
                     TextField("At least", text: $minText, prompt: Text("At least $"))
                         .keyboardType(.decimalPad)
+                        .focused($rangeFocus, equals: .min)
                     Text("to").foregroundStyle(Color.ds.inkTertiary)
                     TextField("At most", text: $maxText, prompt: Text("At most $"))
                         .keyboardType(.decimalPad)
+                        .focused($rangeFocus, equals: .max)
                 }
             }
             DSListRow("Account") {
@@ -325,7 +329,7 @@ struct RuleEditorSheet: View {
                 DSListRow(category?.name ?? "Choose a category", systemImage: category?.symbol ?? "square.grid.2x2",
                           tone: category.map { CategoryStyle.tone(for: $0) } ?? .irisDeep) {
                     Image(systemName: "chevron.right")
-                        .font(.system(size: 13, weight: .semibold))
+                        .font(.system(size: DSIconSize.xs, weight: .semibold))
                         .foregroundStyle(Color.ds.inkTertiary)
                 }
             }
@@ -378,7 +382,7 @@ struct RuleEditorSheet: View {
                 Text(problem).dsFont(.callout).foregroundStyle(Color.ds.caution).fixedSize(horizontal: false, vertical: true)
             }
             Button(isSaving ? "Saving…" : "Save rule") { Task { await save() } }
-                .buttonStyle(.ds(.primary, fullWidth: true))
+                .buttonStyle(.ds(.primary, size: .large, fullWidth: true))
                 // A preview the server couldn't make (an older server, a rule it refuses) means Save would fail or
                 // save something else; it waits for a good one.
                 .disabled(isSaving || action == nil || previewProblem != nil)

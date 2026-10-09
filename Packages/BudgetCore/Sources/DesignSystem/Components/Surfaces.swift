@@ -1,16 +1,24 @@
 import SwiftUI
 
-/// The workhorse container: a charcoal panel over the canvas with a barely-there border.
+/// The workhorse container: a charcoal panel lit along its top edge, with no shadow. Give it a
+/// `tone` and that tone blooms from the top-leading corner; give it a `wash` for caution or the
+/// assistant's light.
 public struct DSCard<Content: View>: View {
-    public enum Elevation: Sendable { case flat, raised }
+    public typealias Elevation = DSElevation
 
     private let padding: CGFloat
     private let elevation: Elevation
+    private let wash: DSCardWash?
     private let content: Content
 
-    public init(padding: CGFloat = DSSpace.lg, elevation: Elevation = .flat, @ViewBuilder content: () -> Content) {
+    public init(padding: CGFloat = DSSpace.lg, elevation: Elevation = .flat, tone: DSTone? = nil, @ViewBuilder content: () -> Content) {
+        self.init(padding: padding, elevation: elevation, wash: tone.map { .tone($0) }, content: content)
+    }
+
+    public init(padding: CGFloat = DSSpace.lg, elevation: Elevation = .flat, wash: DSCardWash?, @ViewBuilder content: () -> Content) {
         self.padding = padding
         self.elevation = elevation
+        self.wash = wash
         self.content = content()
     }
 
@@ -18,14 +26,38 @@ public struct DSCard<Content: View>: View {
         content
             .padding(padding)
             .frame(maxWidth: .infinity, alignment: .leading)
-            .background {
-                RoundedRectangle(cornerRadius: DSRadius.card, style: .continuous)
-                    .fill(elevation == .flat ? Color.ds.surface : Color.ds.surfaceRaised)
+            .dsPanel(elevation, wash: wash)
+    }
+}
+
+/// A card's optional header: an eyebrow, an optional chevron when the card opens something, and a
+/// divider beneath. Place it first in a `DSCard`'s content.
+public struct DSCardHeader: View {
+    private let title: String
+    private let showsChevron: Bool
+
+    public init(_ title: String, showsChevron: Bool = false) {
+        self.title = title
+        self.showsChevron = showsChevron
+    }
+
+    public var body: some View {
+        VStack(spacing: 0) {
+            HStack {
+                DSEyebrow(title)
+                Spacer(minLength: DSSpace.xs)
+                if showsChevron {
+                    Image(systemName: "chevron.right")
+                        .font(.system(size: DSIconSize.xs, weight: .semibold))
+                        .foregroundStyle(Color.ds.inkTertiary)
+                        .accessibilityHidden(true)
+                }
             }
-            .overlay {
-                RoundedRectangle(cornerRadius: DSRadius.card, style: .continuous)
-                    .strokeBorder(Color.ds.hairline, lineWidth: 1)
-            }
+            .frame(minHeight: DSSize.hitTarget)
+            DSDivider()
+        }
+        .accessibilityElement(children: .combine)
+        .accessibilityAddTraits(.isHeader)
     }
 }
 
@@ -78,16 +110,16 @@ public struct DSSectionHeader: View {
     }
 }
 
-/// A thin divider matching card hairlines.
+/// A thin divider between rows inside a card, quieter than the card's own edge.
 public struct DSDivider: View {
     public init() {}
     public var body: some View {
-        Rectangle().fill(Color.ds.hairline).frame(height: 1).accessibilityHidden(true)
+        Rectangle().fill(Color.ds.divider).frame(height: 1).accessibilityHidden(true)
     }
 }
 
 extension View {
-    /// Full-bleed design-system canvas behind a screen.
+    /// Full-bleed design-system canvas behind a screen. `dsScreenBackground(bloom:)` adds a bloom.
     public func dsScreenBackground() -> some View {
         background(Color.ds.canvas.ignoresSafeArea())
     }

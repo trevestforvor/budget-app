@@ -1,6 +1,11 @@
 import SwiftUI
 
+/// The ask field and the bubbles keep a 16pt corner: softer than a control, tighter than a card.
+private let conversationRadius: CGFloat = 16
+
 /// The ask field. Iris sparkle marks it as the AI surface; the send control is the one white button.
+/// A raised, lit panel at radius 16; focus rings it in iris, and while the model works the
+/// assistant's edge breathes around it.
 public struct DSAskField: View {
     @Binding private var text: String
     private let placeholder: String
@@ -33,6 +38,7 @@ public struct DSAskField: View {
             TextField(placeholder, text: $text, axis: .vertical)
                 .dsFont(.body)
                 .foregroundStyle(Color.ds.ink)
+                .tint(Color.ds.iris)
                 .lineLimit(1...4)
                 .focused($isFocused)
                 .submitLabel(.send)
@@ -47,27 +53,38 @@ public struct DSAskField: View {
                         Image(systemName: "arrow.up").font(.system(size: 15, weight: .semibold))
                     }
                 }
-                .foregroundStyle(Color.ds.inkInverse)
+                // Nothing to send: the circle drops to a quiet key with disabled ink, rather than fading.
+                .foregroundStyle(canSubmit || isBusy ? Color.ds.inkInverse : Color.ds.inkDisabled)
                 .frame(width: 34, height: 34)
-                .background(Circle().fill(Color.ds.ink))
-                .frame(width: 44, height: 44)
+                .background(Circle().fill(canSubmit || isBusy ? Color.ds.ink : Color.white.opacity(0.06)))
+                .frame(width: DSSize.hitTarget, height: DSSize.hitTarget)
                 .contentShape(Circle())
             }
             .buttonStyle(.plain)
             .disabled(!canSubmit)
-            .opacity(canSubmit || isBusy ? 1 : 0.35)
             .accessibilityLabel(isBusy ? "Working" : "Send")
         }
         .padding(.leading, DSSpace.md)
         .padding(.trailing, DSSpace.xxs)
         .padding(.vertical, 2)
-        .background {
-            RoundedRectangle(cornerRadius: DSRadius.card, style: .continuous).fill(Color.ds.surfaceRaised)
-        }
+        .background { DSPanelBackground(.raised, radius: conversationRadius) }
         .overlay {
-            RoundedRectangle(cornerRadius: DSRadius.card, style: .continuous)
-                .strokeBorder(isFocused ? Color.ds.iris.opacity(0.6) : Color.ds.hairlineStrong, lineWidth: 1)
+            let shape = RoundedRectangle(cornerRadius: conversationRadius, style: .continuous)
+            if isBusy {
+                // The model is working: the assistant's edge, breathing.
+                Color.clear.dsAIEdge(radius: conversationRadius, isWorking: true)
+            } else if isFocused {
+                shape.strokeBorder(Color.ds.iris, lineWidth: DSState.focusRingWidth)
+                    .background {
+                        RoundedRectangle(cornerRadius: conversationRadius + DSState.focusHaloWidth, style: .continuous)
+                            .strokeBorder(DSState.focusHaloAI, lineWidth: DSState.focusHaloWidth)
+                            .padding(-DSState.focusHaloWidth)
+                    }
+            } else {
+                Color.clear.dsLitEdge(radius: conversationRadius)
+            }
         }
+        .animation(DSMotion.focus, value: isFocused)
     }
 }
 
@@ -85,9 +102,7 @@ public struct DSUserBubble: View {
                 .foregroundStyle(Color.ds.ink)
                 .padding(.horizontal, DSSpace.md)
                 .padding(.vertical, DSSpace.sm)
-                .background {
-                    RoundedRectangle(cornerRadius: DSRadius.card, style: .continuous).fill(Color.ds.surfaceRaised)
-                }
+                .background { DSPanelBackground(.raised, radius: conversationRadius) }
         }
     }
 }

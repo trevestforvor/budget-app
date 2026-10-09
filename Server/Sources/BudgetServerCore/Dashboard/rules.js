@@ -123,7 +123,7 @@ export function openRule({ summary = null, prefill = {}, onSaved } = {}) {
     freshPanel.hidden = !makingNew();
   };
   fillTargets();
-  const enabled = h("input", { type: "checkbox", checked: rule ? rule.isEnabled : true });
+  const enabled = h("input", { type: "checkbox", class: "switch", checked: rule ? rule.isEnabled : true });
   const existing = h("input", { type: "checkbox", checked: !rule });
   const preview = h("div", { class: "rule-preview", "aria-live": "polite" });
   const flash = h("div", { class: "flash" });

@@ -141,7 +141,7 @@ function historyRow(record) {
   const undo = record.rolledBack ? tag("Undone") : button("Undo", { compact: true, "aria-label": `Undo ${record.label}`,
     onclick: (e) => armed(e.currentTarget, r.rowsAdded ? `Click again to remove ${plural(r.rowsAdded, "row")}` : "Click again to undo", () => undoImport(record)) });
   return h("div", { class: `row${record.rolledBack ? " dim" : ""}` },
-    h("span", { class: `glyph ${sync ? "cyan" : "neutral"}` }, icon(sync ? "sync" : "file"), h("span", { class: "sr-only" }, sync ? "Sync" : "File import")),
+    h("span", { class: `glyph ${sync ? "tone-cyan" : "neutral"}` }, icon(sync ? "sync" : "file"), h("span", { class: "sr-only" }, sync ? "Sync" : "File import")),
     h("div", { class: "grow" }, h("div", { class: "title wrap" }, record.label), h("div", { class: "sub wrap" }, summary),
       (r.warnings || []).map((w) => h("div", { class: "warn-line" }, h("span", { class: "dot watch", "aria-hidden": "true" }), h("span", {}, "Warning: ", w))),
       details("Details", how)),

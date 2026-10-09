@@ -36,7 +36,8 @@ struct HomeView: View {
                 .padding(.horizontal, DSSpace.gutter)
                 .padding(.bottom, DSSpace.xxl)
             }
-            .dsScreenBackground()
+            .scrollEdgeEffectStyle(.soft, for: .top)
+            .dsScreenBackground(bloom: .data)
             .reloadable(button: false) { await load() }
             .toolbarVisibility(.hidden, for: .navigationBar)
             .transactionDetailSheet(item: $detail)
@@ -82,9 +83,9 @@ struct HomeView: View {
                     app.showsSettings = true
                 } label: {
                     Image(systemName: "gearshape")
-                        .font(.system(size: 17, weight: .regular))
+                        .font(.system(size: DSIconSize.md, weight: .regular))
                         .foregroundStyle(Color.ds.inkSecondary)
-                        .frame(width: 44, height: 44)
+                        .frame(width: DSSize.hitTarget, height: DSSize.hitTarget)
                 }
                 .accessibilityLabel("Settings")
             }

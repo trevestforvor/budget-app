@@ -26,7 +26,7 @@ public struct DSSwatchGrid: View {
 
     private func swatch(_ tone: DSTone) -> some View {
         let isSelected = tone == selection
-        let shape = RoundedRectangle(cornerRadius: DSRadius.control + 2, style: .continuous)
+        let shape = RoundedRectangle(cornerRadius: DSRadius.glyph, style: .continuous)
         return Button {
             selection = tone
         } label: {
@@ -43,14 +43,14 @@ public struct DSSwatchGrid: View {
                     }
                     .padding(3)
                     .overlay {
-                        RoundedRectangle(cornerRadius: DSRadius.control + 5, style: .continuous)
+                        RoundedRectangle(cornerRadius: DSRadius.ring, style: .continuous)
                             .strokeBorder(isSelected ? Color.ds.ink : Color.clear, lineWidth: 2)
                     }
                 Circle()
                     .fill(inUse.contains(tone) ? Color.ds.inkTertiary : Color.clear)
                     .frame(width: 4, height: 4)
             }
-            .frame(minWidth: 44, minHeight: 44)
+            .frame(minWidth: DSSize.hitTarget, minHeight: DSSize.hitTarget)
             .contentShape(Rectangle())
         }
         .buttonStyle(.plain)
@@ -163,7 +163,7 @@ public struct DSSymbolGrid: View {
     }
 
     public var body: some View {
-        LazyVGrid(columns: [GridItem(.adaptive(minimum: max(side, 44), maximum: max(side, 44) + 20), spacing: DSSpace.xs)],
+        LazyVGrid(columns: [GridItem(.adaptive(minimum: max(side, DSSize.hitTarget), maximum: max(side, DSSize.hitTarget) + 20), spacing: DSSpace.xs)],
                   spacing: DSSpace.xs) {
             ForEach(symbols) { symbol in
                 cell(symbol)
@@ -176,12 +176,12 @@ public struct DSSymbolGrid: View {
         return Button {
             selection = symbol.systemName
         } label: {
-            RoundedRectangle(cornerRadius: DSRadius.control + 2, style: .continuous)
+            RoundedRectangle(cornerRadius: DSRadius.glyph, style: .continuous)
                 .fill(isSelected ? tone.fill : Color.ds.surfaceRaised)
-                .frame(width: max(side, 44), height: max(side, 44))
+                .frame(width: max(side, DSSize.hitTarget), height: max(side, DSSize.hitTarget))
                 .overlay {
                     Image(systemName: symbol.systemName)
-                        .font(.system(size: max(side, 44) * 0.4, weight: .medium))
+                        .font(.system(size: max(side, DSSize.hitTarget) * 0.4, weight: .medium))
                         .foregroundStyle(isSelected ? tone.onFill : Color.ds.inkSecondary)
                 }
                 .contentShape(Rectangle())

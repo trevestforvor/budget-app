@@ -305,7 +305,7 @@ export const isArmed = (root) => !!root.querySelector("[data-armed='1']");
 // MARK: Building blocks (each mirrors a DesignSystem view)
 
 export const dot = (tone) => h("span", { class: `dot ${tone || ""}`, "aria-hidden": "true" });
-/// DSTag: 4 px radius, tinted, mono uppercase.
+/// DSTag: 6 px radius, its tone's 12% wash, mono uppercase.
 export const tag = (label, tone) => h("span", { class: `tag ${tone || ""}` }, label);
 export const srOnly = (t) => h("span", { class: "sr-only" }, t);
 export function button(label, { kind = "secondary", compact = false, onclick, disabled, type = "button", ...rest } = {}) {
@@ -316,8 +316,9 @@ export function sectionHead(title, action, id) {
   return h("div", { class: "section-head" }, h("h2", { class: "t-headline", id }, title), action || null);
 }
 /// The page's title block: eyebrow, display serif, one line under it, and at most one primary action.
-export function pageHead({ eyebrow, title, sub, action }) {
-  return h("header", { class: "page-head" },
+/// `bloom` ("data" or "ai") lights the top of the screen in that colour (G5); one screen, one bloom.
+export function pageHead({ eyebrow, title, sub, action, bloom }) {
+  return h("header", { class: bloom ? `page-head bloom-${bloom}` : "page-head" },
     h("div", { class: "page-head-text" },
       eyebrow ? h("span", { class: "t-eyebrow page-eyebrow" }, eyebrow) : null,
       h("h1", { class: "t-display page-title", tabindex: "-1" }, title),
@@ -363,14 +364,15 @@ export function drawer(title, { onClose } = {}) {
 }
 export function closeDrawer() { if (drawerEl && drawerEl.open) drawerEl.close(); }
 
-const GLYPH_TONES = ["azure", "iris", "lilac", "cyan", "teal", "violet", "amber"];
+/// Every DSTone, in its order (Palette.swift), so the dashboard draws from the same twelve as the phone.
+const GLYPH_TONES = ["iris", "lilac", "orchid", "azure", "cyan", "irisDeep", "amber", "coral", "rose", "teal", "lime", "violet"];
 /// DSGlyph for an institution: initials on a tone wash, the tone fixed by the name so it never changes.
 export function glyph(name) {
   const words = (name || "?").replace(/[^A-Za-z0-9 ]/g, " ").split(/\s+/).filter(Boolean);
   const initials = (words.length > 1 ? words[0][0] + words[1][0] : (words[0] || "?").slice(0, 2)).toUpperCase();
   let hash = 0;
   for (const c of (name || "").toLowerCase()) hash = (hash * 31 + c.charCodeAt(0)) >>> 0;
-  return h("span", { class: `glyph ${GLYPH_TONES[hash % GLYPH_TONES.length]}`, "aria-hidden": "true" }, initials);
+  return h("span", { class: `glyph tone-${GLYPH_TONES[hash % GLYPH_TONES.length]}`, "aria-hidden": "true" }, initials);
 }
 
 // MARK: Data

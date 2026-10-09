@@ -1,64 +1,99 @@
 /* Budget dashboard tokens: a one-to-one mirror of the app's DesignSystem
-   (Packages/BudgetCore/Sources/DesignSystem/Tokens). Views use the semantic names; raw hexes live only here.
-   Dark only, like the app. */
+   (Packages/BudgetCore/Sources/DesignSystem/Tokens), "Lit Charcoal" (docs/DESIGN.md).
+   Views use the semantic names; raw hexes live only here. Dark only, like the app. */
 :root {
   color-scheme: dark;
 
-  /* Surfaces, back to front (DSColors ← Palette) */
-  --canvas-deep: #090A0B;      /* abyss    — input wells, code, drop zone */
-  --canvas: #0F1011;           /* obsidian — page background */
-  --surface: #161718;          /* carbon   — DSCard */
-  --surface-raised: #1F2022;   /* graphite — raised card, menus, hover */
-  --steel: #3F4041;            /* steel    — pressed, empty bar segment */
-  --hairline: rgb(255 255 255 / 0.08);
-  --hairline-strong: rgb(255 255 255 / 0.16);
+  /* Surfaces, back to front (DSColors ← Palette). A cool charcoal ladder; the *-lit stops are the top of each fill. */
+  --canvas-deep: #050607;      /* abyss    — field wells, segmented track, code, drop zone */
+  --canvas: #08090B;           /* obsidian — page background, theme-color */
+  --surface: #121418;          /* carbon   — DSCard, list sections, chips */
+  --surface-lit: #16181D;      /* carbonLit — top stop of the surface fill */
+  --surface-raised: #1B1D22;   /* graphite — raised card, skeletons */
+  --raised-lit: #1F2227;       /* graphiteLit — top stop of the raised fill */
+  --surface-overlay: #24272D;  /* basalt   — toast, menus, popovers, segmented thumb. Never put a field here */
+  --surface-pressed: #2B2E35;  /* slate    — pressed rows and tiles */
+  --steel: #3F4041;            /* steel    — empty bar segment only */
 
-  /* Ink */
+  /* Lines */
+  --divider: rgb(255 255 255 / 0.05);        /* row separators, dividers inside cards */
+  --hairline: rgb(255 255 255 / 0.08);       /* flat outlines, menu outline */
+  --hairline-strong: rgb(255 255 255 / 0.14);/* chip and secondary edges, progress track */
+  --field-border: #6B6E76;                   /* rim — opaque, ≥ 3:1 on every layer a field may sit on */
+
+  /* Ink, all opaque: dim by dropping a tier, never with opacity */
   --ink: #FFFFFF;              /* pure  */
-  --ink-soft: #F5F5F7;         /* cloud */
-  --ink-secondary: #9F9FA0;    /* ash — subtitles, eyebrows */
-  --ink-tertiary: #808182;     /* fog — footnotes (AA on canvas and surface) */
-  --ink-inverse: #000000;      /* on white and cyan fills */
+  --ink-soft: #F2F3F5;         /* cloud */
+  --ink-secondary: #AEB1B8;    /* ash — subtitles, eyebrows, labels */
+  --ink-tertiary: #888B93;     /* fog — footnotes (AA up to surface-raised; never on overlay or pressed) */
+  --ink-disabled: #56595F;     /* dusk — disabled labels only; never carries information */
+  --ink-inverse: #08090B;      /* on white, pearl and cyan fills (= canvas) */
+  --pearl: #E4E7EB;            /* bottom stop of the primary button */
+  --pearl-pressed: #D5D9DF;
 
-  /* Accents (DSTone) — saturated, as shipped */
-  --cyan: #00B3DD;             /* cyanSignal */
+  /* Tones (DSTone): saturated, hexes unchanged */
   --iris: #847DFF;             /* irisGleam */
   --lilac: #D08FFF;
-  --iris-deep: #4B49AA;
   --orchid: #EF72E3;           /* orchidBloom */
   --azure: #5AA0FF;
+  --cyan: #00B3DD;             /* cyanSignal */
+  --iris-deep: #4B49AA;
   --amber: #FFB42E;
-  /* Added with the DS branch (DSTone coral, rose, teal, lime, violet) */
   --coral: #FF7A59;
   --rose: #FF5C8A;
   --teal: #14C7B4;
   --lime: #B8E62E;
   --violet: #9B5CFF;
+  --violet-lit: #AE80FF;       /* violet as text on dark: #9B5CFF fails AA on its own wash */
 
-  /* Semantics. No green and no red: the app avoids them (Palette.swift, "Money signals"). */
+  /* Semantics. No green and no red: the app avoids them (Palette.swift, "Money signals").
+     Cyan is data, iris is the assistant, orchid is caution (always with a word or tag), amber is "watch". */
   --accent: var(--cyan);
   --inflow: var(--cyan);
   --caution: var(--orchid);
+  --caution-fill: #B0309F;         /* deepOrchid — armed destructive, white on it 5.57 */
+  --caution-fill-pressed: #9A2A8B;
   --status-ok: var(--cyan);        /* connected, fine, done */
   --status-watch: var(--amber);    /* stale, warning, retrying */
   --status-act: var(--orchid);     /* needs sign-in, failed, act on it */
   --status-info: var(--iris);      /* the model, set here */
   --status-neutral: var(--ink-secondary);
 
-  /* Washes: 12% = DSTag fill, 16% = DSTone.wash (glyphs), 28% = callout edge */
-  --wash-cyan: rgb(0 179 221 / 0.12);
-  --wash-iris: rgb(132 125 255 / 0.12);
-  --wash-orchid: rgb(239 114 227 / 0.12);
-  --wash-amber: rgb(255 180 46 / 0.12);
-  --wash-azure: rgb(90 160 255 / 0.12);
-  --wash-lilac: rgb(208 143 255 / 0.12);
-  --wash-neutral: rgb(159 159 160 / 0.12);
-  --edge-orchid: rgb(239 114 227 / 0.28);
-  --edge-amber: rgb(255 180 46 / 0.28);
-  --edge-iris: rgb(132 125 255 / 0.28);
-  --edge-cyan: rgb(0 179 221 / 0.28);
+  /* States (DSState) */
+  --state-hover: rgb(255 255 255 / 0.04);
+  --state-pressed: rgb(255 255 255 / 0.08);
+  --state-selected: rgb(255 255 255 / 0.10);  /* with a 2px accent leading bar */
+  --fill-quiet: rgb(255 255 255 / 0.04);      /* disabled fills, empty cells */
+  --fill-control: rgb(255 255 255 / 0.06);    /* secondary and icon buttons */
+  --fill-chip: rgb(255 255 255 / 0.05);
+  --edge-chip: rgb(255 255 255 / 0.10);
+  --fill-control-pressed: rgb(255 255 255 / 0.12);
+  --glass: rgb(255 255 255 / 0.05);           /* the phone chip bar, over a blur */
+  --focus-halo: rgb(0 179 221 / 0.24);
+  --focus-halo-ai: rgb(132 125 255 / 0.24);
+  --well-shadow: inset 0 1px 1px rgb(0 0 0 / 0.45);  /* fields are engraved, not raised */
+  --scrim: rgb(0 0 0 / 0.6);
 
-  /* Type families (DSTextStyle: serif = New York, sans = SF Pro, mono = SF Mono) */
+  /* Light (docs/DESIGN.md G1–G12). One light source above the screen: cards are lit along the top edge and a
+     little brighter at the top. Depth comes from shade, never from shadows; only floating layers cast one. */
+  --lit-edge: linear-gradient(180deg, rgb(255 255 255 / 0.12), rgb(255 255 255 / 0.05) 50%, rgb(255 255 255 / 0.04));  /* G1, as a border-box layer */
+  --lit-inset: inset 0 1px 0 rgb(255 255 255 / 0.07), inset 0 0 0 1px rgb(255 255 255 / 0.05);  /* G1 for translucent fills */
+  --lit-inset-strong: inset 0 1px 0 rgb(255 255 255 / 0.06), inset 0 0 0 1px rgb(255 255 255 / 0.08); /* G1 on the 14% scale */
+  --lit-thumb: inset 0 1px 0 rgb(255 255 255 / 0.12), inset 0 0 0 1px rgb(255 255 255 / 0.04);        /* G1 at 16% → 4%, the segmented key */
+  --fill-surface: linear-gradient(180deg, var(--surface-lit), var(--surface));        /* G2 */
+  --fill-raised: linear-gradient(180deg, var(--raised-lit), var(--surface-raised));   /* G2 */
+  --fill-overlay: linear-gradient(var(--surface-overlay), var(--surface-overlay));    /* a solid fill as a layer */
+  --fill-pearl: linear-gradient(180deg, var(--ink), var(--pearl));                    /* G6, the primary button only */
+  --ai-edge: linear-gradient(135deg, rgb(132 125 255 / 0.9), rgb(155 92 255 / 0.35), rgb(208 143 255 / 0.7)); /* G7: violet family only */
+  --caution-wash: linear-gradient(180deg, color-mix(in srgb, var(--caution) 18%, transparent), transparent 55%); /* G4 */
+  --bloom-data: rgb(0 179 221 / 0.10);  /* G5 screen bloom: cyan on data screens */
+  --bloom-ai: rgb(132 125 255 / 0.14);  /* G5 screen bloom: iris where you ask */
+
+  /* Shadows (DSShadow): floating layers only */
+  --shadow-overlay: 0 12px 32px rgb(0 0 0 / 0.5), 0 1px 2px rgb(0 0 0 / 0.35);
+  --shadow-thumb: 0 1px 3px rgb(0 0 0 / 0.35);
+
+  /* Type families (DSTextStyle: serif = New York, sans = SF Pro, mono = SF Mono). No web fonts. */
   --font-serif: ui-serif, "New York", "Iowan Old Style", Georgia, serif;
   --font-sans: -apple-system, BlinkMacSystemFont, "SF Pro Text", system-ui, "Segoe UI", Roboto, sans-serif;
   --font-mono: ui-monospace, "SF Mono", SFMono-Regular, Menlo, Consolas, monospace;
@@ -68,28 +103,60 @@
   --s-lg: 24px; --s-xl: 32px; --s-xxl: 48px; --s-xxxl: 64px;
   --gutter: 20px;              /* phone gutter (DSSpace.gutter) */
 
-  /* Radius (DSRadius) */
-  --r-tag: 4px; --r-control: 8px; --r-glyph: 10px; --r-card: 16px; --r-tile: 30px;
+  /* Radius (DSRadius): soft rectangles, rounder than before, never pills */
+  --r-tag: 6px; --r-glyph: 10px; --r-control: 12px; --r-field: 12px; --r-card: 20px; --r-tile: 30px;
 
-  /* Controls: DSButtonStyle's 44 pt minimum everywhere */
-  --control-h: 44px;
+  /* Sizes (DSSize): the 44 pt hit target everywhere */
+  --control-h: 44px; --control-lg: 52px; --field-h: 48px; --chip-h: 36px; --seg-h: 40px; --icon-btn: 36px;
 
-  /* Motion (DSMotion.standard ≈ snappy 0.28 s) */
+  /* Motion (DSMotion): standard ≈ snappy 0.28 s, focus 0.16, press 0.12 */
   --ease: cubic-bezier(0.2, 0.8, 0.2, 1);
-  --dur: 280ms;
+  --dur: 280ms; --dur-fast: 160ms; --dur-press: 120ms;
 }
+@property --a { syntax: '<angle>'; inherits: false; initial-value: 0deg; } /* reserved; no rotating borders ship */
 
-/* DSTextStyle → classes. The app's base sizes, in rem so browser zoom and text size scale them. */
-.t-display-xl { font: 300 3.5rem/1.05 var(--font-serif); letter-spacing: -1.2px; }
-.t-display    { font: 300 2.5rem/1.1  var(--font-serif); letter-spacing: -0.8px; }
-.t-title      { font: 300 1.75rem/1.2 var(--font-serif); letter-spacing: -0.4px; }
-.t-headline   { font: 400 1.25rem/1.3 var(--font-serif); }
-.t-body       { font: 400 1rem/1.45 var(--font-sans); }
+/* One rule per tone (DSTone order); every wash, edge, glyph and chart colour derives from --tone.
+   --tone-ink is the tone as text on dark: irisDeep lifts to iris, violet to violet-lit. */
+.tone-iris { --tone: var(--iris); --tone-ink: var(--iris); }
+.tone-lilac { --tone: var(--lilac); --tone-ink: var(--lilac); }
+.tone-orchid { --tone: var(--orchid); --tone-ink: var(--orchid); }
+.tone-azure { --tone: var(--azure); --tone-ink: var(--azure); }
+.tone-cyan { --tone: var(--cyan); --tone-ink: var(--cyan); }
+.tone-irisDeep { --tone: var(--iris-deep); --tone-ink: var(--iris); --gloss: .10; }
+.tone-amber { --tone: var(--amber); --tone-ink: var(--amber); }
+.tone-coral { --tone: var(--coral); --tone-ink: var(--coral); }
+.tone-rose { --tone: var(--rose); --tone-ink: var(--rose); }
+.tone-teal { --tone: var(--teal); --tone-ink: var(--teal); }
+.tone-lime { --tone: var(--lime); --tone-ink: var(--lime); }
+.tone-violet { --tone: var(--violet); --tone-ink: var(--violet-lit); }
+.tone-steel { --tone: var(--steel); --tone-ink: var(--ink-secondary); } /* not a DSTone: "waiting" in a chart */
+/* Washes: 12% tag (text sits only on this one), 16% glyph, 18% bloom, 28% edge */
+[class*="tone-"] { --wash: color-mix(in srgb, var(--tone) 12%, transparent); --wash-glyph: color-mix(in srgb, var(--tone) 16%, transparent);
+  --bloom: color-mix(in srgb, var(--tone) 18%, transparent); --edge: color-mix(in srgb, var(--tone) 28%, transparent); }
+/* Status words wear a tone the same way (tags, dots, callouts, toasts) */
+:is(.tag, .dot, .callout, .toast).ok { --tone: var(--status-ok); }
+:is(.tag, .dot, .callout, .toast).watch { --tone: var(--status-watch); }
+:is(.tag, .dot, .callout, .toast).act { --tone: var(--status-act); }
+:is(.tag, .dot, .callout, .toast).info { --tone: var(--status-info); }
+
+::selection { background: rgb(0 179 221 / .32); }
+@media (prefers-reduced-motion: reduce) { *, ::before, ::after { animation: none !important; transition-duration: 0s !important; } }
+
+/* DSTextStyle → classes. The app's base sizes, in rem so browser zoom and text size scale them. No extra tracking on SF. */
+.t-display-xl { font: 300 3.5rem/1.05 var(--font-serif); letter-spacing: -1.4px; }
+.t-display    { font: 300 2.5rem/1.1  var(--font-serif); letter-spacing: -0.9px; }
+.t-title      { font: 400 1.75rem/1.2 var(--font-serif); letter-spacing: -0.3px; }
+.t-headline   { font: 400 1.25rem/1.3 var(--font-serif); letter-spacing: -0.2px; }
+.t-body       { font: 400 1rem/1.5 var(--font-sans); }
 .t-body-em    { font: 500 1rem/1.45 var(--font-sans); }
 .t-callout    { font: 400 0.875rem/1.45 var(--font-sans); }
+.t-callout-em { font: 500 0.875rem/1.45 var(--font-sans); }
+.t-label      { font: 500 0.8125rem/1.4 var(--font-sans); }
 .t-caption    { font: 400 0.75rem/1.4 var(--font-sans); }
-.t-eyebrow    { font: 500 0.6875rem/1.2 var(--font-mono); letter-spacing: 1.1px; text-transform: uppercase; }
-.t-mono       { font: 500 0.75rem/1.4 var(--font-mono); letter-spacing: 0.2px; }
-.t-amount-xl  { font: 300 3.5rem/1.05 var(--font-serif); letter-spacing: -1.2px; font-variant-numeric: tabular-nums; }
-.t-amount     { font: 300 1.75rem/1.15 var(--font-serif); letter-spacing: -0.4px; font-variant-numeric: tabular-nums; }
-.t-amount-row { font: 500 1rem/1.3 var(--font-sans); font-variant-numeric: tabular-nums; }
+.t-eyebrow    { font: 500 0.6875rem/1.2 var(--font-mono); letter-spacing: 1.3px; text-transform: uppercase; }
+.t-mono       { font: 500 0.75rem/1.4 var(--font-mono); letter-spacing: 0.2px; font-variant-numeric: tabular-nums; }
+.t-code       { font: 400 0.875rem/1.45 var(--font-mono); font-variant-numeric: tabular-nums; }
+.t-axis       { font: 400 0.6875rem/1.2 var(--font-mono); font-variant-numeric: tabular-nums; }
+.t-amount-xl  { font: 300 3.5rem/1.05 var(--font-serif); letter-spacing: -1.4px; font-variant-numeric: proportional-nums lining-nums; }
+.t-amount     { font: 400 1.75rem/1.15 var(--font-serif); letter-spacing: -0.3px; font-variant-numeric: tabular-nums lining-nums; }
+.t-amount-row { font: 500 1rem/1.3 var(--font-sans); font-variant-numeric: tabular-nums lining-nums; }

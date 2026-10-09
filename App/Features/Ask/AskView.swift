@@ -78,7 +78,8 @@ struct AskView: View {
                             .ignoresSafeArea()
                     }
             }
-            .dsScreenBackground()
+            .scrollEdgeEffectStyle(.soft, for: .top)
+            .dsScreenBackground(bloom: .ai)
             .toolbar {
                 if !entries.isEmpty {
                     ToolbarItem(placement: .topBarTrailing) {

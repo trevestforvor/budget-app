@@ -251,7 +251,7 @@ struct RecurringRow: View {
             if large { Spacer(minLength: 0) }
         }
         .padding(.vertical, DSSpace.sm)
-        .frame(minHeight: 52)
+        .frame(minHeight: DSSize.listRow)
         .contentShape(Rectangle())
         .accessibilityElement(children: .combine)
     }

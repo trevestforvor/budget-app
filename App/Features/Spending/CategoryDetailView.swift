@@ -283,7 +283,7 @@ struct CategoryDetailView: View {
                                 .fixedSize(horizontal: false, vertical: true)
                             Button("Try again") { Task { await loadRows() } }
                                 .buttonStyle(.ds(.quiet))
-                                .frame(minHeight: 44)
+                                .frame(minHeight: DSSize.hitTarget)
                         }
                     }
                 }

@@ -37,7 +37,7 @@ function settingControl(f, onChange) {
   const id = nextID(f.key);
   let pending;  // undefined: nothing pending; null: reset; "": turn off
   let input;
-  if (f.kind === "bool") input = h("input", { type: "checkbox", id, checked: f.value === "true" });
+  if (f.kind === "bool") input = h("input", { type: "checkbox", class: "switch", id, checked: f.value === "true" });
   else if (f.kind === "secret") input = h("input", { class: "input", type: "password", id, autocomplete: "off", spellcheck: "false", "data-1p-ignore": "", "data-lpignore": "true",
     placeholder: f.isSet ? "Saved — type a new one to replace it" : "Not set" });
   else if (f.key === "syncIntervalHours") {
@@ -93,14 +93,14 @@ function policyControl(onChange, { ownServer, hasJevKey }) {
   const out = h("output", { for: "pol-pct" }, `${p.autoAcceptPercent}%`);
   const canJev = () => hasJevKey();
   const savedJev = !!p.escalateToJev && (store.status.availableDecisionProviders || []).includes("jev");
-  const jev = h("input", { type: "checkbox", id: "pol-jev", checked: savedJev });
+  const jev = h("input", { type: "checkbox", class: "switch", id: "pol-jev", checked: savedJev });
   const rerun = h("input", { type: "checkbox", id: "pol-rerun" });
   // What comes to you even when something could file it: new merchants, big amounts, pending charges.
-  const newMerchants = h("input", { type: "checkbox", id: "pol-new", checked: !!p.reviewNewMerchants });
-  const big = h("input", { type: "checkbox", id: "pol-big", checked: p.reviewAbove != null });
+  const newMerchants = h("input", { type: "checkbox", class: "switch", id: "pol-new", checked: !!p.reviewNewMerchants });
+  const big = h("input", { type: "checkbox", class: "switch", id: "pol-big", checked: p.reviewAbove != null });
   const savedAbove = p.reviewAbove != null ? String(Number(p.reviewAbove)) : "";
   const above = h("input", { class: "input above", id: "pol-above", inputmode: "decimal", value: savedAbove || "500", "aria-label": "Amount", "aria-describedby": "pol-big-help" });
-  const pending = h("input", { type: "checkbox", id: "pol-pending", checked: !!p.holdPending });
+  const pending = h("input", { type: "checkbox", class: "switch", id: "pol-pending", checked: !!p.holdPending });
   const newLabel = h("label", { class: "check", for: "pol-new" }, newMerchants, h("span", {}, "Check new merchants before they're filed", h("span", { class: "help new-help" })));
   const aboveAmount = () => { const v = above.value.replace(/[$,\s]/g, ""); return /^\d{1,9}(\.\d{1,2})?$/.test(v) && Number(v) > 0 ? v : null; };
   const jevLabel = h("label", { class: "check", for: "pol-jev" }, jev, h("span", {}, "Ask Jev when the local model is unsure", h("span", { class: "help jev-help" })));

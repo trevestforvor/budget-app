@@ -326,7 +326,7 @@ struct TransactionDetailView: View {
                 HStack(spacing: DSSpace.sm) {
                     if let percent { DSListValue(percent) }
                     Image(systemName: isSelected ? "checkmark.circle.fill" : "circle")
-                        .font(.system(size: 20))
+                        .font(.system(size: DSIconSize.lg))
                         .foregroundStyle(isSelected ? Color.ds.accent : Color.ds.inkTertiary)
                         .accessibilityHidden(true)
                 }
@@ -508,7 +508,7 @@ struct TransactionDetailView: View {
                 if presentation != .pushed { dismiss() }
             }
             .buttonStyle(.ds(.quiet))
-            .frame(minHeight: 44)
+            .frame(minHeight: DSSize.hitTarget)
             Text(app.isDemo ? "This is the demo ledger. Nothing here leaves the phone."
                             : "This transaction lives on your Olares. The phone keeps a copy for offline viewing only.")
                 .dsFont(.caption)

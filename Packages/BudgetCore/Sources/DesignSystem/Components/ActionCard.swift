@@ -1,6 +1,7 @@
 import SwiftUI
 
-/// A change the assistant proposes. Iris-edged while pending; nothing happens until Apply.
+/// A change the assistant proposes. While pending it carries the AI edge and an iris glow rising
+/// from the bottom-trailing corner; nothing happens until Apply.
 public struct DSActionCard: View {
     public enum Phase: Equatable, Sendable {
         case proposed, applying, applied(String), dismissed, failed(String)
@@ -83,12 +84,14 @@ public struct DSActionCard: View {
             footer
         }
         .padding(DSSpace.md + 2)
-        .background {
-            RoundedRectangle(cornerRadius: DSRadius.card, style: .continuous).fill(Color.ds.surface)
-        }
+        .background { DSPanelBackground(wash: isPending ? .ai : nil) }
         .overlay {
-            RoundedRectangle(cornerRadius: DSRadius.card, style: .continuous)
-                .strokeBorder(isPending ? Color.ds.iris.opacity(0.45) : Color.ds.hairline, lineWidth: 1)
+            // Pending: the assistant's edge, breathing while it applies. Settled: the plain lit edge.
+            if isPending {
+                Color.clear.dsAIEdge(radius: DSRadius.card, isWorking: phase == .applying)
+            } else {
+                Color.clear.dsLitEdge(radius: DSRadius.card)
+            }
         }
         .opacity(phase == .dismissed ? 0.55 : 1)
         .animation(DSMotion.standard, value: phase)
@@ -110,10 +113,15 @@ public struct DSActionCard: View {
         switch phase {
         case .proposed, .applying:
             HStack(spacing: DSSpace.md) {
-                Button(applyTitle, action: onApply).buttonStyle(.ds(.primary))
-                Button("Not now", action: onDismiss).buttonStyle(.ds(.quiet))
+                // The assistant's action: iris, not the white primary. While it applies it shows a spinner
+                // and breathes, and ignores taps rather than greying out.
+                Button(applyTitle, action: onApply)
+                    .buttonStyle(.ds(.ai, isLoading: phase == .applying))
+                    .allowsHitTesting(phase != .applying)
+                Button("Not now", action: onDismiss)
+                    .buttonStyle(.ds(.quiet))
+                    .disabled(phase == .applying)
             }
-            .disabled(phase == .applying)
             .padding(.top, DSSpace.xxs)
         case let .applied(message):
             Text(message).dsFont(.callout).foregroundStyle(Color.ds.inkSoft)

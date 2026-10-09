@@ -68,7 +68,8 @@ struct CheckupView: View {
     }
 
     private func sectionCard(_ section: Checkup.Section) -> some View {
-        DSCard {
+        // A section to act on washes caution down from its top edge; its "Act" tag says so in words.
+        DSCard(wash: section.status == .act ? .caution : nil) {
             VStack(alignment: .leading, spacing: DSSpace.md) {
                 // The status tag sits beside the title, or under it at accessibility sizes so the title never breaks.
                 let head = dynamicTypeSize.isAccessibilitySize ? AnyLayout(VStackLayout(alignment: .leading, spacing: DSSpace.xs))
@@ -150,7 +151,7 @@ struct CheckupView: View {
             Text(metric.label).dsFont(.callout).foregroundStyle(Color.ds.inkSecondary).lineLimit(1)
             Spacer()
             Text(metric.money.map { $0.formatted() } ?? metric.text ?? "")
-                .font(.system(.callout, design: .serif))
+                .dsFont(.amountRow)
                 .foregroundStyle(Color.ds.ink)
             if chevron { Self.chevron }
         }
@@ -159,7 +160,7 @@ struct CheckupView: View {
 
     private static var chevron: some View {
         Image(systemName: "chevron.right")
-            .font(.caption.weight(.semibold))
+            .font(.system(size: DSIconSize.xs, weight: .semibold))
             .foregroundStyle(Color.ds.inkTertiary)
             .accessibilityHidden(true)
     }
@@ -256,7 +257,7 @@ struct CheckupStatusMark: View {
     var body: some View {
         Image(systemName: "\(CheckupView.symbol(status)).circle.fill")
             .imageScale(.small)
-            .font(.callout)
+            .dsFont(.callout)
             .foregroundStyle(CheckupView.tint(status))
             .accessibilityHidden(true)
     }

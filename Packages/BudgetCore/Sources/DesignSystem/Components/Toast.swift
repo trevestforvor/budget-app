@@ -31,20 +31,24 @@ public struct DSToastMessage: Identifiable, Equatable, Sendable {
     public static func == (lhs: DSToastMessage, rhs: DSToastMessage) -> Bool { lhs.id == rhs.id }
 }
 
-/// A raised card near the bottom edge: the message, an optional action, and a thin line that
-/// runs down while it's showing. Usually shown by `.dsToast(_:)` rather than placed directly.
+/// A floating card near the bottom edge, on the overlay layer with its shadow: the message, an
+/// optional action, and a thin line that runs down while it's showing. Usually shown by `.dsToast(_:)` rather than placed directly.
 public struct DSToast: View {
     private let message: String
     private let actionTitle: String?
     private let countdown: Duration?
     private let action: (() -> Void)?
+    private let tint: Color?
     @State private var remaining: CGFloat = 1
 
-    /// - Parameter countdown: when set, the line empties over this long; nil hides the line.
-    public init(_ message: String, actionTitle: String? = nil, countdown: Duration? = nil, action: (() -> Void)? = nil) {
+    /// - Parameters:
+    ///   - countdown: when set, the line empties over this long; nil hides the line.
+    ///   - tint: a status colour that blooms faintly from the corner (caution for a failure); nil for none.
+    public init(_ message: String, actionTitle: String? = nil, countdown: Duration? = nil, tint: Color? = nil, action: (() -> Void)? = nil) {
         self.message = message
         self.actionTitle = actionTitle
         self.countdown = countdown
+        self.tint = tint
         self.action = action
     }
 
@@ -58,21 +62,18 @@ public struct DSToast: View {
             if let actionTitle, let action {
                 Button(actionTitle, action: action)
                     .buttonStyle(.ds(.quiet))
-                    .frame(minWidth: 44, minHeight: 44)
+                    .frame(minWidth: DSSize.hitTarget, minHeight: DSSize.hitTarget)
             }
         }
         .padding(.leading, DSSpace.md)
         .padding(.trailing, actionTitle == nil ? DSSpace.md : DSSpace.sm)
         .padding(.vertical, DSSpace.xxs)
-        .frame(minHeight: 52)
-        .background {
-            RoundedRectangle(cornerRadius: DSRadius.card, style: .continuous).fill(Color.ds.surfaceRaised)
-        }
+        .frame(minHeight: DSSize.listRow)
         .overlay(alignment: .bottomLeading) {
             if countdown != nil {
                 GeometryReader { proxy in
                     Capsule()
-                        .fill(Color.ds.inkTertiary)
+                        .fill(Color.ds.inkSecondary)
                         .frame(width: max(proxy.size.width * remaining, 0), height: 2)
                         .frame(maxHeight: .infinity, alignment: .bottom)
                 }
@@ -81,11 +82,8 @@ public struct DSToast: View {
                 .accessibilityHidden(true)
             }
         }
-        .overlay {
-            RoundedRectangle(cornerRadius: DSRadius.card, style: .continuous)
-                .strokeBorder(Color.ds.hairlineStrong, lineWidth: 1)
-        }
-        .shadow(color: .black.opacity(0.4), radius: 16, y: 6)
+        .dsPanel(.overlay, wash: tint.map { .tint($0, intensity: 0.12) })
+        .dsShadow(.overlay)
         .onAppear {
             guard let countdown else { return }
             let seconds = Double(countdown.components.seconds) + Double(countdown.components.attoseconds) / 1e18

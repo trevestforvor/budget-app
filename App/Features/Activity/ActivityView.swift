@@ -94,6 +94,7 @@ struct ActivityView: View {
                 .padding(.horizontal, DSSpace.gutter)
                 .padding(.bottom, DSSpace.xxl)
             }
+            .scrollEdgeEffectStyle(.soft, for: .top)
             .dsScreenBackground()
             .scrollDismissesKeyboard(.immediately)
             .searchable(text: $query, prompt: "Merchants, notes, amounts")
@@ -311,7 +312,7 @@ struct ActivityView: View {
                         Task { await loadMore() }
                     }
                     .buttonStyle(.ds(.quiet))
-                    .frame(minHeight: 44)
+                    .frame(minHeight: DSSize.hitTarget)
                 }
                 .frame(maxWidth: .infinity)
                 .padding(.vertical, DSSpace.sm)
@@ -360,10 +361,10 @@ struct ActivityView: View {
                     if all { selection.subtract(ids) } else { selection.formUnion(ids) }
                 }
                 .buttonStyle(.ds(.quiet))
-                .frame(minHeight: 44)
+                .frame(minHeight: DSSize.hitTarget)
             }
         }
-        .frame(minHeight: isSelecting ? 44 : nil)
+        .frame(minHeight: isSelecting ? DSSize.hitTarget : nil)
     }
 
     private func rowView(_ row: LedgerTransaction) -> some View {
@@ -378,7 +379,7 @@ struct ActivityView: View {
             HStack(spacing: DSSpace.sm) {
                 if isSelecting {
                     Image(systemName: isSelected ? "checkmark.circle.fill" : "circle")
-                        .font(.system(size: 22))
+                        .font(.system(size: DSIconSize.xl))
                         .foregroundStyle(isSelected ? Color.ds.accent : Color.ds.inkTertiary)
                         .accessibilityHidden(true)
                 }

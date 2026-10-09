@@ -43,11 +43,8 @@ struct RecurringEditSheet: View {
                     }
                     VStack(alignment: .leading, spacing: DSSpace.sm) {
                         DSEyebrow("How often")
-                        Picker("How often", selection: $cadence) {
-                            ForEach(Subscription.Cadence.allCases, id: \.self) { Text(Self.label($0)).tag($0) }
-                        }
-                        .segmentedUnlessLargeText()
-                        .accessibilityIdentifier("recurringCadence")
+                        DSSegmented("How often", selection: $cadence, options: Subscription.Cadence.allCases) { Self.label($0) }
+                            .accessibilityIdentifier("recurringCadence")
                         if cadence == .yearly {
                             Text("Its charges count a twelfth a month for a year instead of all in the month they land.")
                                 .dsFont(.caption).foregroundStyle(Color.ds.inkSecondary)
@@ -56,11 +53,10 @@ struct RecurringEditSheet: View {
                     }
                     VStack(alignment: .leading, spacing: DSSpace.sm) {
                         DSEyebrow("Kind")
-                        Picker("Kind", selection: $kind) {
-                            Text("Subscription").tag(Subscription.Kind.subscription)
-                            Text("Bill").tag(Subscription.Kind.bill)
-                        }
-                        .segmentedUnlessLargeText()
+                        DSSegmented("Kind", selection: $kind, options: [
+                            (value: Subscription.Kind.subscription, title: "Subscription"),
+                            (value: .bill, title: "Bill"),
+                        ])
                         Text("Subscriptions are the ones you choose to keep; bills are rent, utilities and fees.")
                             .dsFont(.caption).foregroundStyle(Color.ds.inkSecondary)
                             .fixedSize(horizontal: false, vertical: true)
@@ -91,7 +87,7 @@ struct RecurringEditSheet: View {
                                            amount: newCadence == nil ? nil : amount.map(DecimalAmount.init)))
                 }
             }
-            .buttonStyle(.ds(.primary, fullWidth: true))
+            .buttonStyle(.ds(.primary, size: .large, fullWidth: true))
             .disabled(isSaving || !changed)
             .accessibilityIdentifier("recurringSave")
             if current != nil {

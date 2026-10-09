@@ -16,15 +16,21 @@ public struct DSIconTile: View {
 
     public var body: some View {
         let side = size * min(scale, 1.5)
-        RoundedRectangle(cornerRadius: side * 0.26, style: .continuous)
-            .fill(tone.fill)
-            .frame(width: side, height: side)
-            .overlay {
-                Image(systemName: systemImage)
-                    .font(.system(size: side * 0.48, weight: .semibold))
-                    .foregroundStyle(tone.onFill)
+        // Glossed from 36pt up; smaller tiles are too small for the light to read.
+        Group {
+            if side >= 36 {
+                DSTileFill(tone: tone, radius: DSRadius.iconTile(side: side))
+            } else {
+                RoundedRectangle(cornerRadius: DSRadius.iconTile(side: side), style: .continuous).fill(tone.fill)
             }
-            .accessibilityHidden(true)
+        }
+        .frame(width: side, height: side)
+        .overlay {
+            Image(systemName: systemImage)
+                .font(.system(size: side * 0.48, weight: .semibold))
+                .foregroundStyle(tone.onFill)
+        }
+        .accessibilityHidden(true)
     }
 }
 
@@ -51,7 +57,7 @@ public struct DSListValue: View {
             }
             if showsChevron {
                 Image(systemName: "chevron.right")
-                    .font(.system(size: 13, weight: .semibold))
+                    .font(.system(size: DSIconSize.xs, weight: .semibold))
                     .foregroundStyle(Color.ds.inkTertiary)
                     .accessibilityHidden(true)
             }
@@ -100,7 +106,7 @@ public struct DSListRow<Trailing: View>: View {
             }
         }
         .padding(.vertical, DSSpace.xs)
-        .frame(minHeight: 52)
+        .frame(minHeight: DSSize.listRow)
         .contentShape(Rectangle())
         .accessibilityElement(children: .combine)
     }
@@ -168,12 +174,12 @@ public struct DSToggleRow: View {
         }
         .tint(Color.ds.accent)
         .padding(.vertical, DSSpace.xs)
-        .frame(minHeight: 52)
+        .frame(minHeight: DSSize.listRow)
     }
 }
 
-/// A section of a `.dsGroupedList()`: a `DSEyebrow` header, rows on `surface` with hairline
-/// separators and 16pt side insets, and an optional caption footer. Row backgrounds, separators
+/// A section of a `.dsGroupedList()`: a `DSEyebrow` header, rows on `surface` (flat: a gradient
+/// would band down a long list) with quiet 5% separators and 16pt side insets, and an optional caption footer. Row backgrounds, separators
 /// and insets only reach rows through their section, which is why this exists rather than the
 /// list modifier doing it. Plain content (a `Text`, a `TextField`) still gets the 52pt minimum.
 public struct DSListSection<Content: View>: View {
@@ -191,7 +197,7 @@ public struct DSListSection<Content: View>: View {
         Section {
             content
                 .listRowBackground(Color.ds.surface)
-                .listRowSeparatorTint(Color.ds.hairlineStrong)
+                .listRowSeparatorTint(Color.ds.divider)
                 // Rows bring their own 52pt height and padding; the list's vertical insets would double it.
                 .listRowInsets(EdgeInsets(top: 0, leading: DSSpace.md, bottom: 0, trailing: DSSpace.md))
         } header: {
@@ -228,7 +234,7 @@ private struct DSListSkin: ViewModifier {
         content
             .scrollContentBackground(.hidden)
             .background(Color.ds.canvas.ignoresSafeArea())
-            .environment(\.defaultMinListRowHeight, 52)
+            .environment(\.defaultMinListRowHeight, DSSize.listRow)
             .tint(Color.ds.accent)
     }
 }

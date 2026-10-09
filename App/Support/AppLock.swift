@@ -182,7 +182,7 @@ private struct LockView: View {
                     } label: {
                         Label(method == .unavailable ? "Unlock" : "Unlock with \(method.name)", systemImage: method.systemImage)
                     }
-                    .buttonStyle(.ds(.primary, fullWidth: true))
+                    .buttonStyle(.ds(.primary, size: .large, fullWidth: true))
                     .disabled(state.isAuthenticating)
                     .accessibilityIdentifier("unlockButton")
                 }

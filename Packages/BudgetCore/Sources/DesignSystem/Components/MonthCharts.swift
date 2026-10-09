@@ -1,9 +1,8 @@
 import Charts
 import SwiftUI
 
-/// Scales with Dynamic Type (caption 2, monospaced); each chart caps its text at accessibility 2, so twelve month
-/// letters and the value ticks still fit under the bars.
-private let axisFont = Font.caption2.monospaced().weight(.medium)
+/// Axis labels are `DSTextStyle.axis` (caption 2, monospaced, tabular); each chart caps its text at accessibility 2,
+/// so twelve month letters and the value ticks still fit under the bars.
 private let axisLimit = DynamicTypeSize.accessibility2
 
 /// The middle of `date`'s month — where a `unit: .month` bar is drawn, so an axis mark there
@@ -26,8 +25,8 @@ public struct DSMonthBar: Identifiable, Hashable, Sendable {
     }
 }
 
-/// A year of one category, month by month: the selected month in the category's tone, the
-/// rest quiet, and a dashed target rule. A month over target is caution **and** carries an
+/// A year of one category, month by month: every month in the category's tone, the selected one
+/// at full strength and the rest at 55%, and a dashed target rule. A month over target is caution **and** carries an
 /// exclamation mark above the bar, because caution is also a category tone.
 public struct DSMonthBars: View {
     private let bars: [DSMonthBar]
@@ -76,7 +75,9 @@ public struct DSMonthBars: View {
     private func color(for bar: DSMonthBar) -> Color {
         let selected = isSelected(bar.month)
         if Self.isOver(bar.value, target: target) { return Color.ds.caution.opacity(selected ? 1 : 0.55) }
-        return selected ? tone.onCanvas : Color.ds.inkTertiary.opacity(0.5)
+        if bar.value <= 0 { return Palette.steel.color }
+        // Every month keeps its tone; the selected one is full strength (opacity is fine on a mark that isn't text).
+        return tone.onCanvas.opacity(selected ? 1 : 0.55)
     }
 
     private var domain: ClosedRange<Double> {
@@ -95,7 +96,7 @@ public struct DSMonthBars: View {
         Chart {
             ForEach(bars) { bar in
                 BarMark(x: .value("Month", bar.month, unit: .month, calendar: calendar), y: .value("Spent", bar.value), width: .fixed(10))
-                    .clipShape(Capsule())
+                    .clipShape(UnevenRoundedRectangle(topLeadingRadius: 4, topTrailingRadius: 4, style: .continuous))
                     .foregroundStyle(color(for: bar))
                     .annotation(position: .top, spacing: 3) {
                         if Self.isOver(bar.value, target: target) {
@@ -119,7 +120,7 @@ public struct DSMonthBars: View {
                 AxisValueLabel(centered: false, anchor: .top) {
                     if let date = value.as(Date.self) {
                         Text(monthLabel(date))
-                            .font(axisFont)
+                            .dsFont(.axis)
                             .foregroundStyle(isSelected(date) ? Color.ds.ink : Color.ds.inkTertiary)
                     }
                 }
@@ -250,7 +251,7 @@ public struct DSCashFlowChart: View {
                 AxisValueLabel(centered: false, anchor: .top) {
                     if let date = value.as(Date.self) {
                         Text(monthLabel(date))
-                            .font(axisFont)
+                            .dsFont(.axis)
                             .foregroundStyle(Color.ds.inkTertiary)
                     }
                 }
@@ -262,7 +263,7 @@ public struct DSCashFlowChart: View {
                 AxisValueLabel {
                     if let amount = value.as(Double.self) {
                         Text(amount.formatted(.currency(code: currencyCode).notation(.compactName)))
-                            .font(axisFont)
+                            .dsFont(.axis)
                             .foregroundStyle(Color.ds.inkTertiary)
                     }
                 }

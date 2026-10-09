@@ -50,7 +50,8 @@ struct PlanView: View {
                 .padding(.horizontal, DSSpace.gutter)
                 .padding(.bottom, DSSpace.xxl)
             }
-            .dsScreenBackground()
+            .scrollEdgeEffectStyle(.soft, for: .top)
+            .dsScreenBackground(bloom: .data)
             .scrollDismissesKeyboard(.interactively)
             .reloadable(button: false) { await load() }
             .toolbarVisibility(.hidden, for: .navigationBar)
@@ -165,12 +166,10 @@ struct PlanView: View {
             VStack(alignment: .leading, spacing: DSSpace.md) {
                 DSEyebrow("Can I afford it?", dot: Color.ds.iris)
                 Text("Set aside").dsFont(.headline).foregroundStyle(Color.ds.ink)
-                TextField("Amount", value: $goalAmount, format: .currency(code: "USD").precision(.fractionLength(0)))
-                    .keyboardType(.decimalPad)
-                    .dsFont(.amount)
-                    .foregroundStyle(Color.ds.ink)
-                    .padding(.vertical, DSSpace.xs)
-                    .overlay(alignment: .bottom) { DSDivider() }
+                DSAmountField(currencySymbol: nil, style: .amount, alignment: .leading) {
+                    TextField("Amount", value: $goalAmount, format: .currency(code: "USD").precision(.fractionLength(0)))
+                        .keyboardType(.decimalPad)
+                }
                 DatePicker("By", selection: $goalDate, in: AppClock.now.addingTimeInterval(86_400)..., displayedComponents: .date)
                     .dsFont(.body)
                     .foregroundStyle(Color.ds.inkSoft)
@@ -226,11 +225,10 @@ struct MonthlySavingsSheet: View {
                     DSEyebrow("Pay yourself first")
                     Text("Monthly savings").dsFont(.display).foregroundStyle(Color.ds.ink)
                 }
-                TextField("Amount", value: $amount, format: .currency(code: "USD").precision(.fractionLength(0...2)))
-                    .keyboardType(.decimalPad)
-                    .dsFont(.amountXL)
-                    .foregroundStyle(Color.ds.ink)
-                    .overlay(alignment: .bottom) { DSDivider() }
+                DSAmountField(currencySymbol: nil, alignment: .leading) {
+                    TextField("Amount", value: $amount, format: .currency(code: "USD").precision(.fractionLength(0...2)))
+                        .keyboardType(.decimalPad)
+                }
                 if let suggested {
                     Button("Use 20% of take-home (\(suggested.formatted(fractionDigits: 0)))") { amount = suggested.decimal }
                         .buttonStyle(.ds(.quiet))
@@ -240,7 +238,7 @@ struct MonthlySavingsSheet: View {
                 if let errorMessage { Text(errorMessage).dsFont(.callout).foregroundStyle(Color.ds.caution) }
                 Spacer()
                 Button(isSaving ? "Saving…" : "Save plan") { Task { await save() } }
-                    .buttonStyle(.ds(.primary, fullWidth: true))
+                    .buttonStyle(.ds(.primary, size: .large, fullWidth: true))
                     .disabled(isSaving || amount <= 0)
             }
             .padding(DSSpace.gutter)

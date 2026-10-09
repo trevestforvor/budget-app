@@ -109,7 +109,7 @@ struct ReviewSettingsView: View {
                 if isDirty {
                     Button(isApplying ? "Applying…" : applyTitle) { Task { await applyPercent() } }
                         .buttonStyle(.ds(.quiet))
-                        .frame(minHeight: 52)
+                        .frame(minHeight: DSSize.listRow)
                         .disabled(isApplying)
                         .accessibilityIdentifier("applyThreshold")
                 }
@@ -145,14 +145,11 @@ struct ReviewSettingsView: View {
                             }
                         }))
             if bigAmounts {
-                SettingsField("Over") {
-                    HStack(spacing: 2) {
-                        Text("$").foregroundStyle(Color.ds.inkSecondary)
-                        TextField("Amount", text: $bigText, prompt: Text("500"))
-                            .keyboardType(.decimalPad)
-                            .focused($editsAmount)
-                            .accessibilityLabel("Ask about amounts over, in dollars")
-                    }
+                DSField("Over", style: .inline, prefix: "$", isEmpty: bigText.isEmpty, isFocused: editsAmount) {
+                    TextField("Amount", text: $bigText, prompt: Text("500"))
+                        .keyboardType(.decimalPad)
+                        .focused($editsAmount)
+                        .accessibilityLabel("Ask about amounts over, in dollars")
                 }
             }
         }

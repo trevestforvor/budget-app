@@ -90,30 +90,6 @@ extension Money {
     var shortString: String { formatted(fractionDigits: minorUnits % 100 == 0 ? 0 : 2) }
 }
 
-/// A text or amount field in a settings list: a label over the value it edits, at least 52pt tall.
-struct SettingsField<Field: View>: View {
-    let label: String
-    let field: Field
-
-    init(_ label: String, @ViewBuilder field: () -> Field) {
-        self.label = label
-        self.field = field()
-    }
-
-    var body: some View {
-        VStack(alignment: .leading, spacing: 2) {
-            Text(label)
-                .dsFont(.caption)
-                .foregroundStyle(Color.ds.inkSecondary)
-            field
-                .dsFont(.body)
-                .foregroundStyle(Color.ds.ink)
-        }
-        .padding(.vertical, DSSpace.xs)
-        .frame(minHeight: 52, alignment: .leading)
-    }
-}
-
 /// A plain line of text inside a settings list — a caption, a problem to fix, a result.
 struct SettingsNote: View {
     let text: String
@@ -172,7 +148,7 @@ struct SettingsDestructiveRow: View {
             Text(title)
                 .dsFont(.body)
                 .foregroundStyle(Color.ds.caution)
-                .frame(maxWidth: .infinity, minHeight: 52, alignment: .leading)
+                .frame(maxWidth: .infinity, minHeight: DSSize.listRow, alignment: .leading)
                 .contentShape(Rectangle())
         }
         .buttonStyle(.plain)

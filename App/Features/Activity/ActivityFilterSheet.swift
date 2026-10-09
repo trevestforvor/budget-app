@@ -94,7 +94,7 @@ struct ActivityFilterSheet: View {
         } label: {
             Text(showTitle).fixedSize()
         }
-        .buttonStyle(.ds(.primary, fullWidth: true))
+        .buttonStyle(.ds(.primary, size: .large, fullWidth: true))
         .disabled(count == 0)
         .accessibilityLabel(showTitle)
         .accessibilityIdentifier("applyFilters")
@@ -177,10 +177,10 @@ private struct PeriodPicker: View {
                 DSListSection("Custom dates", footer: "Both days are included.") {
                     DatePicker("From", selection: sinceBinding, in: ...lastDayBinding.wrappedValue, displayedComponents: .date)
                         .dsFont(.body)
-                        .frame(minHeight: 52)
+                        .frame(minHeight: DSSize.listRow)
                     DatePicker("To", selection: lastDayBinding, in: sinceBinding.wrappedValue...AppClock.now, displayedComponents: .date)
                         .dsFont(.body)
-                        .frame(minHeight: 52)
+                        .frame(minHeight: DSSize.listRow)
                 }
             }
         }
@@ -281,13 +281,12 @@ private struct AmountEditor: View {
     var body: some View {
         List {
             DSListSection("Direction") {
-                Picker("Direction", selection: $filter.direction) {
-                    Text("Both").tag(TransactionFilter.Direction?.none)
-                    Text("Money out").tag(TransactionFilter.Direction?.some(.moneyOut))
-                    Text("Money in").tag(TransactionFilter.Direction?.some(.moneyIn))
-                }
-                .segmentedUnlessLargeText()
-                .frame(minHeight: 52)
+                DSSegmented("Direction", selection: $filter.direction, options: [
+                    (value: TransactionFilter.Direction?.none, title: "Both"),
+                    (value: .some(.moneyOut), title: "Money out"),
+                    (value: .some(.moneyIn), title: "Money in"),
+                ])
+                .frame(minHeight: DSSize.listRow)
             }
             DSListSection("Size", footer: "Whichever way the money went. Leave a side empty for no limit.") {
                 DSListRow("At least") { field("0", text: $minText) }
@@ -329,7 +328,7 @@ private struct CheckMark: View {
     let isOn: Bool
     var body: some View {
         Image(systemName: "checkmark")
-            .font(.system(size: 15, weight: .semibold))
+            .font(.system(size: DSIconSize.sm, weight: .semibold))
             .foregroundStyle(Color.ds.accent)
             .opacity(isOn ? 1 : 0)
             .accessibilityHidden(true)

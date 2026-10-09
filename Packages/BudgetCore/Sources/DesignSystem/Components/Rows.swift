@@ -2,7 +2,7 @@ import SwiftUI
 
 /// How loudly a line speaks. Muted is for rows that don't count toward spending — transfers,
 /// hidden rows — and uses quieter ink rather than lowered opacity: `inkSecondary` stays about
-/// 6.9:1 on a card, while a half-opacity row would fail AA.
+/// 8.6:1 on a card, while a half-opacity row would fail AA.
 public enum DSEmphasis: Sendable, Equatable {
     case normal
     case muted
@@ -23,7 +23,7 @@ public struct DSGlyph: View {
     }
 
     public var body: some View {
-        RoundedRectangle(cornerRadius: DSRadius.control + 2, style: .continuous)
+        RoundedRectangle(cornerRadius: DSRadius.glyph, style: .continuous)
             .fill(emphasis == .muted ? tone.fill.opacity(0.08) : tone.wash)
             .frame(width: size, height: size)
             .overlay {
@@ -60,7 +60,7 @@ public struct DSTransactionRow: View {
     ///     going away. Still rendered (except `.auto`) until call sites move off it.
     ///   - emphasis: `.muted` for rows that don't count toward spending.
     ///   - isHidden: the person hid it; mutes the row and adds the eye-slash tag.
-    ///   - needsReview: the server wants an answer; adds the 7pt orchid dot.
+    ///   - needsReview: the server wants an answer; adds the 6pt orchid dot.
     public init(title: String, subtitle: String, amount: Decimal, currencyCode: String = "USD", systemImage: String, tone: DSTone,
                 confidence: DSConfidence? = nil, isPending: Bool = false,
                 emphasis: DSEmphasis = .normal, isHidden: Bool = false, needsReview: Bool = false) {
@@ -173,14 +173,18 @@ public struct DSTransactionRow: View {
 
     private var hiddenTag: some View { DSTag(systemImage: "eye.slash", tint: Color.ds.inkTertiary) }
 
+    /// The one deliberate glow on a dot: it asks for an answer.
     private var reviewDot: some View {
         Circle()
             .fill(DSConfidence.review.tint)
-            .frame(width: 7, height: 7)
+            .frame(width: 6, height: 6)
+            .shadow(color: DSConfidence.review.tint.opacity(0.5), radius: 3)
     }
 }
 
-/// A chromatic category panel — the only place saturated color fills a surface.
+/// A chromatic category panel — the only place saturated color fills a surface. Glossed toward
+/// the top (`DSTileFill`). Wrap it in a button with `.buttonStyle(.dsPress(radius: DSRadius.tile))`
+/// and `wash: Color.ds.surfacePressed.opacity(0.2)` so it darkens under a finger instead of fading.
 public struct DSCategoryTile: View {
     private let title: String
     private let systemImage: String
@@ -201,33 +205,32 @@ public struct DSCategoryTile: View {
     public var body: some View {
         VStack(alignment: .leading, spacing: DSSpace.sm) {
             Image(systemName: systemImage)
-                .font(.system(size: 18, weight: .medium))
+                .font(.system(size: DSIconSize.lg, weight: .medium))
                 .frame(width: 36, height: 36)
                 .background(Circle().fill(tone.onFill.opacity(0.1)))
                 .accessibilityHidden(true)
             Spacer(minLength: DSSpace.md)
+            // Full ink, never faded: at 80% the title fell under AA on violet.
             Text(title)
                 .dsFont(.eyebrow)
-                .opacity(0.8)
             Text(DSAmountFormat.string(amount, currencyCode: currencyCode, sign: .magnitude, fractionDigits: 0))
                 .dsFont(.amount)
                 .lineLimit(1)
                 .minimumScaleFactor(0.6)
             if let footnote {
-                Text(footnote).dsFont(.caption).opacity(0.75).lineLimit(1)
+                // Full-strength ink: faded to 75% it fell to 4.2:1 on violet.
+                Text(footnote).dsFont(.caption).lineLimit(1)
             }
         }
         .foregroundStyle(tone.onFill)
         .padding(DSSpace.md + 2)
         .frame(maxWidth: .infinity, minHeight: 164, alignment: .topLeading)
-        .background {
-            RoundedRectangle(cornerRadius: DSRadius.tile, style: .continuous).fill(tone.fill)
-        }
+        .background { DSTileFill(tone: tone) }
         .accessibilityElement(children: .combine)
     }
 }
 
-/// Origin-style action card: category eyebrow, serif headline, one line of why.
+/// "Found for you": category eyebrow, serif headline, one line of why, on a card that blooms in the tone.
 /// The provenance footer names the ledger tool that produced the number.
 public struct DSInsightCard: View {
     private let eyebrow: String
@@ -245,35 +248,25 @@ public struct DSInsightCard: View {
     }
 
     public var body: some View {
-        VStack(alignment: .leading, spacing: DSSpace.sm) {
-            DSEyebrow(eyebrow, dot: tone.onCanvas)
-            Text(title)
-                .dsFont(.headline)
-                .foregroundStyle(Color.ds.ink)
-                .fixedSize(horizontal: false, vertical: true)
-            Text(message)
-                .dsFont(.callout)
-                .foregroundStyle(Color.ds.inkSecondary)
-                .fixedSize(horizontal: false, vertical: true)
-            Spacer(minLength: 0)
-            if let provenance {
-                DSToolTrace(name: provenance)
-            }
-        }
-        .padding(DSSpace.lg - 4)
-        .frame(maxWidth: .infinity, maxHeight: .infinity, alignment: .topLeading)
-        .background {
-            RoundedRectangle(cornerRadius: DSRadius.card, style: .continuous)
-                .fill(Color.ds.surface)
-                .overlay(alignment: .topLeading) {
-                    // A faint wash of the tone in one corner, like light on a gallery wall.
-                    RadialGradient(colors: [tone.fill.opacity(0.18), .clear], center: .topLeading, startRadius: 0, endRadius: 220)
-                        .clipShape(RoundedRectangle(cornerRadius: DSRadius.card, style: .continuous))
+        DSCard(padding: DSSpace.lg - 4, tone: tone) {
+            VStack(alignment: .leading, spacing: DSSpace.sm) {
+                DSEyebrow(eyebrow, dot: tone.onCanvas)
+                Text(title)
+                    .dsFont(.headline)
+                    .foregroundStyle(Color.ds.ink)
+                    .fixedSize(horizontal: false, vertical: true)
+                Text(message)
+                    .dsFont(.callout)
+                    .foregroundStyle(Color.ds.inkSecondary)
+                    .fixedSize(horizontal: false, vertical: true)
+                Spacer(minLength: 0)
+                if let provenance {
+                    DSToolTrace(name: provenance)
                 }
+            }
+            .frame(maxHeight: .infinity, alignment: .topLeading)
         }
-        .overlay {
-            RoundedRectangle(cornerRadius: DSRadius.card, style: .continuous).strokeBorder(Color.ds.hairline, lineWidth: 1)
-        }
+        .frame(maxHeight: .infinity)
         .accessibilityElement(children: .combine)
     }
 }

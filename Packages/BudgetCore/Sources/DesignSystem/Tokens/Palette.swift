@@ -44,23 +44,42 @@ public struct RGB: Hashable, Sendable {
     }
 }
 
-/// Raw palette, modeled on Origin's "midnight gallery": a near-black room, white type,
-/// cyan for data, violet family for emphasis and category panels.
+/// Raw palette, derived from a "midnight gallery" idea: a cool near-black room lit from above,
+/// white type, cyan for data, the violet family for the assistant and for category panels.
 /// Use semantic tokens (`Color.ds`) in views; reach for `Palette` only when defining tokens.
 public enum Palette {
-    // Neutrals — depth is built from shade breaks, not bright borders.
+    // Neutrals: a cool ladder (blue sits a few steps above red) so the room reads deep, not grey.
+    // Depth is built from shade breaks and a lit top edge, not bright borders or drop shadows.
     public static let void = RGB(hex: 0x000000)
-    public static let abyss = RGB(hex: 0x090A0B)
-    public static let obsidian = RGB(hex: 0x0F1011)
-    public static let carbon = RGB(hex: 0x161718)
-    public static let graphite = RGB(hex: 0x1F2022)
+    /// The icon's outer stop (#050506), so the icon sits in the room rather than on it.
+    public static let abyss = RGB(hex: 0x050607)
+    public static let obsidian = RGB(hex: 0x08090B)
+    public static let carbon = RGB(hex: 0x121418)
+    /// Top stop of the surface fill: cards are a touch brighter where the light lands.
+    public static let carbonLit = RGB(hex: 0x16181D)
+    public static let graphite = RGB(hex: 0x1B1D22)
+    /// Top stop of the raised fill.
+    public static let graphiteLit = RGB(hex: 0x1F2227)
+    /// The overlay layer: toasts, menus, the segmented thumb.
+    public static let basalt = RGB(hex: 0x24272D)
+    /// Pressed surfaces, one step above the overlay (steel was a jarring jump).
+    public static let slate = RGB(hex: 0x2B2E35)
+    /// Empty bar segments only.
     public static let steel = RGB(hex: 0x3F4041)
-    /// Origin's "Fog" (#6A6B6B) fails WCAG AA for small text on the canvas (3.5:1).
-    /// Lifted to #808182 so tertiary text clears 4.5:1 on canvas and surface.
-    public static let fog = RGB(hex: 0x808182)
-    public static let ash = RGB(hex: 0x9F9FA0)
+    /// Disabled labels. WCAG exempts them; this ink never carries information.
+    public static let dusk = RGB(hex: 0x56595F)
+    /// Field borders: opaque, so a field's edge clears 3:1 on every layer a field may sit on.
+    public static let rim = RGB(hex: 0x6B6E76)
+    /// Tertiary ink. Origin's "Fog" (#6A6B6B) fails WCAG AA for small text on the canvas (3.5:1);
+    /// lifted and cooled so it clears 4.5:1 up to the raised card.
+    public static let fog = RGB(hex: 0x888B93)
+    /// Secondary ink, about 70% white.
+    public static let ash = RGB(hex: 0xAEB1B8)
     public static let silver = RGB(hex: 0xCACACA)
-    public static let cloud = RGB(hex: 0xF5F5F7)
+    /// Bottom stop of the primary button, and its pressed fill.
+    public static let pearl = RGB(hex: 0xE4E7EB)
+    public static let pearlPressed = RGB(hex: 0xD5D9DF)
+    public static let cloud = RGB(hex: 0xF2F3F5)
     public static let pure = RGB(hex: 0xFFFFFF)
 
     // Chromatic accents.
@@ -73,6 +92,8 @@ public enum Palette {
     public static let orchidBloom = RGB(hex: 0xEF72E3)
     /// Orchid dark enough to carry white labels (iOS draws swipe-action labels white): 5.6:1.
     public static let deepOrchid = RGB(hex: 0xB0309F)
+    /// The armed destructive button, pressed: white on it is 6.8:1.
+    public static let deepOrchidPressed = RGB(hex: 0x9A2A8B)
     /// Clear azure (was periwinkle #90B8F0).
     public static let azure = RGB(hex: 0x5AA0FF)
     /// The first warm tone — replaces a neutral silver tile, since a gray can't be made un-dusty.
@@ -85,25 +106,50 @@ public enum Palette {
     public static let teal = RGB(hex: 0x14C7B4)
     public static let lime = RGB(hex: 0xB8E62E)
     public static let violet = RGB(hex: 0x9B5CFF)
+    /// Violet as foreground on the dark room: violet itself is 4.3:1 on a raised card, this is 5.1.
+    public static let violetLit = RGB(hex: 0xAE80FF)
 }
 
 /// Semantic color tokens. Views use these, never raw hex.
 public struct DSColors: Sendable {
     // Surfaces, back to front.
+    /// Field wells, the segmented track, code.
     public let canvasDeep = Palette.abyss.color
+    /// The screen and sheets.
     public let canvas = Palette.obsidian.color
+    /// Cards, list sections, chips. Cards draw it as a gradient from `Palette.carbonLit` (see `DSFill`).
     public let surface = Palette.carbon.color
+    /// Raised cards, the ask field, user bubbles.
     public let surfaceRaised = Palette.graphite.color
-    public let surfacePressed = Palette.steel.color
+    /// Toasts, menus, popovers, the segmented thumb. Never put a field here: its border is under 3:1.
+    public let surfaceOverlay = Palette.basalt.color
+    /// Pressed rows and tiles.
+    public let surfacePressed = Palette.slate.color
+
+    // Lines.
+    /// Row separators, dividers inside cards, chart grid.
+    public let divider = Color.white.opacity(0.05)
+    /// The bottom of the lit edge; flat outlines.
     public let hairline = Color.white.opacity(0.08)
-    public let hairlineStrong = Color.white.opacity(0.16)
+    /// Chip and secondary-button edges, the progress track.
+    public let hairlineStrong = Color.white.opacity(0.14)
+    /// Text fields: opaque, at least 3:1 on canvasDeep, canvas, surface and raised (not the overlay).
+    public let fieldBorder = Palette.rim.color
 
     // Ink.
     public let ink = Palette.pure.color
     public let inkSoft = Palette.cloud.color
     public let inkSecondary = Palette.ash.color
+    /// AA up to `surfaceRaised`; use `inkSecondary` on the overlay, pressed and caution-wash layers.
     public let inkTertiary = Palette.fog.color
-    public let inkInverse = Palette.void.color
+    /// Disabled labels only, so disabled controls never fade with opacity.
+    public let inkDisabled = Palette.dusk.color
+    /// On white, pearl and cyan fills: the canvas itself, not pure black.
+    public let inkInverse = Palette.obsidian.color
+
+    // The primary button's pearl ramp.
+    public let pearl = Palette.pearl.color
+    public let pearlPressed = Palette.pearlPressed.color
 
     // Accents.
     public let accent = Palette.cyanSignal.color
@@ -113,18 +159,60 @@ public struct DSColors: Sendable {
     public let orchid = Palette.orchidBloom.color
     public let azure = Palette.azure.color
     public let amber = Palette.amber.color
+    public let violet = Palette.violet.color
 
-    // Money signals. Origin avoids bright green/red; so do we.
+    // Money signals. No bright green or red.
     /// Money coming in.
     public let inflow = Palette.cyanSignal.color
     /// Over target, needs attention.
     public let caution = Palette.orchidBloom.color
-    /// Caution as a fill under white labels (a Delete swipe action).
+    /// Caution as a fill under white labels (a Delete swipe action, the armed destructive button).
     public let cautionFill = Palette.deepOrchid.color
+    public let cautionFillPressed = Palette.deepOrchidPressed.color
 }
 
 extension Color {
     public static let ds = DSColors()
+}
+
+/// Interaction states, laid over whatever the control already is. Dim things by dropping an
+/// ink tier, never with opacity; these washes only ever add light.
+public enum DSState {
+    /// Pointer hover (iPad pointer, the dashboard).
+    public static let hover = Color.white.opacity(0.04)
+    /// Rows, chips, secondary and icon buttons while held.
+    public static let pressed = Color.white.opacity(0.08)
+    /// A selected row, with a 2pt `accent` leading bar (`selectionBarWidth`).
+    public static let selected = Color.white.opacity(0.10)
+    public static let selectionBarWidth: CGFloat = 2
+    /// Focus: a 1.5pt ring plus a 3pt halo of the same colour at 24%.
+    public static let focusRingWidth: CGFloat = 1.5
+    public static let focusHaloWidth: CGFloat = 3
+    public static let focusHalo = Palette.cyanSignal.color.opacity(0.24)
+    /// The ask field's focus ring and halo are iris: the assistant's colour.
+    public static let focusHaloAI = Palette.irisGleam.color.opacity(0.24)
+}
+
+/// How strongly a tone washes a surface. Text sits only on `.tag`; the stronger washes carry
+/// icons (3:1 for non-text) or light.
+public enum DSWash: Sendable, CaseIterable {
+    /// Tags, chips, tone filters: the only wash text sits on.
+    case tag
+    /// Glyph backgrounds.
+    case glyph
+    /// A card's corner bloom.
+    case bloom
+    /// Tinted edges.
+    case edge
+
+    public var opacity: Double {
+        switch self {
+        case .tag: 0.12
+        case .glyph: 0.16
+        case .bloom: 0.18
+        case .edge: 0.28
+        }
+    }
 }
 
 /// Chromatic panel tones, used for category tiles, row glyphs, and chart series.
@@ -181,13 +269,26 @@ public enum DSTone: String, CaseIterable, Sendable {
 
     public var onFillRGB: RGB { self == .irisDeep ? Palette.pure : Palette.void }
 
-    /// The tone as foreground on the dark canvas (irisDeep is too dark for that, so it lifts to iris).
-    public var onCanvasRGB: RGB { self == .irisDeep ? Palette.irisGleam : rgb }
+    /// The tone as foreground on the dark canvas. irisDeep is too dark for that, so it lifts to iris;
+    /// violet lifts to violetLit, since violet itself misses AA on a raised card.
+    public var onCanvasRGB: RGB {
+        switch self {
+        case .irisDeep: Palette.irisGleam
+        case .violet: Palette.violetLit
+        default: rgb
+        }
+    }
+
+    /// How much white the tile gloss adds at its top edge. irisDeep carries white ink, so its
+    /// gloss stops at 10%, where white still clears AA.
+    public var gloss: Double { self == .irisDeep ? 0.10 : 0.14 }
 
     public var fill: Color { rgb.color }
     public var onFill: Color { onFillRGB.color }
-    /// Low-intensity wash for glyph backgrounds on dark surfaces.
-    public var wash: Color { rgb.color.opacity(0.16) }
+    /// Low-intensity wash for glyph backgrounds on dark surfaces (`wash(.glyph)`).
+    public var wash: Color { wash(.glyph) }
+    /// The tone at one of the wash levels. Text goes only on `.tag`, over canvas or surface.
+    public func wash(_ level: DSWash) -> Color { rgb.color.opacity(level.opacity) }
     /// Tone that reads as foreground on the dark canvas.
     public var onCanvas: Color { onCanvasRGB.color }
 }

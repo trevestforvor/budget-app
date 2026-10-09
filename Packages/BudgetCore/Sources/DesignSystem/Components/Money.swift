@@ -75,13 +75,21 @@ public struct DSAmountText: View {
     }
 }
 
-/// The hero number: whisper-weight serif with lowered-contrast cents.
+/// The hero number: whisper-weight serif with superior cents — set smaller, raised toward the cap
+/// height and in secondary ink, as prices are in print. The whole dollars roll digit by digit when
+/// the value changes.
 public struct DSHeroAmount: View {
     private let label: String
     private let value: Decimal
     private let currencyCode: String
     private let caption: String?
     private let captionTint: Color
+    /// `amountXL`'s size, scaled, so the cents follow Dynamic Type with it.
+    @ScaledMetric(relativeTo: .largeTitle) private var heroSize: CGFloat = 56
+
+    /// The cents' size and lift against the whole dollars.
+    nonisolated static let centsScale: CGFloat = 0.58
+    nonisolated static let centsLift: CGFloat = 0.36
 
     public init(label: String, value: Decimal, currencyCode: String = "USD", caption: String? = nil, captionTint: Color = Color.ds.inkSecondary) {
         self.label = label
@@ -99,10 +107,13 @@ public struct DSHeroAmount: View {
                 Text(parts.whole)
                     .dsFont(.amountXL)
                     .foregroundStyle(Color.ds.ink)
+                    .contentTransition(.numericText(value: NSDecimalNumber(decimal: value).doubleValue))
                 Text(parts.fraction)
-                    .dsFont(.amount)
+                    .font(.system(size: heroSize * Self.centsScale, weight: .light, design: .serif))
+                    .baselineOffset(heroSize * Self.centsLift)
                     .foregroundStyle(Color.ds.inkSecondary)
             }
+            .animation(DSMotion.standard, value: value)
             .lineLimit(1)
             .minimumScaleFactor(0.5)
             if let caption {

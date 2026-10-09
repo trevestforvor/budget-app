@@ -70,7 +70,7 @@ struct TargetsView: View {
                     Label("Add a cap", systemImage: "plus")
                         .dsFont(.body)
                         .foregroundStyle(Color.ds.accent)
-                        .frame(maxWidth: .infinity, minHeight: 52, alignment: .leading)
+                        .frame(maxWidth: .infinity, minHeight: DSSize.listRow, alignment: .leading)
                         .contentShape(Rectangle())
                 }
                 .buttonStyle(.plain)
@@ -151,21 +151,19 @@ struct MerchantCapSheet: View {
                     if let existing {
                         Text(existing.merchant).dsFont(.display).foregroundStyle(Color.ds.ink)
                     } else {
-                        TextField("Merchant", text: $merchant, prompt: Text("DoorDash, Amazon…"))
-                            .dsFont(.title)
-                            .foregroundStyle(Color.ds.ink)
-                            .textInputAutocapitalization(.words)
-                            .autocorrectionDisabled()
-                            .overlay(alignment: .bottom) { DSDivider() }
-                            .accessibilityIdentifier("capMerchant")
+                        DSField("Merchant", isEmpty: merchant.isEmpty, onClear: { merchant = "" }) {
+                            TextField("Merchant", text: $merchant, prompt: Text("DoorDash, Amazon…"))
+                                .textInputAutocapitalization(.words)
+                                .autocorrectionDisabled()
+                                .accessibilityIdentifier("capMerchant")
+                        }
                     }
                 }
-                TextField("Amount", value: $amount, format: .currency(code: "USD").precision(.fractionLength(0...2)))
-                    .keyboardType(.decimalPad)
-                    .dsFont(.amountXL)
-                    .foregroundStyle(Color.ds.ink)
-                    .overlay(alignment: .bottom) { DSDivider() }
-                    .accessibilityLabel("Monthly cap amount")
+                DSAmountField(currencySymbol: nil, alignment: .leading) {
+                    TextField("Amount", value: $amount, format: .currency(code: "USD").precision(.fractionLength(0...2)))
+                        .keyboardType(.decimalPad)
+                        .accessibilityLabel("Monthly cap amount")
+                }
                 Text(existing.map { "\($0.spent.shortString) spent there this month. Going over is flagged, never blocked." }
                      ?? "Use the merchant's name as it shows in Activity. Going over is flagged, never blocked.")
                     .dsFont(.caption)
@@ -173,7 +171,7 @@ struct MerchantCapSheet: View {
                 if let problem { Text(problem).dsFont(.callout).foregroundStyle(Color.ds.caution) }
                 Spacer()
                 Button(isSaving ? "Saving…" : "Save cap") { Task { await save() } }
-                    .buttonStyle(.ds(.primary, fullWidth: true))
+                    .buttonStyle(.ds(.primary, size: .large, fullWidth: true))
                     .disabled(isSaving || amount <= 0 || name.isEmpty)
                 if let existing {
                     Button("Remove cap") { Task { await run(.removeMerchantTarget(RemoveMerchantTarget(merchant: existing.merchant))) } }

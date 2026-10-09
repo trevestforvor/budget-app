@@ -80,6 +80,7 @@ struct SpendingView: View {
                 .padding(.horizontal, DSSpace.gutter)
                 .padding(.bottom, DSSpace.xxl)
             }
+            .scrollEdgeEffectStyle(.soft, for: .top)
             .dsScreenBackground()
             // Pull to refresh; the page starts with its own title, like every tab, with no bar above it.
             .reloadable(button: false) { await load() }
@@ -337,7 +338,7 @@ struct SpendingView: View {
                                    currencyCode: total.spent.currencyCode, footnote: Self.tileFootnote(total),
                                    tone: CategoryStyle.tone(for: total.category))
                 }
-                .buttonStyle(.plain)
+                .buttonStyle(.dsPress(radius: DSRadius.tile, wash: Color.ds.surfacePressed.opacity(0.2)))
             }
         }
     }
@@ -465,7 +466,7 @@ struct SpendingView: View {
                             Text("Due in the next 30 days").dsFont(.callout).foregroundStyle(Color.ds.inkSecondary)
                             Spacer()
                             DSAmountText((found.dueNext30Days ?? upcoming.map(\.amount).sum()).decimal, sign: .magnitude)
-                            Image(systemName: "chevron.right").font(.system(size: 12, weight: .semibold))
+                            Image(systemName: "chevron.right").font(.system(size: DSIconSize.xs, weight: .semibold))
                                 .foregroundStyle(Color.ds.inkTertiary).accessibilityHidden(true)
                         }
                         .frame(minHeight: 48)

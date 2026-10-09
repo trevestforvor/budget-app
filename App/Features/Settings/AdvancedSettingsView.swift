@@ -33,7 +33,7 @@ struct AdvancedSettingsView: View {
                     Button { openURL(url) } label: {
                         DSListRow("Open the Budget dashboard", detail: url.host(), systemImage: "safari", tone: .azure) {
                             Image(systemName: "arrow.up.right")
-                                .font(.system(size: 13, weight: .semibold))
+                                .font(.system(size: DSIconSize.xs, weight: .semibold))
                                 .foregroundStyle(Color.ds.inkTertiary)
                         }
                     }
@@ -97,17 +97,14 @@ struct AdvancedSettingsView: View {
         }
         if !draft.demoOn {
             DSListSection("Your server", footer: "Both come from your Olares: open Budget, then Settings → Connect your phone. The phone only talks to your own server, and the token stays in this phone's Keychain.") {
-                SettingsField("Server address") {
+                DSField("Server address", style: .inline, isCode: true) {
                     TextField("Server address", text: $draft.serverURL, prompt: Text("https://budget.you.olares.com"))
                         .keyboardType(.URL)
                         .textContentType(.URL)
-                        .textInputAutocapitalization(.never)
-                        .autocorrectionDisabled()
-                        .font(.system(.callout, design: .monospaced))
                         .onChange(of: draft.serverURL) { check = .idle }
                         .accessibilityIdentifier("serverAddress")
                 }
-                SettingsField("API token") {
+                DSField("API token", style: .inline) {
                     HStack(spacing: DSSpace.sm) {
                         SecureField("API token", text: $draft.token, prompt: Text("Paste it from your Olares"))
                             .textInputAutocapitalization(.never)
@@ -133,12 +130,9 @@ struct AdvancedSettingsView: View {
         DSListSection("Live model", footer: "Ask and the categorization model run on Qwen on your Olares, with the demo ledger's numbers. Only in the simulator.") {
             DSToggleRow("Use the model on your Olares", systemImage: "cpu", tone: .iris, isOn: $draft.useLiveModel)
             if draft.useLiveModel {
-                SettingsField("Model address") {
+                DSField("Model address", style: .inline, isCode: true) {
                     TextField("Model address", text: $draft.liveModelURL, prompt: Text("https://qwen.you.olares.com"))
                         .keyboardType(.URL)
-                        .textInputAutocapitalization(.never)
-                        .autocorrectionDisabled()
-                        .font(.system(.footnote, design: .monospaced))
                 }
             }
         }
@@ -428,13 +422,13 @@ private struct DecisionModelSection: View {
                         Text("What the model sees").dsFont(.body).foregroundStyle(Color.ds.ink)
                     }
                     .tint(Color.ds.inkSecondary)
-                    .frame(minHeight: 52)
+                    .frame(minHeight: DSSize.listRow)
                 }
             }
             if isDirty {
                 Button(isApplying ? "Applying…" : "Apply and re-check what's waiting") { Task { await apply() } }
                     .buttonStyle(.ds(.quiet))
-                    .frame(minHeight: 52)
+                    .frame(minHeight: DSSize.listRow)
                     .disabled(isApplying)
             }
             if let message {
@@ -515,7 +509,7 @@ private struct ToolListView: View {
                                     .lineLimit(2)
                             }
                             .padding(.vertical, DSSpace.xs)
-                            .frame(minHeight: 52, alignment: .leading)
+                            .frame(minHeight: DSSize.listRow, alignment: .leading)
                         }
                     }
                 }

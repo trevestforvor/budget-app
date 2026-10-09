@@ -33,25 +33,15 @@ struct ConnectView: View {
 
                 DSCard {
                     VStack(alignment: .leading, spacing: DSSpace.md) {
-                        VStack(alignment: .leading, spacing: 6) {
-                            DSEyebrow("Server URL")
-                            TextField("https://…olares.com", text: $serverURL)
+                        DSField("Server URL", isCode: true, isEmpty: serverURL.isEmpty, onClear: { serverURL = "" }) {
+                            TextField("Server URL", text: $serverURL, prompt: Text("https://…olares.com"))
                                 .keyboardType(.URL)
                                 .textContentType(.URL)
-                                .textInputAutocapitalization(.never)
-                                .autocorrectionDisabled()
-                                .font(.system(.callout, design: .monospaced))
-                                .foregroundStyle(Color.ds.ink)
                                 .accessibilityIdentifier("connectURL")
                         }
-                        DSDivider()
-                        VStack(alignment: .leading, spacing: 6) {
-                            DSEyebrow("API token")
+                        DSField("API token", isCode: true) {
                             HStack {
                                 SecureField("Token", text: $token)
-                                    .textInputAutocapitalization(.never)
-                                    .autocorrectionDisabled()
-                                    .foregroundStyle(Color.ds.ink)
                                     .accessibilityIdentifier("connectToken")
                                 PasteButton(payloadType: String.self) { strings in
                                     if let pasted = strings.first { token = pasted.trimmingCharacters(in: .whitespacesAndNewlines) }
@@ -71,7 +61,7 @@ struct ConnectView: View {
                 }
 
                 Button(isChecking ? "Checking…" : "Connect") { Task { await connect() } }
-                    .buttonStyle(.ds(.primary, fullWidth: true))
+                    .buttonStyle(.ds(.primary, size: .large, fullWidth: true))
                     .disabled(isChecking || trimmedURL.isEmpty || trimmedToken.isEmpty)
             }
             .padding(.horizontal, DSSpace.gutter)

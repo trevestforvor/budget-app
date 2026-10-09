@@ -140,7 +140,7 @@ struct OpportunityView: View {
                     .foregroundStyle(Color.ds.ink)
                     .padding(.horizontal, DSSpace.sm)
                     .padding(.vertical, DSSpace.xxs + 2)
-                    .background(.ultraThinMaterial, in: Capsule())
+                    .glassEffect(.regular, in: .capsule)
                     .padding(.bottom, DSSpace.sm)
             }
             .overlay(alignment: .topTrailing) { closeCameraButton }
@@ -165,11 +165,11 @@ struct OpportunityView: View {
     private var closeCameraButton: some View {
         Button(action: closeCamera) {
             Image(systemName: "xmark")
-                .font(.system(size: 14, weight: .semibold))
+                .font(.system(size: DSIconSize.sm, weight: .semibold))
                 .foregroundStyle(Color.ds.ink)
                 .frame(width: 32, height: 32)
-                .background(.ultraThinMaterial, in: Circle())
-                .frame(width: 44, height: 44)
+                .glassEffect(.regular.interactive(), in: .circle)
+                .frame(width: DSSize.hitTarget, height: DSSize.hitTarget)
                 .contentShape(Rectangle())
         }
         .buttonStyle(.plain)
@@ -243,17 +243,13 @@ struct OpportunityView: View {
     private var priceField: some View {
         VStack(alignment: .leading, spacing: DSSpace.xs) {
             DSEyebrow("Price")
-            HStack(alignment: .firstTextBaseline, spacing: 2) {
-                Text("$").dsFont(.amount).foregroundStyle(Color.ds.inkSecondary)
+            DSAmountField(isEmpty: typed.isEmpty, isFocused: typing) {
                 TextField("Price", text: $typed, prompt: Text("0"))
                     .keyboardType(.decimalPad)
-                    .dsFont(.amountXL)
-                    .foregroundStyle(Color.ds.ink)
                     .focused($typing)
                     .accessibilityLabel("Price in dollars")
                     .accessibilityIdentifier("opportunityPrice")
             }
-            DSDivider()
         }
     }
 

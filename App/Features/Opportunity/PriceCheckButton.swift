@@ -16,7 +16,7 @@ struct PriceCheckButton: View {
             app.openOpportunity()
         } label: {
             Image(systemName: "tag")
-                .font(.system(size: 20, weight: .medium))
+                .font(.system(size: DSIconSize.lg, weight: .medium))
                 .foregroundStyle(Color.ds.ink)
                 .frame(width: Self.size, height: Self.size)
                 .contentShape(.circle)

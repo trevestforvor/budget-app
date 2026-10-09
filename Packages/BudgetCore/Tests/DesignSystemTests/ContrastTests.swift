@@ -49,21 +49,125 @@ struct ContrastTests {
 
     static let raisedBackgrounds: [(String, RGB)] = backgrounds + [("surfaceRaised", Palette.graphite)]
 
-    @Test("Caption ink on raised cards clears AA; inkTertiary is for canvas and surface only", arguments: [
-        ("ink", Palette.pure), ("inkSoft", Palette.cloud), ("inkSecondary", Palette.ash),
+    /// Every layer of the room, back to front, including the lit top stops of the card fills.
+    static let ladder: [(String, RGB)] = [
+        ("canvasDeep", Palette.abyss), ("canvas", Palette.obsidian), ("surface", Palette.carbon), ("surfaceLit", Palette.carbonLit),
+        ("surfaceRaised", Palette.graphite), ("raisedLit", Palette.graphiteLit), ("surfaceOverlay", Palette.basalt), ("surfacePressed", Palette.slate),
+    ]
+
+    @Test("Caption ink on raised cards clears AA", arguments: [
+        ("ink", Palette.pure), ("inkSoft", Palette.cloud), ("inkSecondary", Palette.ash), ("inkTertiary", Palette.fog),
     ])
     func raisedInkContrast(name: String, ink: RGB) {
         for (bgName, bg) in Self.raisedBackgrounds {
             let ratio = ink.contrast(with: bg)
             #expect(ratio >= 4.5, "\(name) on \(bgName) is \(ratio):1")
         }
-        #expect(Palette.fog.contrast(with: Palette.graphite) < 4.5) // why raised cards don't use inkTertiary
     }
 
-    @Test("White labels clear AA on the caution fill (swipe actions)")
+    @Test("inkTertiary clears AA up to the raised card, and not on the overlay — why toasts and menus use inkSecondary")
+    func tertiaryInkReach() {
+        for name in ["canvasDeep", "canvas", "surface", "surfaceLit", "surfaceRaised", "raisedLit"] {
+            let bg = Self.ladder.first { $0.0 == name }!.1
+            let ratio = Palette.fog.contrast(with: bg)
+            #expect(ratio >= 4.5, "inkTertiary on \(name) is \(ratio):1")
+        }
+        #expect(Palette.fog.contrast(with: Palette.basalt) < 4.5)
+        #expect(Palette.fog.contrast(with: Palette.slate) < 4.5)
+    }
+
+    @Test("ink, inkSoft and inkSecondary clear AA on every layer of the ladder", arguments: [
+        ("ink", Palette.pure), ("inkSoft", Palette.cloud), ("inkSecondary", Palette.ash),
+    ])
+    func ladderInkContrast(name: String, ink: RGB) {
+        for (bgName, bg) in Self.ladder {
+            let ratio = ink.contrast(with: bg)
+            #expect(ratio >= 4.5, "\(name) on \(bgName) is \(ratio):1")
+        }
+    }
+
+    @Test("The opaque field border clears 3:1 (WCAG 1.4.11) everywhere a field may sit, and not on the overlay")
+    func fieldBorder() {
+        for (bgName, bg) in [("canvasDeep", Palette.abyss), ("canvas", Palette.obsidian), ("surface", Palette.carbon), ("surfaceRaised", Palette.graphite)] {
+            let ratio = Palette.rim.contrast(with: bg)
+            #expect(ratio >= 3, "fieldBorder on \(bgName) is \(ratio):1")
+        }
+        #expect(Palette.rim.contrast(with: Palette.basalt) < 3) // why a field never sits on the overlay
+    }
+
+    @Test("Inverse ink clears AA on every fill it sits on", arguments: [
+        ("white", Palette.pure), ("pearl", Palette.pearl), ("pearlPressed", Palette.pearlPressed),
+        ("cyan", Palette.cyanSignal), ("iris", Palette.irisGleam),
+    ])
+    func inverseInk(name: String, fill: RGB) {
+        let ratio = Palette.obsidian.contrast(with: fill)
+        #expect(ratio >= 4.5, "inkInverse on \(name) is \(ratio):1")
+    }
+
+    @Test("Every tone's foreground clears AA on its own tag wash, and bare on canvas, surface and raised", arguments: DSTone.allCases)
+    func toneOnWash(tone: DSTone) {
+        for (bgName, bg) in Self.backgrounds {
+            let wash = tone.rgb.composited(over: bg, opacity: DSWash.tag.opacity)
+            let ratio = tone.onCanvasRGB.contrast(with: wash)
+            #expect(ratio >= 4.5, "\(tone) on its wash over \(bgName) is \(ratio):1")
+        }
+        for (bgName, bg) in Self.raisedBackgrounds {
+            let ratio = tone.onCanvasRGB.contrast(with: bg)
+            #expect(ratio >= 4.5, "\(tone) on \(bgName) is \(ratio):1")
+        }
+    }
+
+    @Test("Violet itself misses AA on a raised card — why its foreground lifts to violetLit")
+    func violetLifts() {
+        #expect(Palette.violet.contrast(with: Palette.graphite) < 4.5)
+        #expect(DSTone.violet.onCanvasRGB == Palette.violetLit)
+    }
+
+    @Test("Tile ink clears AA through the gloss, at its brightest", arguments: DSTone.allCases)
+    func tileGloss(tone: DSTone) {
+        let glossed = Palette.pure.composited(over: tone.rgb, opacity: tone.gloss)
+        let ratio = tone.onFillRGB.contrast(with: glossed)
+        #expect(ratio >= 4.5, "\(tone) tile ink under the gloss is \(ratio):1")
+    }
+
+    @Test("irisDeep's gloss stops at 10%: at the standard 14% its white ink would fall toward the line")
+    func irisDeepGlossCap() {
+        #expect(DSTone.irisDeep.gloss == 0.10)
+        let capped = Palette.pure.composited(over: Palette.deepIris, opacity: 0.10)
+        #expect(Palette.pure.contrast(with: capped) >= 4.5)
+    }
+
+    @Test("White labels clear AA on the caution fill, at rest and pressed")
     func cautionFill() {
         #expect(Palette.pure.contrast(with: Palette.deepOrchid) >= 4.5)
+        #expect(Palette.pure.contrast(with: Palette.deepOrchidPressed) >= 4.5)
         #expect(Palette.pure.contrast(with: Palette.orchidBloom) < 3) // why the swipe doesn't use caution itself
+    }
+
+    @Test("Caution reads on a field's well and on a card; secondary ink reads on the caution wash")
+    func cautionText() {
+        #expect(Palette.orchidBloom.contrast(with: Palette.abyss) >= 4.5)
+        #expect(Palette.orchidBloom.contrast(with: Palette.carbon) >= 4.5)
+        let wash = Palette.orchidBloom.composited(over: Palette.carbon, opacity: 0.18)
+        #expect(Palette.ash.contrast(with: wash) >= 4.5)
+        #expect(Palette.fog.contrast(with: wash) < 4.5) // why text on the caution wash is inkSecondary or brighter
+    }
+
+    @Test("The tinted button's cyan label clears AA on its own wash, on cards and raised cards")
+    func tintedButton() {
+        for (bgName, bg) in [("surface", Palette.carbon), ("surfaceRaised", Palette.graphite)] {
+            let wash = Palette.cyanSignal.composited(over: bg, opacity: 0.14)
+            let ratio = Palette.cyanSignal.contrast(with: wash)
+            #expect(ratio >= 4.5, "tinted label over \(bgName) is \(ratio):1")
+        }
+    }
+
+    @Test("Secondary ink clears AA under the screen blooms")
+    func screenBlooms() {
+        let data = Palette.cyanSignal.composited(over: Palette.obsidian, opacity: DSScreenBloom.data.intensity)
+        let ai = Palette.irisGleam.composited(over: Palette.obsidian, opacity: DSScreenBloom.ai.intensity)
+        #expect(Palette.ash.contrast(with: data) >= 4.5)
+        #expect(Palette.ash.contrast(with: ai) >= 4.5)
     }
 
     @Test("Week strip: white ink clears AA on the strongest fill, on every surface it sits on")

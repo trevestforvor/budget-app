@@ -19,7 +19,7 @@ struct AskLink: View {
                 .dsFont(.callout)
                 .foregroundStyle(Color.ds.iris)
                 .multilineTextAlignment(.leading)
-                .frame(minHeight: 44, alignment: .leading)
+                .frame(minHeight: DSSize.hitTarget, alignment: .leading)
                 .contentShape(Rectangle())
         }
         .buttonStyle(.plain)

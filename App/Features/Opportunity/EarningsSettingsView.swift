@@ -55,19 +55,14 @@ struct EarningsSettingsView: View {
 
     private var paySection: some View {
         DSListSection("How you're paid", footer: "Leave pay empty and Budget estimates it from your paychecks, using 2026 federal tax, Social Security and Medicare for a single filer. That leaves out state tax, 401(k) and benefits, so it usually runs a little low.") {
-            Picker("Paid", selection: $profile.payType) {
-                ForEach(EarningsProfile.PayType.allCases, id: \.self) { Text($0.label).tag($0) }
-            }
-            .segmentedUnlessLargeText()
-            .padding(.vertical, DSSpace.sm)
-            SettingsField(profile.payType == .salary ? "Yearly pay, before tax" : "Hourly wage, before tax") {
-                HStack(spacing: 2) {
-                    Text("$").foregroundStyle(Color.ds.inkSecondary)
-                    TextField("Pay", text: $grossText, prompt: Text(grossPrompt))
-                        .keyboardType(.decimalPad)
-                        .focused($editing, equals: .pay)
-                        .accessibilityLabel(profile.payType == .salary ? "Yearly pay before tax, in dollars" : "Hourly wage before tax, in dollars")
-                }
+            DSSegmented("Paid", selection: $profile.payType, options: EarningsProfile.PayType.allCases) { $0.label }
+                .padding(.vertical, DSSpace.xxs)
+            DSField(profile.payType == .salary ? "Yearly pay, before tax" : "Hourly wage, before tax", style: .inline, prefix: "$",
+                    isEmpty: grossText.isEmpty, isFocused: editing == .pay) {
+                TextField("Pay", text: $grossText, prompt: Text(grossPrompt))
+                    .keyboardType(.decimalPad)
+                    .focused($editing, equals: .pay)
+                    .accessibilityLabel(profile.payType == .salary ? "Yearly pay before tax, in dollars" : "Hourly wage before tax, in dollars")
             }
             hours
         }
@@ -96,14 +91,11 @@ struct EarningsSettingsView: View {
     private var takeHomeSection: some View {
         DSListSection("Take-home", footer: "Paychecks land after tax, so this is what an hour of work actually buys. It's the middle month of your Income category, so a bonus or a refund doesn't count as pay; anything else filed there that isn't pay belongs in another category.") {
             DSListRow("From your paychecks", detail: paycheckDetail, value: paychecks.map { "\($0.monthly.formatted(fractionDigits: 0))/mo" })
-            SettingsField("Use this instead, a month") {
-                HStack(spacing: 2) {
-                    Text("$").foregroundStyle(Color.ds.inkSecondary)
-                    TextField("Take-home", text: $takeHomeText, prompt: Text("Leave empty to use your paychecks"))
-                        .keyboardType(.decimalPad)
-                        .focused($editing, equals: .takeHome)
-                        .accessibilityLabel("Take-home a month, in dollars")
-                }
+            DSField("Use this instead, a month", style: .inline, prefix: "$", isEmpty: takeHomeText.isEmpty, isFocused: editing == .takeHome) {
+                TextField("Take-home", text: $takeHomeText, prompt: Text("Leave empty to use your paychecks"))
+                    .keyboardType(.decimalPad)
+                    .focused($editing, equals: .takeHome)
+                    .accessibilityLabel("Take-home a month, in dollars")
             }
         }
     }

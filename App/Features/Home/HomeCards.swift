@@ -19,9 +19,9 @@ struct WeeklyRecapCard: View {
                     Spacer(minLength: DSSpace.xs)
                     Button(action: onDismiss) {
                         Image(systemName: "xmark")
-                            .font(.system(size: 13, weight: .semibold))
+                            .font(.system(size: DSIconSize.xs, weight: .semibold))
                             .foregroundStyle(Color.ds.inkSecondary)
-                            .frame(width: 44, height: 44)
+                            .frame(width: DSSize.hitTarget, height: DSSize.hitTarget)
                             .contentShape(Rectangle())
                     }
                     .buttonStyle(.plain)
@@ -154,7 +154,7 @@ struct LastSevenDaysCard: View {
                                 .foregroundStyle(Color.ds.inkSecondary)
                                 .accessibilityHidden(true)
                         }
-                        .frame(minHeight: 44)
+                        .frame(minHeight: DSSize.hitTarget)
                         .contentShape(Rectangle())
                     }
                     .buttonStyle(.plain)

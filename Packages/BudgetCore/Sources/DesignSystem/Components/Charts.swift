@@ -55,6 +55,13 @@ public struct DSLineChart: View {
         return (lo - pad)...(hi + pad)
     }
 
+    /// The last month label is drawn only when there's room for it before the plot's trailing
+    /// edge; a tick in the final ~3 weeks would have its label cut off by the value axis.
+    private var lastLabelledMonth: Date? {
+        guard let last = (actual.map(\.date) + projected.map(\.date)).max() else { return nil }
+        return Calendar.current.date(byAdding: .day, value: -20, to: last)
+    }
+
     public var body: some View {
         let floor = domain.lowerBound
         Chart {
@@ -75,7 +82,10 @@ public struct DSLineChart: View {
                     yEnd: .value("Balance", point.value),
                     series: .value("Series", "ActualArea")
                 )
-                .foregroundStyle(LinearGradient(colors: [Color.ds.accent.opacity(0.28), Color.ds.accent.opacity(0)], startPoint: .top, endPoint: .bottom))
+                .foregroundStyle(LinearGradient(stops: [.init(color: Color.ds.accent.opacity(0.26), location: 0),
+                                                        .init(color: Color.ds.accent.opacity(0.08), location: 0.55),
+                                                        .init(color: Color.ds.accent.opacity(0), location: 1)],
+                                                startPoint: .top, endPoint: .bottom))
                 .interpolationMethod(.catmullRom)
             }
             ForEach(actual) { point in
@@ -83,11 +93,13 @@ public struct DSLineChart: View {
                     .foregroundStyle(Color.ds.accent)
                     .lineStyle(StrokeStyle(lineWidth: 2, lineCap: .round))
                     .interpolationMethod(.catmullRom)
+                    // The line's own light, cast a little below it.
+                    .shadow(color: Color.ds.accent.opacity(0.3), radius: 4, y: 2)
             }
             ForEach(projected) { point in
                 LineMark(x: .value("Date", point.date), y: .value("Balance", point.value), series: .value("Series", "Projected"))
                     .foregroundStyle(Color.ds.iris)
-                    .lineStyle(StrokeStyle(lineWidth: 2, lineCap: .round, dash: [4, 5]))
+                    .lineStyle(StrokeStyle(lineWidth: 1.5, lineCap: .round, dash: [4, 4]))
                     .interpolationMethod(.catmullRom)
             }
             if let last = actual.last {
@@ -98,7 +110,7 @@ public struct DSLineChart: View {
             if let goal {
                 RuleMark(y: .value("Goal", goal))
                     .foregroundStyle(Color.ds.inkTertiary)
-                    .lineStyle(StrokeStyle(lineWidth: 1, dash: [2, 4]))
+                    .lineStyle(StrokeStyle(lineWidth: 1, dash: [2, 3]))
                     .annotation(position: .top, alignment: .leading) {
                         Text("Goal").dsFont(.eyebrow).foregroundStyle(Color.ds.inkTertiary)
                     }
@@ -108,21 +120,23 @@ public struct DSLineChart: View {
         .chartLegend(.hidden)
         .chartXAxis {
             if style == .full {
-                AxisMarks(values: .stride(by: .month)) { _ in
-                    AxisValueLabel(format: .dateTime.month(.abbreviated))
-                        .font(.system(size: 10, weight: .medium, design: .monospaced))
-                        .foregroundStyle(Color.ds.inkTertiary)
+                AxisMarks(values: .stride(by: .month)) { value in
+                    AxisValueLabel {
+                        if let date = value.as(Date.self), date <= lastLabelledMonth ?? date {
+                            Text(date, format: .dateTime.month(.abbreviated)).dsFont(.axis).foregroundStyle(Color.ds.inkTertiary)
+                        }
+                    }
                 }
             }
         }
         .chartYAxis {
             if style == .full {
                 AxisMarks(position: .trailing, values: .automatic(desiredCount: 3)) { value in
-                    AxisGridLine(stroke: StrokeStyle(lineWidth: 1)).foregroundStyle(Color.ds.hairline)
+                    AxisGridLine(stroke: StrokeStyle(lineWidth: 1, dash: [2, 4])).foregroundStyle(Color.ds.divider)
                     AxisValueLabel {
                         if let amount = value.as(Double.self) {
                             Text(amount.formatted(.currency(code: currencyCode).notation(.compactName)))
-                                .font(.system(size: 10, weight: .medium, design: .monospaced))
+                                .dsFont(.axis)
                                 .foregroundStyle(Color.ds.inkTertiary)
                         }
                     }

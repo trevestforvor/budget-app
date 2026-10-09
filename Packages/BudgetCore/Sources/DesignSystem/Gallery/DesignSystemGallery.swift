@@ -15,10 +15,20 @@ public struct DesignSystemGallery: View {
     @State private var selectedBar = Calendar.current.dateInterval(of: .month, for: .now)?.start ?? .now
     @State private var toast: DSToastMessage?
     @State private var showsGroupedList = Self.requestedSection == "Grouped list"
+    @State private var fieldName = "Pottery"
+    @State private var fieldEmpty = ""
+    @State private var fieldAmount = "42"
+    @State private var fieldToken = "sk-live-3f9a"
+    @State private var fieldSearch = ""
+    @State private var price = ""
+    @State private var period = Period.month
+    @State private var direction = "out"
 
     public init() {}
 
     static var requestedSection: String? { UserDefaults.standard.string(forKey: "DSGallerySection") }
+
+    enum Period: String, CaseIterable { case week = "Week", month = "Month", year = "Year" }
 
     public var body: some View {
         ScrollViewReader { proxy in
@@ -52,6 +62,7 @@ public struct DesignSystemGallery: View {
                     swatch("canvas", Color.ds.canvas)
                     swatch("surface", Color.ds.surface)
                     swatch("raised", Color.ds.surfaceRaised)
+                    swatch("overlay", Color.ds.surfaceOverlay)
                     swatch("pressed", Color.ds.surfacePressed)
                 }
             }
@@ -62,6 +73,7 @@ public struct DesignSystemGallery: View {
                     Text("inkSoft — softer display white").foregroundStyle(Color.ds.inkSoft)
                     Text("inkSecondary — body and descriptions").foregroundStyle(Color.ds.inkSecondary)
                     Text("inkTertiary — captions, provenance").foregroundStyle(Color.ds.inkTertiary)
+                    Text("inkDisabled — disabled labels only").foregroundStyle(Color.ds.inkDisabled)
                 }
                 .dsFont(.body)
             }
@@ -82,12 +94,16 @@ public struct DesignSystemGallery: View {
             section("Type") {
                 VStack(alignment: .leading, spacing: DSSpace.sm) {
                     Text("Display").dsFont(.display)
-                    Text("Title — serif light").dsFont(.title)
+                    Text("Title — serif regular").dsFont(.title)
                     Text("Headline — serif regular").dsFont(.headline)
                     Text("Body — the workhorse UI voice.").dsFont(.body)
                     Text("Callout and captions for supporting copy.").dsFont(.callout).foregroundStyle(Color.ds.inkSecondary)
+                    Text("Callout emphasis — compact buttons").dsFont(.calloutEmphasis)
+                    Text("Label — field and segment labels").dsFont(.label).foregroundStyle(Color.ds.inkSecondary)
                     Text("Eyebrow · mono label").dsFont(.eyebrow).foregroundStyle(Color.ds.inkSecondary)
                     Text("sumByCategory(2026-Q3)").dsFont(.mono).foregroundStyle(Color.ds.inkTertiary)
+                    Text("https://budget.you.olares.com").dsFont(.code).foregroundStyle(Color.ds.inkSoft)
+                    Text("JAN  FEB  MAR  $1.2K").dsFont(.axis).foregroundStyle(Color.ds.inkTertiary)
                 }
                 .foregroundStyle(Color.ds.ink)
             }
@@ -109,14 +125,88 @@ public struct DesignSystemGallery: View {
 
             section("Buttons") {
                 VStack(alignment: .leading, spacing: DSSpace.sm) {
-                    Button("Confirm category") {}.buttonStyle(.ds(.primary))
-                    HStack {
-                        Button("Secondary") {}.buttonStyle(.ds(.secondary))
-                        Button("Ask") {}.buttonStyle(.ds(.accent))
-                        Button("See all") {}.buttonStyle(.ds(.quiet))
+                    Button("Confirm category") {}.buttonStyle(.ds(.primary, size: .large, fullWidth: true))
+                    // Every variant at rest, disabled and loading. Press any of them to see its pressed fill.
+                    Grid(alignment: .leading, horizontalSpacing: DSSpace.xs, verticalSpacing: DSSpace.xs) {
+                        ForEach(Self.buttonVariants, id: \.name) { item in
+                            GridRow {
+                                Text(item.name).dsFont(.caption).foregroundStyle(Color.ds.inkTertiary)
+                                Button(item.title) {}.buttonStyle(.ds(item.variant, size: .compact))
+                                Button(item.title) {}.buttonStyle(.ds(item.variant, size: .compact)).disabled(true)
+                                Button(item.title) {}.buttonStyle(.ds(item.variant, size: .compact, isLoading: true))
+                            }
+                        }
+                    }
+                    HStack(spacing: DSSpace.xs) {
+                        Button("Large") {}.buttonStyle(.ds(.secondary, size: .large))
+                        Button("Regular") {}.buttonStyle(.ds(.secondary))
+                        Button("Compact") {}.buttonStyle(.ds(.secondary, size: .compact))
+                    }
+                    HStack(spacing: DSSpace.xs) {
+                        DSIconButton(systemImage: "slider.horizontal.3", label: "Filters") {}
+                        DSIconButton(systemImage: "plus", label: "Add") {}.disabled(true)
                         DSAskButton(label: "this card") {}
+                        DSAskButton(label: "this card", isWorking: true) {}
+                        Button("See all") {}.buttonStyle(.ds(.quiet))
                     }
                 }
+            }
+
+            section("Fields") {
+                VStack(alignment: .leading, spacing: DSSpace.md) {
+                    DSField("Name", text: $fieldName, prompt: "Pets, Gifts, Kids…", helper: "Shown on every row filed under it.")
+                    DSField("Monthly target", text: $fieldAmount, prompt: "0", prefix: "$", suffix: "/mo")
+                    DSField("API token", text: $fieldToken, isCode: true)
+                    DSField(nil, text: $fieldSearch, prompt: "Search: coffee, pets, gym…", style: .search)
+                    DSCard(padding: DSSpace.md) {
+                        VStack(alignment: .leading, spacing: 0) {
+                            DSField("Bank description contains", text: $fieldEmpty, prompt: "PAYROLL, UBER…", style: .inline, isCode: true)
+                            DSDivider()
+                            DSField("Merchant name contains", text: $fieldName, style: .inline)
+                        }
+                    }
+                    DSAmountField(isEmpty: price.isEmpty) {
+                        TextField("Price", text: $price, prompt: Text("0"))
+                    }
+                }
+            }
+
+            section("Segmented") {
+                VStack(alignment: .leading, spacing: DSSpace.sm) {
+                    DSSegmented("Period", selection: $period, options: Period.allCases) { $0.rawValue }
+                    DSSegmented("Money", selection: $direction, options: [(value: "either", title: "Either way"), (value: "out", title: "Going out"),
+                                                                       (value: "in", title: "Coming in")])
+                    DSSegmented("Period", selection: .constant(Period.week), options: Period.allCases) { $0.rawValue }.disabled(true)
+                }
+            }
+
+            section("Effects") {
+                LazyVGrid(columns: [GridItem(.flexible(), spacing: DSSpace.sm), GridItem(.flexible())], spacing: DSSpace.sm) {
+                    effect("G1 lit edge · G2 flat") { Color.clear.dsPanel() }
+                    effect("G2 raised") { Color.clear.dsPanel(.raised) }
+                    effect("G3 tone bloom") { Color.clear.dsPanel(wash: .tone(.teal)) }
+                    effect("G4 caution wash") { Color.clear.dsPanel(wash: .caution) }
+                    effect("G7 AI edge · G8 aura") {
+                        DSPanelBackground(wash: .ai).dsAIEdge(radius: DSRadius.card)
+                    }
+                    effect("G7 working") {
+                        DSPanelBackground(wash: .ai).dsAIEdge(radius: DSRadius.card, isWorking: true)
+                    }
+                    effect("G5 data bloom") { Color.clear.dsScreenBackground(bloom: .data).clipShape(RoundedRectangle(cornerRadius: DSRadius.card)) }
+                    effect("G5 AI bloom") { Color.clear.dsScreenBackground(bloom: .ai).clipShape(RoundedRectangle(cornerRadius: DSRadius.card)) }
+                    effect("G6 pearl") { RoundedRectangle(cornerRadius: DSRadius.control, style: .continuous).fill(DSFill.pearl) }
+                    effect("G9 tile gloss") { DSTileFill(tone: .violet) }
+                    effect("Overlay + shadow") { Color.clear.dsPanel(.overlay).dsShadow(.overlay) }
+                    effect("G12 edge fade") {
+                        LinearGradient(colors: [Color.ds.canvas.opacity(0), Color.ds.canvas], startPoint: .top, endPoint: .bottom)
+                            .background(DSTileFill(tone: .azure))
+                            .clipShape(RoundedRectangle(cornerRadius: DSRadius.card, style: .continuous))
+                    }
+                }
+            }
+
+            section("States") {
+                statesMatrix
             }
 
             section("Chips, tags, badges") {
@@ -142,6 +232,10 @@ public struct DesignSystemGallery: View {
                         DSConfidenceBadge(.likely, percent: 82)
                         DSConfidenceBadge(.decided, percent: 91)
                         DSConfidenceBadge(.review, percent: 54)
+                    }
+                    HStack(spacing: DSSpace.xs) {
+                        DSChip("Dining", systemImage: "fork.knife", tone: .orchid) {}
+                        DSChip("Travel", systemImage: "airplane", tone: .teal) {}
                     }
                     DSFlowLayout(spacing: DSSpace.xs, lineSpacing: DSSpace.xs) {
                         DSPrivacyBadge(.local)
@@ -357,11 +451,52 @@ public struct DesignSystemGallery: View {
                 }
             }
 
-            section("States") {
+            section("Empty and error") {
                 DSCard {
                     DSStateView(systemImage: "wifi.slash", title: "Can't reach your Olares", message: "Showing the copy saved on this phone.", actionTitle: "Retry") {}
                 }
             }
+        }
+    }
+
+    static let buttonVariants: [(name: String, title: String, variant: DSButtonStyle.Variant)] = [
+        ("primary", "Save", .primary), ("secondary", "Edit", .secondary), ("tinted", "Sync", .tinted), ("ai", "Ask", .ai),
+        ("quiet", "See all", .quiet), ("destructive", "Delete", .destructive), ("armed", "Delete", .destructiveArmed), ("glass", "Done", .glass),
+    ]
+
+    /// Rest, focus, error, disabled and read-only side by side, for the controls that have them.
+    private var statesMatrix: some View {
+        VStack(alignment: .leading, spacing: DSSpace.md) {
+            DSEyebrow("Field")
+            DSField("Rest", text: .constant(""), prompt: "Placeholder")
+            DSField("Focused", isFocused: true) { TextField("Focused", text: .constant("Typing…")) }
+            DSField("Error", error: "Enter an amount above zero.") { TextField("Error", text: .constant("-12")) }
+            DSField("Disabled") { TextField("Disabled", text: .constant("Can't change this")) }.disabled(true)
+            DSField("Read-only", isReadOnly: true) { Text("Harbor Checking ••0909") }
+            DSCard(padding: DSSpace.md) {
+                VStack(alignment: .leading, spacing: 0) {
+                    DSField("Inline, focused", style: .inline, isFocused: true) { TextField("Inline", text: .constant("DoorDash")) }
+                    DSDivider()
+                    DSField("Inline, error", style: .inline, error: "That merchant already has a cap.") { TextField("Inline", text: .constant("Uber")) }
+                }
+            }
+            DSEyebrow("Chip")
+            DSFlowLayout(spacing: DSSpace.xs, lineSpacing: DSSpace.xs) {
+                DSChip("Rest") {}
+                DSChip("Selected", isSelected: true) {}
+                DSChip("Dining", tone: .orchid) {}
+                DSChip("Disabled") {}.disabled(true)
+            }
+            DSEyebrow("Amount")
+            DSAmountField(isEmpty: false, isFocused: true) { TextField("Focused", text: .constant("1,280")) }
+            DSAmountField(isEmpty: false, error: "That's more than the account holds.") { TextField("Error", text: .constant("98,000")) }
+        }
+    }
+
+    private func effect<Swatch: View>(_ name: String, @ViewBuilder swatch: () -> Swatch) -> some View {
+        VStack(alignment: .leading, spacing: 6) {
+            swatch().frame(height: 88)
+            Text(name).dsFont(.caption).foregroundStyle(Color.ds.inkTertiary).lineLimit(1).minimumScaleFactor(0.8)
         }
     }
 
@@ -385,7 +520,7 @@ public struct DesignSystemGallery: View {
                 .overlay {
                     RoundedRectangle(cornerRadius: DSRadius.control, style: .continuous).strokeBorder(Color.ds.hairlineStrong)
                 }
-            Text(name).font(.system(size: 9, design: .monospaced)).foregroundStyle(Color.ds.inkTertiary).lineLimit(1).minimumScaleFactor(0.7)
+            Text(name).dsFont(.axis).foregroundStyle(Color.ds.inkTertiary).lineLimit(1).minimumScaleFactor(0.7)
         }
     }
 
