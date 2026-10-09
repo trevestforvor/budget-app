@@ -5,11 +5,10 @@ import Logging
 import PostgresNIO
 import Testing
 
-/// Runs against a real database when POSTGRES_TEST_HOST is set (the build pod's scratch Postgres), like the store's own suite.
-@Suite("Postgres balance history", .serialized, .enabled(if: ProcessInfo.processInfo.environment["POSTGRES_TEST_HOST"] != nil))
-struct PostgresBalanceHistoryTests {
+/// Part of the store's serialized suite: two suites migrating one scratch database at once race on its DDL.
+extension PostgresStoreTests {
     @Test("Snapshots save, replace one per account and day, read back, and clear")
-    func roundTrip() async throws {
+    func balanceSnapshotsRoundTrip() async throws {
         let store = PostgresStore(config: PostgresStoreTests.database, logger: Logger(label: "pg-test"))
         try await withThrowingTaskGroup(of: Void.self) { group in
             group.addTask { await store.client.run() }
