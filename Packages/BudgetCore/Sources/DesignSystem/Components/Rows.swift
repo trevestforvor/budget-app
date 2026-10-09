@@ -52,6 +52,7 @@ public struct DSTransactionRow: View {
     private let emphasis: DSEmphasis
     private let isHidden: Bool
     private let needsReview: Bool
+    private let tags: [String]
     @Environment(\.dynamicTypeSize) private var dynamicTypeSize
 
     /// - Parameters:
@@ -61,9 +62,10 @@ public struct DSTransactionRow: View {
     ///   - emphasis: `.muted` for rows that don't count toward spending.
     ///   - isHidden: the person hid it; mutes the row and adds the eye-slash tag.
     ///   - needsReview: the server wants an answer; adds the 6pt orchid dot.
+    ///   - tags: the person's own labels, as tags under the subtitle (the first two, then "+N").
     public init(title: String, subtitle: String, amount: Decimal, currencyCode: String = "USD", systemImage: String, tone: DSTone,
                 confidence: DSConfidence? = nil, isPending: Bool = false,
-                emphasis: DSEmphasis = .normal, isHidden: Bool = false, needsReview: Bool = false) {
+                emphasis: DSEmphasis = .normal, isHidden: Bool = false, needsReview: Bool = false, tags: [String] = []) {
         self.title = title
         self.subtitle = subtitle
         self.amount = amount
@@ -75,6 +77,7 @@ public struct DSTransactionRow: View {
         self.emphasis = emphasis
         self.isHidden = isHidden
         self.needsReview = needsReview
+        self.tags = tags
     }
 
     /// Hidden implies muted.
@@ -107,7 +110,7 @@ public struct DSTransactionRow: View {
         .padding(.vertical, DSSpace.sm)
         .contentShape(Rectangle())
         .accessibilityElement(children: .ignore)
-        .accessibilityLabel("\(title), \(subtitle)")
+        .accessibilityLabel("\(title), \(subtitle)" + (tags.isEmpty ? "" : ", tagged \(tags.joined(separator: ", "))"))
         .accessibilityValue(accessibilityValue)
     }
 
@@ -118,6 +121,7 @@ public struct DSTransactionRow: View {
                 titleText.lineLimit(1)
                 // The subtitle gets the whole width (its account digits tell two cards apart); Pending sits under the amount.
                 subtitleText.lineLimit(1)
+                if !tags.isEmpty { tagLine }
             }
             Spacer(minLength: DSSpace.xs)
             if isHidden { hiddenTag }
@@ -140,6 +144,7 @@ public struct DSTransactionRow: View {
             VStack(alignment: .leading, spacing: DSSpace.xxs) {
                 titleText.lineLimit(3)
                 subtitleText.lineLimit(3)
+                if !tags.isEmpty { tagLine }
                 HStack(spacing: DSSpace.xs) {
                     amountText
                     if isPending { pendingTag }
@@ -166,6 +171,16 @@ public struct DSTransactionRow: View {
 
     private var amountText: some View {
         DSAmountText(amount, currencyCode: currencyCode, sign: .inflowPlus, tintsInflow: true, emphasis: effectiveEmphasis)
+    }
+
+    /// The person's tags, marked with the tag glyph so they never read as a status: two, then how many more, on one line.
+    /// Neutral ink (a label, not data), a tier quieter on a muted row.
+    private var tagLine: some View {
+        HStack(spacing: DSSpace.xxs) {
+            ForEach(tags.prefix(2), id: \.self) { DSTag($0, systemImage: "tag", tint: isMuted ? Color.ds.inkTertiary : Color.ds.inkSecondary).lineLimit(1) }
+            if tags.count > 2 { DSTag("+\(tags.count - 2)", tint: Color.ds.inkTertiary).fixedSize() }
+        }
+        .padding(.top, 2)
     }
 
     /// Fixed so the tag never wraps letter by letter.

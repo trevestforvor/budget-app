@@ -52,15 +52,17 @@ public struct TransactionFilter: Hashable, Codable, Sendable {
     public var limit: Int
     /// Rows to skip, for the next page.
     public var offset: Int
+    /// Rows carrying any of these tags (case ignored). Empty means any row. Server 0.5.0.
+    public var tags: [String]?
 
     public init(search: String? = nil, categoryIDs: [String]? = nil, accountIDs: [String]? = nil, period: String? = nil,
                 since: Date? = nil, until: Date? = nil, direction: Direction? = nil, minAmount: Money? = nil, maxAmount: Money? = nil,
                 needsReviewOnly: Bool = false, pendingOnly: Bool = false, modelFiledOnly: Bool = false,
-                visibility: Visibility = .all, sort: Sort = .newest, limit: Int = 200, offset: Int = 0) {
+                visibility: Visibility = .all, sort: Sort = .newest, limit: Int = 200, offset: Int = 0, tags: [String]? = nil) {
         self.search = search; self.categoryIDs = categoryIDs; self.accountIDs = accountIDs; self.period = period
         self.since = since; self.until = until; self.direction = direction; self.minAmount = minAmount; self.maxAmount = maxAmount
         self.needsReviewOnly = needsReviewOnly; self.pendingOnly = pendingOnly; self.modelFiledOnly = modelFiledOnly
-        self.visibility = visibility; self.sort = sort; self.limit = limit; self.offset = offset
+        self.visibility = visibility; self.sort = sort; self.limit = limit; self.offset = offset; self.tags = tags
     }
 
     /// One category's rows (a category detail screen).
@@ -80,12 +82,13 @@ public struct TransactionFilter: Hashable, Codable, Sendable {
         if plain.search?.trimmingCharacters(in: .whitespaces).isEmpty == true { plain.search = nil }
         if plain.categoryIDs?.isEmpty == true { plain.categoryIDs = nil }
         if plain.accountIDs?.isEmpty == true { plain.accountIDs = nil }
+        if plain.tags?.isEmpty == true { plain.tags = nil }
         return plain == TransactionFilter(limit: limit)
     }
 
     enum CodingKeys: String, CodingKey {
         case search, categoryIDs, accountIDs, period, since, until, direction, minAmount, maxAmount
-        case needsReviewOnly, pendingOnly, modelFiledOnly, visibility, sort, limit, offset
+        case needsReviewOnly, pendingOnly, modelFiledOnly, visibility, sort, limit, offset, tags
     }
 
     /// Every field is optional in JSON: a missing one is its default.
@@ -106,7 +109,8 @@ public struct TransactionFilter: Hashable, Codable, Sendable {
                   visibility: try c.decodeIfPresent(Visibility.self, forKey: .visibility) ?? .all,
                   sort: try c.decodeIfPresent(Sort.self, forKey: .sort) ?? .newest,
                   limit: try c.decodeIfPresent(Int.self, forKey: .limit) ?? 200,
-                  offset: try c.decodeIfPresent(Int.self, forKey: .offset) ?? 0)
+                  offset: try c.decodeIfPresent(Int.self, forKey: .offset) ?? 0,
+                  tags: try c.decodeIfPresent([String].self, forKey: .tags))
     }
 }
 
@@ -114,13 +118,14 @@ public struct TransactionFilter: Hashable, Codable, Sendable {
 
 extension TransactionFilter {
     /// The filter as URL query items; only what differs from the defaults is sent (plus the page size).
-    /// Categories and accounts repeat their name (`category=dining&category=travel`).
+    /// Categories, accounts and tags repeat their name (`category=dining&category=travel`).
     public var queryItems: [URLQueryItem] {
         var items = [URLQueryItem(name: "limit", value: String(limit))]
         if offset > 0 { items.append(URLQueryItem(name: "offset", value: String(offset))) }
         if let search = search?.trimmingCharacters(in: .whitespaces), !search.isEmpty { items.append(URLQueryItem(name: "q", value: search)) }
         items += (categoryIDs ?? []).map { URLQueryItem(name: "category", value: $0) }
         items += (accountIDs ?? []).map { URLQueryItem(name: "account", value: $0) }
+        items += (tags ?? []).map { URLQueryItem(name: "tag", value: $0) }
         if let period { items.append(URLQueryItem(name: "period", value: period)) }
         if let since { items.append(URLQueryItem(name: "since", value: since.formatted(.iso8601))) }
         if let until { items.append(URLQueryItem(name: "until", value: until.formatted(.iso8601))) }
@@ -172,13 +177,14 @@ extension TransactionFilter {
             }
             return parsed
         }
-        let categories = values("category"), accounts = values("account")
+        let categories = values("category"), accounts = values("account"), tags = values("tag")
         self.init(search: value("q"), categoryIDs: categories.isEmpty ? nil : categories, accountIDs: accounts.isEmpty ? nil : accounts,
                   period: value("period"), since: try date("since"), until: try date("until"),
                   direction: try option("direction", Direction.self), minAmount: try amount("min"), maxAmount: try amount("max"),
                   needsReviewOnly: flag("needsReview"), pendingOnly: flag("pending"), modelFiledOnly: flag("modelFiled"),
                   visibility: try option("visibility", Visibility.self) ?? .all, sort: try option("sort", Sort.self) ?? .newest,
-                  limit: min(try count("limit", default: 200), maxLimit), offset: try count("offset", default: 0))
+                  limit: min(try count("limit", default: 200), maxLimit), offset: try count("offset", default: 0),
+                  tags: tags.isEmpty ? nil : tags)
     }
 }
 

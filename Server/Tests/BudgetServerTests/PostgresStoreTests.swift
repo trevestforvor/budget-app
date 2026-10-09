@@ -56,6 +56,7 @@ struct PostgresStoreTests {
             new.monthlyTargets["dining"] = Money(500)
             let gone = new.transactions.removeLast()
             new.transactions[0].merchant = "Renamed Merchant"
+            new.transactions[2].tags = ["Austin trip", "Reimbursable"] // a field inside the row's JSON: no migration
             var added = new.transactions[1]
             added.id = "file:new-row"
             added.batchID = "import-1"

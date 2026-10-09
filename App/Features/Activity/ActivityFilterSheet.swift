@@ -32,6 +32,10 @@ struct ActivityFilterSheet: View {
                     NavigationLink { AmountEditor(filter: $draft) } label: {
                         DSListRow("Amount", value: amountText)
                     }
+                    NavigationLink { TagFilterPicker(selection: tagBinding) } label: {
+                        DSListRow("Tags", value: tagsText)
+                    }
+                    .accessibilityIdentifier("tagsFilter")
                 }
                 DSListSection("Show", footer: "Not counted means moves between your own accounts and anything you've hidden. Balances always include them.") {
                     DSListRow("Visibility") {
@@ -124,6 +128,16 @@ struct ActivityFilterSheet: View {
 
     private var categoryBinding: Binding<Set<String>> {
         Binding(get: { Set(draft.categoryIDs ?? []) }, set: { draft.categoryIDs = $0.isEmpty ? nil : $0.sorted() })
+    }
+
+    private var tagBinding: Binding<[String]> {
+        Binding(get: { draft.tags ?? [] }, set: { draft.tags = $0.isEmpty ? nil : $0 })
+    }
+
+    private var tagsText: String {
+        let tags = draft.tags ?? []
+        if tags.isEmpty { return "Any" }
+        return tags.count == 1 ? tags[0] : "\(tags.count) tags"
     }
 
     private var accountsText: String {
@@ -324,7 +338,7 @@ private struct AmountEditor: View {
 }
 
 /// The trailing check on a choice row; takes its space either way so labels don't shift.
-private struct CheckMark: View {
+struct CheckMark: View {
     let isOn: Bool
     var body: some View {
         Image(systemName: "checkmark")

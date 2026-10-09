@@ -368,6 +368,8 @@ extension DemoLedger {
                 transactions[i].note = row.note
                 transactions[i].transferPeerID = row.transferPeerID
                 transactions[i].isYearly = row.isYearly
+                // An undo made before tags existed says nothing about them, so the row keeps its own.
+                if let tags = row.tags { transactions[i].tags = tags.isEmpty ? nil : tags }
                 suggestions[row.transactionID] = row.suggestions
                 restored += 1
             }
@@ -531,6 +533,15 @@ extension DemoLedger {
         var recurringMoves: [(from: String, to: String)] = []
         /// A chosen row's generic descriptor ("Withdrawal"): renamed on its own, no alias.
         var genericDescriptor: String?
+        /// Tags put on every chosen row, as the ledger spells them.
+        var addTags: [String] = []
+        /// Tags (compared without case) taken off every chosen row.
+        var removeTags: [String] = []
+        /// Rows like the chosen ones filed with them (`fileSimilar`), and how many the person filed themselves stay put.
+        var similar: [Int] = []
+        var similarYours = 0
+
+        var changesTags: Bool { !addTags.isEmpty || !removeTags.isEmpty }
     }
 
     func editPlan(_ p: EditTransactions) throws -> EditPlan {
@@ -553,7 +564,19 @@ extension DemoLedger {
         if p.renameSimilar == true, merchant == nil { throw BudgetAPIError.rejected("Renaming similar transactions needs the new name.") }
         let note = p.note?.trimmingCharacters(in: .whitespacesAndNewlines)
         if let note, note.count > 500 { throw BudgetAPIError.rejected("Keep the note to 500 characters.") }
-        guard category != nil || keep || p.isHidden != nil || p.isYearly != nil || note != nil || merchant != nil else {
+        if p.fileSimilar == true, category == nil { throw BudgetAPIError.rejected("Filing similar transactions needs a category.") }
+        if let long = (p.addTags ?? []).compactMap(TransactionTags.normalize).first(where: { $0.count > TransactionTags.maxLength }) {
+            throw BudgetAPIError.rejected("Keep a tag to \(TransactionTags.maxLength) characters: “\(long.prefix(TransactionTags.maxLength))…” is longer.")
+        }
+        let addTags = canonicalTags(p.addTags ?? [])
+        let removeTags = TransactionTags.cleaned(p.removeTags ?? [])
+        if let both = addTags.first(where: { TransactionTags.contains(removeTags, $0) }) {
+            throw BudgetAPIError.rejected("Add the tag “\(both)” or remove it, not both.")
+        }
+        if !addTags.isEmpty, let full = rows.first(where: { Self.retagged(transactions[$0].tags, add: addTags, remove: removeTags).count > TransactionTags.maxPerTransaction }) {
+            throw BudgetAPIError.rejected("A transaction holds up to \(TransactionTags.maxPerTransaction) tags; \(transactions[full].merchant) would have more.")
+        }
+        guard category != nil || keep || p.isHidden != nil || p.isYearly != nil || note != nil || merchant != nil || !addTags.isEmpty || !removeTags.isEmpty else {
             throw BudgetAPIError.rejected("Nothing to change.")
         }
 
@@ -586,9 +609,20 @@ extension DemoLedger {
                 recurringMoves.append((old, merchant))
             }
         }
-        return EditPlan(rows: rows, category: category, keep: keep, isHidden: p.isHidden, isYearly: p.isYearly, changesNote: note != nil,
-                        note: note.flatMap { $0.isEmpty ? nil : $0 }, merchant: merchant, renamed: renamed, aliases: aliases,
-                        capMoves: capMoves, recurringMoves: recurringMoves, genericDescriptor: p.renameSimilar == true ? generic : nil)
+        var plan = EditPlan(rows: rows, category: category, keep: keep, isHidden: p.isHidden, isYearly: p.isYearly, changesNote: note != nil,
+                            note: note.flatMap { $0.isEmpty ? nil : $0 }, merchant: merchant, renamed: renamed, aliases: aliases,
+                            capMoves: capMoves, recurringMoves: recurringMoves, genericDescriptor: p.renameSimilar == true ? generic : nil)
+        plan.addTags = addTags
+        plan.removeTags = removeTags
+        if p.fileSimilar == true, let category {
+            (plan.similar, plan.similarYours) = similarRows(to: rows, under: category.id)
+        }
+        return plan
+    }
+
+    /// A row's tags after an edit: the ones removed taken off, the ones added put on (each once); empty for none.
+    static func retagged(_ tags: [String]?, add: [String], remove: [String]) -> [String] {
+        TransactionTags.cleaned((tags ?? []).filter { !TransactionTags.contains(remove, $0) } + add)
     }
 
     /// The category "keep" files a row under: what it's filed as, else the top suggestion.
@@ -601,7 +635,8 @@ extension DemoLedger {
         let things = rows.count == 1 ? "1 transaction" : "\(rows.count) transactions"
         var titles: [String] = [], changes: [String] = []
         if let category = plan.category {
-            titles.append("File \(things) under \(category.name)")
+            let filed = rows.count + plan.similar.count
+            titles.append("File \(filed == 1 ? "1 transaction" : "\(filed) transactions") under \(category.name)")
             changes.append("file under \(category.name)")
         }
         if plan.keep {
@@ -627,7 +662,28 @@ extension DemoLedger {
             titles.append("Rename \(plan.renamed.count == 1 ? "1 transaction" : "\(plan.renamed.count) transactions") to “\(merchant)”")
             changes.append("rename to “\(merchant)”")
         }
+        if !plan.addTags.isEmpty {
+            let named = plan.addTags.map { "“\($0)”" }.spokenList
+            titles.append("Tag \(things) \(named)")
+            changes.append("tag \(named)")
+        }
+        if !plan.removeTags.isEmpty {
+            let named = plan.removeTags.map { "“\($0)”" }.spokenList
+            titles.append("Remove \(plan.removeTags.count == 1 ? "the tag" : "the tags") \(named) from \(things)")
+            changes.append("remove \(plan.removeTags.count == 1 ? "the tag" : "the tags") \(named)")
+        }
         var notes: [String] = []
+        if !plan.similar.isEmpty {
+            // Refunds that follow the purchases (money going the other way from every chosen row).
+            let refunds = plan.similar.filter { index in !rows.contains { $0.amount.isNegative == transactions[index].amount.isNegative } }.count
+            let more = "\(plan.similar.count) more like \(rows.count == 1 ? "it" : "them")"
+            let refundNote = refunds == 0 ? "" : refunds == plan.similar.count ? (refunds == 1 ? ", a refund" : ", all refunds")
+                : refunds == 1 ? ", 1 of them a refund" : ", \(refunds) of them refunds"
+            notes.append("That includes \(more)\(refundNote): the same merchant or bank description.")
+        }
+        if plan.similarYours > 0 {
+            notes.append(plan.similarYours == 1 ? "The 1 you filed yourself keeps its category." : "The \(plan.similarYours) you filed yourself keep their category.")
+        }
         if plan.isHidden == true { notes.append("Balances still include \(rows.count == 1 ? "it" : "them").") }
         if plan.isYearly == true { notes.append("The budget counts a twelfth a month for a year; \(rows.count == 1 ? "it keeps its" : "they keep their") category.") }
         if !plan.aliases.isEmpty { notes.append("New ones get the name too.") }
@@ -646,8 +702,8 @@ extension DemoLedger {
             }
         }
         let merchants = Self.merchantList(rows)
-        let touched = Array(Set(plan.rows + plan.renamed)).sorted().map { transactions[$0] } // newest first, like the ledger
-        let refiled = plan.category.map { category in rows.filter { $0.categorization?.categoryID != category.id }.count }
+        let touched = Array(Set(plan.rows + plan.renamed + plan.similar)).sorted().map { transactions[$0] } // newest first, like the ledger
+        let refiled = plan.category.map { category in (rows + plan.similar.map { transactions[$0] }).filter { $0.categorization?.categoryID != category.id }.count }
             ?? (plan.keep ? rows.filter { $0.categorization?.categoryID != keptCategory($0) }.count : nil)
         return Preview(title: titles.count == 1 ? titles[0] : "Edit \(things): \(changes.spokenList)",
                        detail: notes.isEmpty ? merchants : "\(merchants). " + notes.joined(separator: " "), effects: effects,
@@ -659,7 +715,7 @@ extension DemoLedger {
             [RestoreTransactions.Cap(merchant: move.to, monthlyAmount: nil),
              RestoreTransactions.Cap(merchant: move.from, monthlyAmount: merchantTargets[move.from].map(DecimalAmount.init))]
         }
-        let touched = Array(Set(plan.rows + plan.renamed)).sorted()
+        let touched = Array(Set(plan.rows + plan.renamed + plan.similar)).sorted()
         let recurring = plan.recurringMoves.flatMap { move in
             [RestoreTransactions.Recurring(key: RecurringChoice.key(move.from), choice: recurringChoices[RecurringChoice.key(move.from)]),
              RestoreTransactions.Recurring(key: RecurringChoice.key(move.to), choice: nil)]
@@ -671,6 +727,13 @@ extension DemoLedger {
             if let hidden = plan.isHidden { setHidden(index, hidden) }
             if let yearly = plan.isYearly { transactions[index].isYearly = yearly }
             if plan.changesNote { transactions[index].note = plan.note }
+            if plan.changesTags {
+                let tags = Self.retagged(transactions[index].tags, add: plan.addTags, remove: plan.removeTags)
+                transactions[index].tags = tags.isEmpty ? nil : tags
+            }
+        }
+        if let category = plan.category {
+            for index in plan.similar { file(index, under: category.id) }
         }
         if let merchant = plan.merchant {
             for index in plan.renamed { rename(index, to: merchant) }
@@ -684,13 +747,19 @@ extension DemoLedger {
         }
         let n = plan.rows.count, many = n == 1 ? "" : " \(n) transactions"
         var messages: [String] = []
-        if let category = plan.category { messages.append("Filed\(many) under \(category.name).") }
+        if let category = plan.category {
+            let filed = n + plan.similar.count
+            messages.append("Filed\(filed == 1 ? "" : " \(filed) transactions") under \(category.name).")
+        }
         if plan.keep { messages.append(n == 1 ? "Kept as \(transactions[plan.rows[0]].categorization.flatMap { category($0.categoryID) }?.name ?? "filed")." : "Kept\(many) as filed.") }
         if let hidden = plan.isHidden { messages.append(hidden ? (n == 1 ? "Hidden from your totals." : "Hid\(many) from your totals.") : "Counted\(many) in your totals again.") }
         if let yearly = plan.isYearly { messages.append(yearly ? "Spread\(many) over the year." : "Counted\(many) in the month charged.") }
         if plan.changesNote { messages.append(plan.note == nil ? "Note removed." : "Note saved.") }
         if let merchant = plan.merchant { messages.append("Renamed\(plan.renamed.count == 1 ? "" : " \(plan.renamed.count) transactions") to “\(merchant)”.") }
-        return ActionResult(message: messages.count == 1 ? messages[0] : "Updated \(n == 1 ? "1 transaction" : "\(n) transactions").",
+        if !plan.addTags.isEmpty { messages.append("Tagged\(many) \(plan.addTags.map { "“\($0)”" }.spokenList).") }
+        if !plan.removeTags.isEmpty { messages.append(plan.removeTags.count == 1 ? "Tag removed." : "Tags removed.") }
+        let updated = n + plan.similar.count
+        return ActionResult(message: messages.count == 1 ? messages[0] : "Updated \(updated == 1 ? "1 transaction" : "\(updated) transactions").",
                             affectedTransactions: touched.count, undo: undo)
     }
 

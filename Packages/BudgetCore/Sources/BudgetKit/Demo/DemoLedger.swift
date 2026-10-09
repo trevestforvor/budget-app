@@ -352,6 +352,7 @@ public struct Ledger: Sendable {
             accounts[index].balance = balance(of: accounts[index].id, through: now)
         }
         addActivityExamples(today: today)
+        addTagExamples()
         // The demo's rows include answers the model filed, so its settings say the model is on (Qwen Decide at 80%).
         decisionPolicy = DecisionPolicy(provider: .localDecide, autoAcceptPercent: 80, kinds: [.category])
     }

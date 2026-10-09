@@ -200,7 +200,7 @@ public struct Recategorize: Hashable, Sendable, Codable {
 }
 
 /// Changes to specific rows, each field optional: file them (or keep what they're filed as), hide them from
-/// totals or count them again, add a note, rename the merchant. Everything given applies to every row.
+/// totals or count them again, add a note, rename the merchant, tag them. Everything given applies to every row.
 public struct EditTransactions: Hashable, Sendable, Codable {
     public var transactionIDs: [String]
     /// File under this category, as the person's choice.
@@ -220,11 +220,22 @@ public struct EditTransactions: Hashable, Sendable, Codable {
     /// True: spread over the year — the budget counts a twelfth a month for twelve months instead of all of it in
     /// its month (it keeps its category). False: not yearly, even where Budget took it for one.
     public var isYearly: Bool?
+    /// Tags to put on every row (one already there is kept). Server 0.5.0.
+    public var addTags: [String]?
+    /// Tags to take off every row that has them. Server 0.5.0.
+    public var removeTags: [String]?
+    /// With `categoryID`: also file every other row like these — the same merchant or the same bank descriptor, money
+    /// going the same way (and a purchase's refunds, when it goes to a spending category) — under it. Rows the person
+    /// filed themselves keep their category, a matched transfer stays one unless it's being filed as a transfer, and a
+    /// generic descriptor ("Withdrawal") or a payment app's name ("Venmo") reaches nothing on its own. Server 0.5.0.
+    public var fileSimilar: Bool?
 
     public init(transactionIDs: [String], categoryID: String? = nil, acceptGuess: Bool? = nil, isHidden: Bool? = nil,
-                note: String? = nil, merchant: String? = nil, renameSimilar: Bool? = nil, isYearly: Bool? = nil) {
+                note: String? = nil, merchant: String? = nil, renameSimilar: Bool? = nil, isYearly: Bool? = nil,
+                addTags: [String]? = nil, removeTags: [String]? = nil, fileSimilar: Bool? = nil) {
         self.transactionIDs = transactionIDs; self.categoryID = categoryID; self.acceptGuess = acceptGuess; self.isHidden = isHidden
         self.note = note; self.merchant = merchant; self.renameSimilar = renameSimilar; self.isYearly = isYearly
+        self.addTags = addTags; self.removeTags = removeTags; self.fileSimilar = fileSimilar
     }
 }
 
@@ -241,11 +252,13 @@ public struct RestoreTransactions: Hashable, Sendable, Codable {
         public var note: String?
         public var transferPeerID: String?
         public var isYearly: Bool?
+        /// The row's tags, empty for none. Nil in an undo made before tags existed: the row keeps the tags it has.
+        public var tags: [String]?
 
         public init(_ row: LedgerTransaction, suggestions: [CategorySuggestion]?) {
             transactionID = row.id; merchant = row.merchant; originalMerchant = row.originalMerchant; categorization = row.categorization
             self.suggestions = suggestions; isHidden = row.isHidden; note = row.note; transferPeerID = row.transferPeerID
-            isYearly = row.isYearly
+            isYearly = row.isYearly; tags = row.tags ?? []
         }
     }
 

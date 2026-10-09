@@ -15,6 +15,7 @@ struct DemoAskEngine {
         let category = matchedCategory(in: q)
 
         if q.contains("q3"), q.contains("q2") { return compareQuarters(category: category, conversationID: conversationID) }
+        if let r = tagIntent(q, conversationID) { return r }
         if let r = cancelIntent(q, conversationID) { return r }
         if let r = subscriptionIntent(q, conversationID) { return r }
         if let r = checkupIntent(q, conversationID) { return r }
@@ -533,12 +534,12 @@ struct DemoAskEngine {
         date.formatted(Date.ISO8601FormatStyle(timeZone: calendar.timeZone).year().month().day())
     }
 
-    private func call(_ name: String, _ args: [String: JSONValue]) -> ToolCall {
+    func call(_ name: String, _ args: [String: JSONValue]) -> ToolCall {
         let json = (try? JSONValue.object(args).data()).map { String(decoding: $0, as: UTF8.self) } ?? "{}"
         return ToolCall(id: UUID().uuidString, name: name, arguments: json)
     }
 
-    private func reply(_ conversationID: String, text: String, figures: [Figure] = [], tools: [ToolCall] = [],
+    func reply(_ conversationID: String, text: String, figures: [Figure] = [], tools: [ToolCall] = [],
                        followUps: [String] = [], actions: [ProposedAction] = []) -> AskReply {
         AskReply(id: UUID().uuidString, conversationID: conversationID, text: text, figures: figures, toolCalls: tools,
                  model: Self.modelLabel, followUps: followUps, proposedActions: actions)

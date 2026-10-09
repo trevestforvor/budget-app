@@ -104,7 +104,8 @@ struct LedgerRow: View {
             isPending: transaction.isPending,
             emphasis: transaction.isCounted(category: category) ? .normal : .muted,
             isHidden: transaction.isHidden,
-            needsReview: transaction.categorization?.needsReview == true
+            needsReview: transaction.categorization?.needsReview == true,
+            tags: transaction.tags ?? []
         )
     }
 

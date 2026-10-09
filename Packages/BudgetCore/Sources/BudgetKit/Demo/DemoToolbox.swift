@@ -34,7 +34,7 @@ struct DemoToolbox: AgentToolbox {
                                      since: string("since"), until: string("until"), limit: int("limit") ?? 25,
                                      minAmount: string("minAmount").flatMap(DecimalAmount.init(string:))?.money(),
                                      maxAmount: string("maxAmount").flatMap(DecimalAmount.init(string:))?.money(),
-                                     direction: string("direction").flatMap(TransactionFilter.Direction.init(rawValue:)))
+                                     direction: string("direction").flatMap(TransactionFilter.Direction.init(rawValue:)), tag: string("tag"))
         case "projectBalance":
             var goal: GoalQuery?
             if case let .object(g)? = args["goal"], case let .string(a)? = g["amount"], case let .string(d)? = g["targetDate"],
@@ -50,6 +50,7 @@ struct DemoToolbox: AgentToolbox {
         case "runCheckup": return runCheckup()
         case "findSubscriptions": return findSubscriptions()
         case "findRules": return findRules()
+        case "sumByTag": return try sumByTag(string("tag"), period: string("period"))
         case "categorize": return try await categorize(args["transactionIDs"])
         default: throw BudgetAPIError.rejected("Unknown read tool \(tool).")
         }
@@ -166,11 +167,13 @@ struct DemoToolbox: AgentToolbox {
     /// The same query the Activity list runs, with the same totals as its summary: spending net of refunds and income,
     /// by the Spending tab's rules. Hidden rows are listed (marked) but left out of the totals.
     func queryTransactions(search: String?, categoryID: String?, needsReviewOnly: Bool, since: String?, until: String?, limit: Int,
-                           minAmount: Money? = nil, maxAmount: Money? = nil, direction: TransactionFilter.Direction? = nil) -> (result: JSONValue, figures: [Figure]) {
+                           minAmount: Money? = nil, maxAmount: Money? = nil, direction: TransactionFilter.Direction? = nil,
+                           tag: String? = nil) -> (result: JSONValue, figures: [Figure]) {
         // The model's until is the last day it means ("2026-08-31" for August); the filter's is the instant after it.
         let through = until.flatMap(isoDate).flatMap { ledger.calendar.date(byAdding: .day, value: 1, to: $0) }
         let filter = TransactionFilter(search: search, categoryIDs: categoryID.map { [$0] }, since: since.flatMap(isoDate), until: through,
-                                       direction: direction, minAmount: minAmount, maxAmount: maxAmount, needsReviewOnly: needsReviewOnly, limit: limit)
+                                       direction: direction, minAmount: minAmount, maxAmount: maxAmount, needsReviewOnly: needsReviewOnly, limit: limit,
+                                       tags: tag.map { [$0] })
         let rows = ledger.matching(filter)
         let summary = ledger.summary(filter)
         var figures = [Figure(id: "query-spent", label: "Spent · \(rows.count) transaction\(rows.count == 1 ? "" : "s")", detail: "Net of refunds", value: summary.spent)]
@@ -186,6 +189,7 @@ struct DemoToolbox: AgentToolbox {
                 if row.isHidden { o["hidden"] = .bool(true) }
                 if ledger.isMoneyIn(row.categorization?.categoryID) { o["moneyIn"] = .bool(true) }
                 if let note = row.note { o["note"] = .string(note) }
+                if let tags = row.tags { o["tags"] = .array(tags.map(JSONValue.string)) }
                 return .object(o)
             }),
         ]), figures)

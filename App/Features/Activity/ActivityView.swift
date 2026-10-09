@@ -30,6 +30,12 @@ struct ActivityView: View {
     @State private var selection: Set<String> = []
     @State private var picking: PickTarget?
     @State private var noting: NoteTarget?
+    @State private var tagging: TagTarget?
+    /// One row re-filed from its menu, filed (or offered with the rows like it) once the picker has gone.
+    @State private var pendingPick: (row: LedgerTransaction, category: BudgetCategory)?
+    @State private var similarOffer: SimilarOffer?
+    /// The server can write the CSV (0.5.0 on); an older one has no export to offer.
+    @State private var canExport = false
     @State private var toast: DSToastMessage?
     @State private var workingGroups: Set<String> = []
     @State private var isWorking = false
@@ -52,6 +58,13 @@ struct ActivityView: View {
         let id = UUID()
         var ids: [String]
         var initial: String
+    }
+
+    struct TagTarget: Identifiable {
+        let id = UUID()
+        var ids: [String]
+        /// Tags on any of the rows now.
+        var current: [String]
     }
 
     private var edits: RowEdits { RowEdits(app: app, toast: $toast) }
@@ -120,11 +133,34 @@ struct ActivityView: View {
                     filter = next
                 }
             }
-            .sheet(item: $picking) { target in
+            .sheet(item: $picking, onDismiss: offerSimilar) { target in
                 CategoryPickerSheet(title: target.ids.count == 1 ? "Category" : "File \(target.ids.count) as",
                                     selected: target.selected, suggestions: target.suggestions,
                                     footnote: target.ids.count > 1 ? "Files all \(target.ids.count) as your answer." : nil) { category in
-                    Task { await bulk { await edits.file(target.ids, as: category.id) } }
+                    if target.ids.count == 1, let row = rows.first(where: { $0.id == target.ids[0] }),
+                       row.categorization?.needsReview != true, category.id != row.categorization?.categoryID {
+                        pendingPick = (row, category)
+                    } else {
+                        Task { await bulk { await edits.file(target.ids, as: category.id) } }
+                    }
+                }
+            }
+            .sheet(item: $similarOffer) { FileSimilarSheet(offer: $0, edits: edits) }
+            .sheet(item: $tagging) { target in
+                TagSheet(title: target.ids.count == 1 ? "Tags" : "Tags for \(target.ids.count)", current: target.current, rowCount: target.ids.count) { add, remove in
+                    await bulk { await edits.setTags(target.ids, add: add, remove: remove) }
+                }
+            }
+            .toolbar {
+                if !isSelecting, canExport, let tools = app.transactionTools {
+                    ToolbarItem(placement: .topBarTrailing) {
+                        ShareLink(item: TransactionsCSV(filter: effectiveFilter, tools: tools),
+                                  preview: SharePreview(effectiveFilter.narrows ? "Transactions (filtered).csv" : "Transactions.csv")) {
+                            Label("Export CSV", systemImage: "square.and.arrow.up")
+                        }
+                        .accessibilityHint(effectiveFilter.narrows ? "Saves the transactions showing as a spreadsheet file" : "Saves every transaction as a spreadsheet file")
+                        .accessibilityIdentifier("exportCSV")
+                    }
                 }
             }
             .sheet(item: $noting) { target in
@@ -162,6 +198,7 @@ struct ActivityView: View {
             app.opensFirstReview = false
             triage = TriageStart()
         }
+        .task(id: app.revision) { canExport = await app.serverSupports(ServerStatus.transactionExportSince) }
         .task(id: "\(effectiveFilter.hashValue)|\(app.revision)") {
             if !query.isEmpty, loadedFilter?.search != effectiveFilter.search { try? await Task.sleep(for: .milliseconds(250)) }
             guard !Task.isCancelled else { return }
@@ -234,6 +271,11 @@ struct ActivityView: View {
                     }
                     .accessibilityHint("Shows every day again")
                     .accessibilityIdentifier("dayChip")
+                }
+                if let tags = filter.tags, !tags.isEmpty {
+                    DSChip(tags.count == 1 ? tags[0] : "\(tags.count) tags", systemImage: "tag", isSelected: true) { filter.tags = nil }
+                        .accessibilityHint("Shows every tag again")
+                        .accessibilityIdentifier("tagChip")
                 }
                 DSChip("Needs review", isSelected: filter.needsReviewOnly) {
                     filter.needsReviewOnly.toggle()
@@ -412,6 +454,9 @@ struct ActivityView: View {
         Button(row.note == nil ? "Add a note…" : "Edit note…", systemImage: "note.text") {
             noting = NoteTarget(ids: [row.id], initial: row.note ?? "")
         }
+        Button((row.tags ?? []).isEmpty ? "Add tags…" : "Edit tags…", systemImage: "tag") {
+            tagging = TagTarget(ids: [row.id], current: row.tags ?? [])
+        }
         Button("All from \(row.merchant)", systemImage: "magnifyingglass") {
             filter = TransactionFilter.activity
             query = row.merchant
@@ -437,7 +482,15 @@ struct ActivityView: View {
             onHide: { Task { await bulk { await edits.setHidden(ids, true) } } },
             onKeep: { Task { await bulk { await edits.keepGuess(ids) } } },
             onCount: { Task { await bulk { await edits.setHidden(ids, false) } } },
-            onNote: { noting = NoteTarget(ids: ids, initial: "") })
+            onNote: { noting = NoteTarget(ids: ids, initial: "") },
+            onTags: { tagging = TagTarget(ids: ids, current: TransactionTags.cleaned(selected.flatMap { $0.tags ?? [] })) })
+    }
+
+    /// After the picker has gone: file the one row, or offer the rows like it first.
+    private func offerSimilar() {
+        guard let pick = pendingPick else { return }
+        pendingPick = nil
+        Task { similarOffer = await edits.fileOrOffer(pick.row, as: pick.category) }
     }
 
     /// Runs a bulk edit; when it works, selecting ends.

@@ -78,7 +78,7 @@ public typealias DemoBudgetAPI = LedgerBudgetAPI
 /// The Budget API over a `Ledger`. The server runs it against Postgres-backed state with real
 /// sources and models; the app's demo mode runs it over fixtures. Same code, same numbers.
 public actor LedgerBudgetAPI: BudgetAPI {
-    private var ledger: Ledger
+    var ledger: Ledger
     private let latency: Duration
     private let clock: (@Sendable () -> Date)?
     /// When set, Ask runs the real agent loop; otherwise the templated demo engine answers.
@@ -160,11 +160,11 @@ public actor LedgerBudgetAPI: BudgetAPI {
 
     // MARK: Plumbing
 
-    private func tick() {
+    func tick() {
         if let clock { ledger.now = clock() }
     }
 
-    private func pause(_ factor: Double = 1) async {
+    func pause(_ factor: Double = 1) async {
         guard latency > .zero else { return }
         try? await Task.sleep(for: latency * factor)
     }
@@ -261,7 +261,7 @@ public actor LedgerBudgetAPI: BudgetAPI {
     }
 
     /// A period the ledger can't read is refused rather than matching nothing.
-    private func validate(_ filter: TransactionFilter) throws {
+    func validate(_ filter: TransactionFilter) throws {
         if let period = filter.period, ledger.interval(forPeriod: period) == nil { throw BudgetAPIError.rejected("Unknown period “\(period)”.") }
     }
 

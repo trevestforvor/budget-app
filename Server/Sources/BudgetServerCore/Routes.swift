@@ -270,6 +270,7 @@ public func buildRouter(_ service: BudgetService, surface: Surface = .api) -> Ro
     router.get("/v1/subscriptions") { _, _ in try HTTP.json(try await api.subscriptions()) }
     router.get("/v1/savings") { _, _ in try HTTP.json(try await api.savingsPlan()) }
 
+    addTransactionToolRoutes(router, service)
     addLinkRoutes(router, service)
     addImportRoutes(router, service)
     addMorningSummaryRoutes(router, service)

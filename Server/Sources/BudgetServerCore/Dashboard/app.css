@@ -512,6 +512,12 @@ kbd { display: inline-block; min-width: 1.5em; padding: 1px 5px; border-radius: 
   font: 500 .6875rem/1.3 var(--font-mono); text-align: center; background: var(--canvas); }
 .watch-text { color: var(--status-watch); }
 .tags { display: flex; gap: 6px; flex-wrap: wrap; margin-top: var(--s-xs); }
+/* Transactions: search, period and category side by side (stacked on a phone); the tag chips under them. */
+.txn-filters { display: grid; grid-template-columns: minmax(0, 2fr) repeat(2, minmax(0, 1fr)); gap: var(--s-sm); }
+.txn-tags { align-items: center; }
+.txn-tags-label { color: var(--ink-secondary); margin-right: var(--s-xs); }
+.txn-tags .chip .tag { letter-spacing: 0; }
+@media (max-width: 640px) { .txn-filters { grid-template-columns: minmax(0, 1fr); } }
 .quote { color: var(--ink-soft); }
 
 /* Category colors: the design-system tone a category wears (BudgetCategory.color), as a .tone-* class (tokens.css), never a style. */
