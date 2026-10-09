@@ -331,6 +331,8 @@ public enum AppAction: Hashable, Sendable {
     case forgetMerchant(ForgetMerchant)
     /// From the recurring list and a transaction's details; not a tool the assistant can call.
     case setRecurring(SetRecurring)
+    /// "Did this stop?" from the recurring review; not a tool the assistant can call.
+    case reviewRecurring(ReviewRecurring)
     case navigate(Navigate)
 
     public var toolName: String {
@@ -353,6 +355,7 @@ public enum AppAction: Hashable, Sendable {
         case .updateDecisionPolicy: "updateDecisionPolicy"
         case .forgetMerchant: "forgetMerchant"
         case .setRecurring: "setRecurring"
+        case .reviewRecurring: "reviewRecurring"
         case .navigate: "navigate"
         }
     }
@@ -419,6 +422,7 @@ public enum AppAction: Hashable, Sendable {
         case let .updateDecisionPolicy(p): return try e.encode(p)
         case let .forgetMerchant(p): return try e.encode(p)
         case let .setRecurring(p): return try e.encode(p)
+        case let .reviewRecurring(p): return try e.encode(p)
         case let .navigate(p): return try e.encode(p)
         }
     }
@@ -448,6 +452,7 @@ extension AppAction: Codable {
         case "updateDecisionPolicy": self = .updateDecisionPolicy(try UpdateDecisionPolicy(from: decoder))
         case "forgetMerchant": self = .forgetMerchant(try ForgetMerchant(from: decoder))
         case "setRecurring": self = .setRecurring(try SetRecurring(from: decoder))
+        case "reviewRecurring": self = .reviewRecurring(try ReviewRecurring(from: decoder))
         case "navigate": self = .navigate(try Navigate(from: decoder))
         default:
             throw DecodingError.dataCorruptedError(forKey: .type, in: try decoder.container(keyedBy: Keys.self), debugDescription: "Unknown action \(type)")
@@ -476,6 +481,7 @@ extension AppAction: Codable {
         case let .updateDecisionPolicy(p): try p.encode(to: encoder)
         case let .forgetMerchant(p): try p.encode(to: encoder)
         case let .setRecurring(p): try p.encode(to: encoder)
+        case let .reviewRecurring(p): try p.encode(to: encoder)
         case let .navigate(p): try p.encode(to: encoder)
         }
     }

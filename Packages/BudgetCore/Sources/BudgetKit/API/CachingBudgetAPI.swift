@@ -63,6 +63,7 @@ public enum SavedRead: Hashable, Sendable {
     case spending(SpendingRange)
     case categoryHistory(id: String, months: Int)
     case projection(horizonMonths: Int)
+    case monthlyRecap(month: String?)
 
     var key: String {
         switch self {
@@ -81,6 +82,7 @@ public enum SavedRead: Hashable, Sendable {
         case let .spending(range): "spending-\(range.rawValue)"
         case let .categoryHistory(id, months): "category-history-\(id)-\(months)"
         case let .projection(horizon): "projection-\(horizon)"
+        case let .monthlyRecap(month): "monthly-recap-\(month ?? "last")"
         }
     }
 }
@@ -183,6 +185,15 @@ public struct CachingBudgetAPI: BudgetAPI {
     public func savingsPlan() async throws -> SavingsPlan { try await read(.savings) { try await upstream.savingsPlan() } }
     public func checkup() async throws -> Checkup { try await read(.checkup) { try await upstream.checkup() } }
     public func subscriptions() async throws -> SubscriptionSummary { try await read(.subscriptions) { try await upstream.subscriptions() } }
+    /// Questions about the recurring list are only worth asking against the ledger as it is: never from the saved copy.
+    public func recurringReview() async throws -> RecurringReview {
+        guard let upstream = upstream as? any RecurringReviewAPI else { throw BudgetAPIError.notFound }
+        return try await upstream.recurringReview()
+    }
+    public func monthlyRecap(month: String?) async throws -> MonthlyRecap {
+        guard let api = upstream as? any MonthlyRecapAPI else { throw BudgetAPIError.notFound }
+        return try await read(.monthlyRecap(month: month)) { try await api.monthlyRecap(month: month) }
+    }
     public func assistantConfig() async throws -> AssistantConfig { try await read(.assistant) { try await upstream.assistantConfig() } }
 }
 

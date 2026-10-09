@@ -7,25 +7,10 @@ extension Ledger {
     func subscriptions() -> SubscriptionSummary {
         var items: [Subscription] = []
         for series in recurringSeries() {
-            let (cadence, billings) = (series.cadence, series.billings)
-            // Long past its last charge, it's over: off the list (its charges keep their bucket).
-            guard now.timeIntervalSince(billings.last!.date) <= cadence.staleAfter * 86_400 else { continue }
-            let amounts = billings.map(\.amount.minorUnits)
-            let last = billings.last!
-            let next = last.date.addingTimeInterval(cadence.days * 86_400)
-            let status: Subscription.Status = now.timeIntervalSince(next) > cadence.grace * 86_400 ? .missed : .active
-            let monthly = Double(last.amount.minorUnits) * 30.4 / cadence.days
-            let previous = amounts.count >= 2 && amounts[amounts.count - 2] != amounts.last! ? Money(minorUnits: amounts[amounts.count - 2]) : nil
-            let categoryID = last.rows[0].categorization?.categoryID
-            let choice = recurringChoices[RecurringChoice.key(series.merchant)]
-            items.append(Subscription(
-                merchant: series.merchant, kind: recurringKind(series), cadence: cadence,
-                status: status, amount: last.amount, previousAmount: previous,
-                monthlyCost: Money(minorUnits: Int64(monthly.rounded())), yearlyCost: Money(minorUnits: Int64((monthly * 12).rounded())),
-                lastCharged: last.date, nextExpected: next, charges: billings.count, categoryID: categoryID,
-                accountName: accounts.first { $0.id == last.rows[0].accountID }.map { "\($0.institution) \($0.name)" },
-                setByPerson: choice.map { $0.cadence != nil || $0.kind != nil },
-                names: series.names.count > 1 ? series.names : nil))
+            // Long past its last charge, it's over: off the list (its charges keep their bucket). So is one the person
+            // said they canceled, until it charges again.
+            guard now.timeIntervalSince(series.billings.last!.date) <= series.cadence.staleAfter * 86_400, !isEnded(series) else { continue }
+            items.append(subscription(series, kind: recurringKind(series)))
         }
         items.sort { ($0.status == .active ? 0 : 1, -$0.monthlyCost.minorUnits) < ($1.status == .active ? 0 : 1, -$1.monthlyCost.minorUnits) }
         let active = items.filter { $0.status == .active }
@@ -38,12 +23,35 @@ extension Ledger {
                                    notRecurring: recurringChoices.values.filter { !$0.isRecurring }.map(\.merchant).sorted())
     }
 
+    /// A series as the recurring list shows it: its latest charge and the one before when the price changed, a cost per
+    /// month and per year, and when the next charge is expected (missed once it's past the grace window).
+    func subscription(_ series: RecurringSeries, kind: Subscription.Kind) -> Subscription {
+        let (cadence, billings) = (series.cadence, series.billings)
+        let amounts = billings.map(\.amount.minorUnits)
+        let last = billings.last!
+        let next = last.date.addingTimeInterval(cadence.days * 86_400)
+        let status: Subscription.Status = now.timeIntervalSince(next) > cadence.grace * 86_400 ? .missed : .active
+        let monthly = Double(last.amount.minorUnits) * 30.4 / cadence.days
+        let previous = amounts.count >= 2 && amounts[amounts.count - 2] != amounts.last! ? Money(minorUnits: amounts[amounts.count - 2]) : nil
+        let choice = recurringChoices[RecurringChoice.key(series.merchant)]
+        return Subscription(
+            merchant: series.merchant, kind: kind, cadence: cadence,
+            status: status, amount: last.amount, previousAmount: previous,
+            monthlyCost: Money(minorUnits: Int64(monthly.rounded())), yearlyCost: Money(minorUnits: Int64((monthly * 12).rounded())),
+            lastCharged: last.date, nextExpected: next, charges: billings.count, categoryID: last.rows[0].categorization?.categoryID,
+            accountName: accounts.first { $0.id == last.rows[0].accountID }.map { "\($0.institution) \($0.name)" },
+            setByPerson: choice.map { $0.cadence != nil || $0.kind != nil },
+            names: series.names.count > 1 ? series.names : nil)
+    }
+
+    typealias Billing = (date: Date, amount: Money, rows: [LedgerTransaction])
+
     /// One merchant's charges that repeat on a schedule: each billing (same-merchant charges within three days merged)
     /// with the rows in it.
     struct RecurringSeries {
         var merchant: String
         var cadence: Subscription.Cadence
-        var billings: [(date: Date, amount: Money, rows: [LedgerTransaction])]
+        var billings: [Billing]
         var rowIDs: [String] { billings.flatMap { $0.rows.map(\.id) } }
         /// Every name its charges carry, when the bank wrote the merchant more than one way ("Google Fi", "Google*Fi Goo
         /// G.Co Helppay#").
@@ -90,25 +98,10 @@ extension Ledger {
     /// not a new thing). The person's say comes first: a merchant they said doesn't recur never does, and one they gave
     /// a cadence recurs on it from its first charge. Subscriptions and yearly charges both come from here.
     func recurringSeries() -> [RecurringSeries] {
-        let rows = transactions.filter { row in
-            guard row.amount.isNegative, !row.isPending, !row.isHidden else { return false }
-            // Moves between accounts and money in are never a subscription or a bill.
-            return row.categorization.flatMap { category($0.categoryID) }?.countsAsSpending ?? true
-        }
         var found: [RecurringSeries] = []
-        let sameAs = Self.sameMerchants(rows)
-        for (merchant, charges) in Dictionary(grouping: rows, by: { sameAs[$0.merchant] ?? $0.merchant }) {
+        for (merchant, billings) in merchantBillings() {
             let choice = recurringChoices[RecurringChoice.key(merchant)]
             if choice?.isRecurring == false { continue }
-            var billings: [(date: Date, amount: Money, rows: [LedgerTransaction])] = []
-            for row in charges.sorted(by: { $0.postedAt < $1.postedAt }) {
-                if let last = billings.last, row.postedAt.timeIntervalSince(last.date) < 3 * 86_400 {
-                    billings[billings.count - 1].amount = last.amount + row.amount.magnitude
-                    billings[billings.count - 1].rows.append(row)
-                } else {
-                    billings.append((row.postedAt, row.amount.magnitude, [row]))
-                }
-            }
             if let cadence = choice?.cadence, let latest = billings.last?.amount {
                 // The person's cadence covers the charge that recurs, not everything from the merchant.
                 let anchor = choice?.amount ?? latest
@@ -117,16 +110,8 @@ extension Ledger {
                 continue
             }
             guard billings.count >= 2 else { continue }
-            let gaps = zip(billings.dropFirst(), billings).map { $0.date.timeIntervalSince($1.date) / 86_400 }
-            let median = gaps.sorted()[gaps.count / 2]
-            let cadence: Subscription.Cadence
-            switch median {
-            case 5...9: cadence = .weekly
-            case 25...36: cadence = .monthly
-            case 80...100: cadence = .quarterly
-            case 340...390: cadence = .yearly
-            default: continue
-            }
+            let gaps = Self.gaps(billings)
+            guard let cadence = Self.cadence(medianGap: gaps.sorted()[gaps.count / 2]) else { continue }
             let needed = cadence == .yearly || cadence == .quarterly ? 2 : cadence == .weekly ? 4 : 3
             guard billings.count >= needed else { continue }
             // Regular: most gaps land near the cadence (a skipped month is fine, chaos isn't).
@@ -149,6 +134,46 @@ extension Ledger {
             found.append(RecurringSeries(merchant: merchant, cadence: cadence, billings: billings))
         }
         return found
+    }
+
+    /// Money out in spending categories, posted and counted, grouped by merchant (a merchant the bank writes more than
+    /// one way as one, `sameMerchants`), each merchant's charges within three days of each other merged into one
+    /// billing, oldest first. What both the recurring search and its review queue read.
+    func merchantBillings() -> [(merchant: String, billings: [Billing])] {
+        let rows = transactions.filter { row in
+            guard row.amount.isNegative, !row.isPending, !row.isHidden else { return false }
+            // Moves between accounts and money in are never a subscription or a bill.
+            return row.categorization.flatMap { category($0.categoryID) }?.countsAsSpending ?? true
+        }
+        let sameAs = Self.sameMerchants(rows)
+        return Dictionary(grouping: rows, by: { sameAs[$0.merchant] ?? $0.merchant }).map { merchant, charges in
+            var billings: [Billing] = []
+            for row in charges.sorted(by: { $0.postedAt < $1.postedAt }) {
+                if let last = billings.last, row.postedAt.timeIntervalSince(last.date) < 3 * 86_400 {
+                    billings[billings.count - 1].amount = last.amount + row.amount.magnitude
+                    billings[billings.count - 1].rows.append(row)
+                } else {
+                    billings.append((row.postedAt, row.amount.magnitude, [row]))
+                }
+            }
+            return (merchant, billings)
+        }
+    }
+
+    /// Days between each billing and the one before it.
+    static func gaps(_ billings: [Billing]) -> [Double] {
+        zip(billings.dropFirst(), billings).map { $0.date.timeIntervalSince($1.date) / 86_400 }
+    }
+
+    /// The cadence a median gap between charges reads as, if any.
+    static func cadence(medianGap median: Double) -> Subscription.Cadence? {
+        switch median {
+        case 5...9: .weekly
+        case 25...36: .monthly
+        case 80...100: .quarterly
+        case 340...390: .yearly
+        default: nil
+        }
     }
 
     /// Every charge `items` are expected to make from now through `days` ahead, at their latest amounts: a weekly

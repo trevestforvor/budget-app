@@ -49,6 +49,8 @@ struct DemoToolbox: AgentToolbox {
         case "savingsGuidance": return savingsGuidance()
         case "runCheckup": return runCheckup()
         case "findSubscriptions": return findSubscriptions()
+        case "recurringReview": return recurringReview()
+        case "monthlyRecap": return try monthlyRecap(month: string("month"))
         case "findRules": return findRules()
         case "categorize": return try await categorize(args["transactionIDs"])
         default: throw BudgetAPIError.rejected("Unknown read tool \(tool).")

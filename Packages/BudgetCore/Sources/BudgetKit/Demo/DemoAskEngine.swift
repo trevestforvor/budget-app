@@ -15,6 +15,8 @@ struct DemoAskEngine {
         let category = matchedCategory(in: q)
 
         if q.contains("q3"), q.contains("q2") { return compareQuarters(category: category, conversationID: conversationID) }
+        if let r = recapIntent(q, conversationID) { return r }
+        if let r = recurringReviewIntent(q, conversationID) { return r }
         if let r = cancelIntent(q, conversationID) { return r }
         if let r = subscriptionIntent(q, conversationID) { return r }
         if let r = checkupIntent(q, conversationID) { return r }
@@ -100,6 +102,39 @@ struct DemoAskEngine {
                      figures: subs.map { Figure(id: $0.merchant, label: $0.merchant, detail: "A month", value: $0.monthlyCost) }
                          + [Figure(id: "m", label: "Subscriptions a month", detail: nil, value: found.subscriptionsMonthly)],
                      tools: [call("findSubscriptions", [:])], followUps: ["Which of my subscriptions could I cancel?"])
+    }
+
+    /// "How did last month go?", "Recap August" → one monthlyRecap call, told in the recap's own summary.
+    private func recapIntent(_ q: String, _ cid: String) -> AskReply? {
+        guard ["recap", "how did last month go", "last month go", "month in review", "how was last month"].contains(where: q.contains) else { return nil }
+        let key = q.contains("last month") ? nil : pastMonthKey(q)
+        guard let recap = try? ledger.monthlyRecap(key), let out = try? toolbox.monthlyRecap(month: key) else { return nil }
+        var lines = [recap.summary]
+        if let top = recap.categoryChanges.first {
+            lines.append("The biggest change was \(top.name): \(top.spent.formatted()), \(top.change.isNegative ? "down" : "up") \(top.change.magnitude.formatted()) on the month before.")
+        }
+        lines.append("Cash \(recap.cashChange.isNegative ? "fell" : "grew") by \(recap.cashChange.magnitude.formatted()) over the month.")
+        return reply(cid, text: lines.joined(separator: " "), figures: out.figures,
+                     tools: [call("monthlyRecap", key.map { ["month": .string($0)] } ?? [:])], followUps: ["How has my cash flow changed?"])
+    }
+
+    /// "Did any of my subscriptions stop?", "Is anything new recurring?" → one recurringReview call.
+    private func recurringReviewIntent(_ q: String, _ cid: String) -> AskReply? {
+        guard ["stopped", "stop?", "still paying", "new recurring", "might be recurring", "still charging"].contains(where: q.contains) else { return nil }
+        let review = ledger.recurringReview()
+        let out = toolbox.recurringReview()
+        var lines: [String] = []
+        if !review.maybeStopped.isEmpty {
+            let named = review.maybeStopped.map { "\($0.merchant) (\($0.amount.formatted()), last on \($0.lastCharged.formatted(Ledger.dayStyle(calendar))))" }
+            lines.append("No charge lately from \(named.spokenList). If you canceled, say so on the Recurring screen and it comes off your budget.")
+        }
+        if !review.candidates.isEmpty {
+            let named = review.candidates.map { "\($0.merchant) (\($0.amount.formatted()))" }
+            lines.append("\(named.spokenList) looks like it repeats \(review.candidates[0].cadence.every); confirm it there to plan for it.")
+        }
+        if lines.isEmpty { lines = ["Nothing to check: every recurring charge came when expected, and nothing new looks recurring."] }
+        return reply(cid, text: lines.joined(separator: " "), figures: out.figures, tools: [call("recurringReview", [:])],
+                     followUps: ["Open my recurring charges"])
     }
 
     /// "Which could I cancel?": each subscription with its price, the priciest first, and what dropping it saves a year.

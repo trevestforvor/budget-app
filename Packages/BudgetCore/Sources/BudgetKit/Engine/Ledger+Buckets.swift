@@ -17,6 +17,9 @@ extension Ledger {
         var yearlyIDs: Set<String>
         /// Rows in a recurring series, by id, and the kind each counts as.
         var kinds: [String: Subscription.Kind]
+        /// Rows of a series the person said they canceled (`RecurringReviewMark.endedAt`): they keep their bucket, but the
+        /// usual month of bills and subscriptions leaves them out.
+        var endedIDs: Set<String> = []
     }
 
     var recurringIndex: RecurringIndex { recurringCache.index(for: rowsToken) { computeRecurringIndex() } }
@@ -37,11 +40,13 @@ extension Ledger {
             }
         }
         var kinds: [String: Subscription.Kind] = [:]
+        var ended: Set<String> = []
         for item in series {
             let kind = recurringKind(item)
             for id in item.rowIDs { kinds[id] = kind }
+            if isEnded(item) { ended.formUnion(item.rowIDs) }
         }
-        return RecurringIndex(yearlyIDs: ids, kinds: kinds)
+        return RecurringIndex(yearlyIDs: ids, kinds: kinds, endedIDs: ended)
     }
 
     /// A recurring series' kind: the person's say, else a bill when its category is a bill, else a subscription.
@@ -93,14 +98,15 @@ extension Ledger {
     ///   - start: the month's first instant.
     ///   - end: its end, or now for this month.
     ///   - includeTargets: attach each category's target, and list a targeted category with nothing spent yet.
-    func budgetTotals(from start: Date, to end: Date, includeTargets: Bool = false) -> [CategoryGroup: [CategoryTotal]] {
+    ///   - leavingOut: rows to leave out (a canceled series' charges, from a usual month).
+    func budgetTotals(from start: Date, to end: Date, includeTargets: Bool = false, leavingOut: Set<String> = []) -> [CategoryGroup: [CategoryTotal]] {
         let index = recurringIndex
         let yearly = index.yearlyIDs
         let byID = Dictionary(categories.map { ($0.id, $0) }, uniquingKeysWith: { first, _ in first })
         let spreadFrom = calendar.date(byAdding: .month, value: -11, to: start)!
         var regular: [CategoryGroup: [String: [LedgerTransaction]]] = [:]
         var spread: [CategoryGroup: [String: [LedgerTransaction]]] = [:]
-        for row in transactions where row.postedAt < end && row.postedAt >= spreadFrom && !row.isHidden {
+        for row in transactions where row.postedAt < end && row.postedAt >= spreadFrom && !row.isHidden && !leavingOut.contains(row.id) {
             guard let bucket = bucket(of: row, categories: byID, kinds: index.kinds), let id = row.categorization?.categoryID else { continue }
             if yearly.contains(row.id) {
                 spread[bucket, default: [:]][id, default: []].append(row)

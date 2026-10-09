@@ -377,6 +377,19 @@ public actor LedgerBudgetAPI: BudgetAPI {
         return ledger.subscriptions()
     }
 
+    /// "Is this recurring?" and "Did this stop?" (`RecurringReviewAPI`).
+    public func recurringReview() async throws -> RecurringReview {
+        tick(); await pause(0.5)
+        return ledger.recurringReview()
+    }
+
+    /// A finished month in review (`MonthlyRecapAPI`). The net-worth change is nil until the ledger keeps a net-worth
+    /// history; the recap then shows the change in cash.
+    public func monthlyRecap(month: String?) async throws -> MonthlyRecap {
+        tick(); await pause(0.5)
+        return try ledger.monthlyRecap(month, netWorthChange: nil)
+    }
+
     public func checkup() async throws -> Checkup {
         tick(); await pause(0.8)
         return ledger.checkup(institutions: deployment.institutions)
