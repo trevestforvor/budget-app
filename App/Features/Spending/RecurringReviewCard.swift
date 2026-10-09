@@ -32,22 +32,24 @@ struct RecurringReviewCard: View {
                     .padding(.bottom, DSSpace.xs)
                     ForEach(stopped) { item in
                         DSDivider()
-                        question(item, tag: "Recurring", detail: Self.stoppedDetail(item), ask: "Did this stop?") {
+                        question(item, tags: ["Recurring"], detail: Self.stoppedDetail(item), ask: "Did this stop?") {
                             Button("Yes, I canceled it") { answer(item.merchant, .stopped) }
                                 .buttonStyle(.ds(.tinted, size: .compact))
                                 .accessibilityIdentifier("recurringStopped")
-                            Button("Still active") { answer(item.merchant, .stillActive) }
+                            Button("No, still active") { answer(item.merchant, .stillActive) }
                                 .buttonStyle(.ds(.secondary, size: .compact))
+                                .accessibilityIdentifier("recurringStillActive")
                         }
                     }
                     ForEach(candidates) { item in
                         DSDivider()
-                        question(item, tag: "Review", detail: Self.candidateDetail(item), ask: "Is this recurring?") {
-                            Button("Yes") { confirm(item) }
+                        question(item, tags: ["Recurring", "Review"], detail: Self.candidateDetail(item), ask: "Is this recurring?") {
+                            Button("Yes, it repeats") { confirm(item) }
                                 .buttonStyle(.ds(.tinted, size: .compact))
                                 .accessibilityIdentifier("recurringConfirm")
                             Button("Not recurring") { dismiss(item) }
                                 .buttonStyle(.ds(.secondary, size: .compact))
+                                .accessibilityIdentifier("recurringDismiss")
                         }
                     }
                     ForEach(ended, id: \.self) { merchant in
@@ -55,6 +57,8 @@ struct RecurringReviewCard: View {
                         DSListRow(merchant, detail: "You said it stopped") {
                             Button("Put back") { putBack(merchant) }
                                 .buttonStyle(.ds(.quiet))
+                                .accessibilityIdentifier("recurringPutBackStopped")
+                                .accessibilityLabel("Put \(merchant) back on recurring")
                         }
                         .padding(.horizontal, DSSpace.md)
                     }
@@ -66,7 +70,7 @@ struct RecurringReviewCard: View {
         }
     }
 
-    private func question<Buttons: View>(_ item: Subscription, tag: String, detail: String, ask: String,
+    private func question<Buttons: View>(_ item: Subscription, tags: [String], detail: String, ask: String,
                                          @ViewBuilder buttons: () -> Buttons) -> some View {
         let category = app.category(item.categoryID)
         return VStack(alignment: .leading, spacing: DSSpace.sm) {
@@ -74,9 +78,9 @@ struct RecurringReviewCard: View {
                 DSGlyph(systemImage: category?.symbol ?? "repeat",
                         tone: CategoryStyle.tone(for: category ?? app.category("subscriptions")))
                 VStack(alignment: .leading, spacing: 3) {
-                    HStack(alignment: .firstTextBaseline, spacing: DSSpace.xs) {
-                        Text(item.merchant).dsFont(.bodyEmphasis).foregroundStyle(Color.ds.ink)
-                        DSTag(tag, tint: tag == "Review" ? Color.ds.amber : Color.ds.accent)
+                    Text(item.merchant).dsFont(.bodyEmphasis).foregroundStyle(Color.ds.ink)
+                    HStack(spacing: DSSpace.xxs) {
+                        ForEach(tags, id: \.self) { tag in DSTag(tag, tint: tag == "Review" ? Color.ds.amber : Color.ds.accent) }
                     }
                     Text(detail).dsFont(.caption).foregroundStyle(Color.ds.inkSecondary)
                         .fixedSize(horizontal: false, vertical: true)

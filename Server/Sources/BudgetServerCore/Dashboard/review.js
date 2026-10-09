@@ -55,14 +55,21 @@ function drawDuplicates(panel, r) {
 
 /// The last /v1/recurring/review answer (server 0.5.0): "Did this stop?" and "Is this recurring?", as the phone asks them.
 let recurring = null;
+/// The mounted view, so a fresh answer can update the tab counts.
+let view = null;
 const recurringCount = () => (recurring ? recurring.candidates.length + recurring.maybeStopped.length : 0);
 const loadRecurring = async () => (recurring = await api("/v1/recurring/review"));
 const CADENCE = { weekly: "Weekly", monthly: "Monthly", quarterly: "Every 3 months", yearly: "Yearly" };
 
 function renderRecurring(panel) {
   fill(panel, skeleton(4));
-  loadRecurring().then(() => drawRecurring(panel), (error) => fill(panel, callout({ tone: "watch", title: error.message, detail: error.detail,
-    actions: [button("Try again", { compact: true, onclick: () => renderRecurring(panel) })] })));
+  // Another tab may have opened while this loaded; it keeps the panel.
+  const stillOpen = () => panel.getAttribute("aria-labelledby") === "rtab-recurring";
+  loadRecurring().then(() => {
+    if (view) view.updateCounts();
+    if (stillOpen()) drawRecurring(panel);
+  }, (error) => { if (stillOpen()) fill(panel, callout({ tone: "watch", title: error.message, detail: error.detail,
+    actions: [button("Try again", { compact: true, onclick: () => renderRecurring(panel) })] })); });
 }
 
 /// One answer through /v1/actions, then the queue again. The phone's toast offers Undo; here the answer's undo is a button.
@@ -79,10 +86,10 @@ async function answerRecurring(panel, body, e) {
   });
 }
 
-function recurringRow(s, label, detail, actions) {
+function recurringRow(s, labels, detail, actions) {
   return h("div", { class: "row" },
     h("div", { class: "grow" },
-      h("div", { class: "title wrap" }, s.merchant, " ", tag(label, label === "Review" ? "watch" : "info")),
+      h("div", { class: "title wrap" }, s.merchant, ...labels.flatMap((label) => [" ", tag(label, label === "Review" ? "watch" : "info")])),
       h("div", { class: "sub wrap" }, detail)),
     rowMoney(s.amount),
     h("div", { class: "actions" }, actions));
@@ -100,15 +107,15 @@ function drawRecurring(panel) {
     stopped.length ? h("section", { class: "card stack", "aria-labelledby": "rec-stopped" },
       h("h2", { class: "t-headline", id: "rec-stopped" }, "Did this stop?"),
       h("p", { class: "t-callout muted" }, "No charge for about a cycle and a half. If you canceled it, it comes off the list and out of the usual month of bills and subscriptions now. If it's still active, Budget asks again a cycle later."),
-      h("div", { class: "rows" }, stopped.map((s) => recurringRow(s, "Recurring", `${CADENCE[s.cadence] || s.cadence} · no charge since ${dateShort(s.lastCharged)}`, [
+      h("div", { class: "rows" }, stopped.map((s) => recurringRow(s, ["Recurring"], `${CADENCE[s.cadence] || s.cadence} · no charge since ${dateShort(s.lastCharged)}`, [
         button("Yes, I canceled it", { kind: "tinted", compact: true, onclick: (e) => answerRecurring(panel, { type: "reviewRecurring", merchant: s.merchant, answer: "stopped" }, e) }),
-        button("Still active", { compact: true, onclick: (e) => answerRecurring(panel, { type: "reviewRecurring", merchant: s.merchant, answer: "stillActive" }, e) }),
+        button("No, still active", { compact: true, onclick: (e) => answerRecurring(panel, { type: "reviewRecurring", merchant: s.merchant, answer: "stillActive" }, e) }),
       ])))) : null,
     candidates.length ? h("section", { class: "card stack", "aria-labelledby": "rec-new" },
       h("h2", { class: "t-headline", id: "rec-new" }, "Is this recurring?"),
       h("p", { class: "t-callout muted" }, "These repeat on a schedule but don't have enough history for the recurring list yet. Yes puts them on it, so the budget plans for them."),
-      h("div", { class: "rows" }, candidates.map((s) => recurringRow(s, "Review", `Charged ${plural(s.charges, "time")} · ${(CADENCE[s.cadence] || s.cadence).toLowerCase()} · next around ${dateShort(s.nextExpected)}`, [
-        button("Yes", { kind: "tinted", compact: true, onclick: (e) => answerRecurring(panel, { type: "setRecurring", merchant: s.merchant, isRecurring: true, cadence: s.cadence, amount: (s.amount.minor / 100).toFixed(2) }, e) }),
+      h("div", { class: "rows" }, candidates.map((s) => recurringRow(s, ["Recurring", "Review"], `Charged ${plural(s.charges, "time")} · ${(CADENCE[s.cadence] || s.cadence).toLowerCase()} · next around ${dateShort(s.nextExpected)}`, [
+        button("Yes, it repeats", { kind: "tinted", compact: true, onclick: (e) => answerRecurring(panel, { type: "setRecurring", merchant: s.merchant, isRecurring: true, cadence: s.cadence, amount: (s.amount.minor / 100).toFixed(2) }, e) }),
         button("Not recurring", { compact: true, onclick: (e) => answerRecurring(panel, { type: "setRecurring", merchant: s.merchant, isRecurring: false }, e) }),
       ])))) : null,
     ended.length ? h("section", { class: "card stack", "aria-labelledby": "rec-ended" },
@@ -169,6 +176,7 @@ export default {
   title: "Review",
   mount(root, { sub }) {
     this.root = root;
+    view = this;
     this.tabs = TABS;
     const tablist = h("div", { class: "tabs", role: "tablist", "aria-label": "Review" });
     this.panel = h("div", { class: "tab-panel", role: "tabpanel", tabindex: "0" });
@@ -187,7 +195,7 @@ export default {
     loadRecurring().then(() => this.updateCounts(), () => {});
   },
   navigate({ sub }) { this.show(sub); },
-  unmount() { closeDrawer(); },
+  unmount() { closeDrawer(); view = null; },
   show(id) {
     const tab = this.tabs.find((t) => t.id === id) || this.tabs[0];
     this.current = tab.id;

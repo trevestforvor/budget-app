@@ -88,6 +88,24 @@ struct RecurringReviewTests {
         #expect(ledger.recurringReview().maybeStopped.map(\.merchant) == ["Streambox"])
     }
 
+    @Test("The answer counts from when it was given: past months, and a recap of them, stay as they were")
+    func stoppedIsntRetroactive() throws {
+        var ledger = Rows.ledger(Self.rows())
+        let august = try ledger.budgetMonth("2026-08")
+        let recap = try ledger.monthlyRecap("2026-08")
+        let usualBefore = ledger.capacity().subscriptions
+        try ledger.perform(Self.stopped(.stopped))
+        // August's budget was worked out at its own end, before the answer: Streambox was still in its usual month.
+        #expect(try ledger.budgetMonth("2026-08").groups.map(\.planned) == august.groups.map(\.planned))
+        #expect(try ledger.monthlyRecap("2026-08").buckets == recap.buckets)
+        // This month's usual month drops it at once.
+        #expect(usualBefore - ledger.capacity().subscriptions == Money(9.99))
+        // Seen from before the answer, the series is still on the list.
+        var then = ledger
+        then.now = EngineFixture.now.addingTimeInterval(-86_400)
+        #expect(then.subscriptions().items.contains { $0.merchant == "Streambox" })
+    }
+
     @Test("A charge after the answer brings an ended series back")
     func chargesAgain() throws {
         var ledger = Rows.ledger(Self.rows())

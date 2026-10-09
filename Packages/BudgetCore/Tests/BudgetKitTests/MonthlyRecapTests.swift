@@ -79,6 +79,9 @@ struct MonthlyRecapTests {
         #expect(throws: BudgetAPIError.rejected("September isn't over yet, so there's no recap of it.")) { try ledger.monthlyRecap("2026-09") }
         #expect(throws: BudgetAPIError.rejected("A month is written like 2026-09.")) { try ledger.monthlyRecap("August") }
         #expect(throws: BudgetAPIError.rejected("The ledger starts after May 2026, so there's no recap of it.")) { try ledger.monthlyRecap("2026-05") }
+        #expect(throws: BudgetAPIError.rejected("There's nothing in the ledger yet, so there's no recap of August.")) {
+            try Rows.ledger([]).monthlyRecap(nil)
+        }
     }
 
     @Test("Spending ran past income: said so")

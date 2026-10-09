@@ -9,8 +9,8 @@ extension Ledger {
     /// A finished month in review (`MonthlyRecap`). Nil `key` is last month. Income, spending and what was left are cash
     /// flow's figures for the month; the buckets are the budget month's (`budgetMonth`), each against what the budget
     /// planned for it then.
-    /// - Parameter netWorthChange: the month's change in net worth, from a net-worth history when there is one. Without
-    ///   it the recap shows the change in cash.
+    /// - Parameter netWorthChange: the month's change in net worth, from a net-worth history kept outside the ledger.
+    ///   Without it, `recapNetWorthChange(from:to:)`; when neither has one, the recap shows the change in cash.
     func monthlyRecap(_ key: String?, netWorthChange: Money? = nil) throws -> MonthlyRecap {
         let lastMonth = interval(for: .lastMonth).start
         let key = key ?? monthKey(lastMonth)
@@ -18,6 +18,7 @@ extension Ledger {
         let name = start.formatted(Self.monthStyle(calendar, year: false))
         guard start < startOfMonth else { throw BudgetAPIError.rejected("\(name) isn't over yet, so there's no recap of it.") }
         let end = calendar.date(byAdding: .month, value: 1, to: start)!
+        guard !transactions.isEmpty else { throw BudgetAPIError.rejected("There's nothing in the ledger yet, so there's no recap of \(name).") }
         guard transactions.contains(where: { $0.postedAt < end }) else {
             throw BudgetAPIError.rejected("The ledger starts after \(start.formatted(Self.monthStyle(calendar))), so there's no recap of it.")
         }
@@ -32,9 +33,16 @@ extension Ledger {
         let showsUntil = key == monthKey(lastMonth) ? calendar.date(byAdding: .day, value: Self.monthlyRecapDays, to: startOfMonth) : nil
         return MonthlyRecap(month: key, asOf: now, showsUntil: showsUntil, income: flow.income, spending: flow.spending, saved: flow.net,
                             movedToSavings: movedToSavings(from: start, to: end), buckets: buckets, hasBudget: hasBudget,
-                            categoryChanges: changes, cashChange: cashChange, netWorthChange: netWorthChange,
+                            categoryChanges: changes, cashChange: cashChange,
+                            netWorthChange: netWorthChange ?? recapNetWorthChange(from: start, to: end),
                             summary: Self.recapSummary(name: name, flow: flow, buckets: buckets, changes: changes))
     }
+
+    /// Net worth at `end` less at `start`, from the ledger's own net-worth history. The seam for that history (D1): nil
+    /// until the ledger keeps one, and the recap shows the change in cash. The Ask tool and the API both read through
+    /// here, so filling this in reaches both; a history kept outside the ledger passes `monthlyRecap(_:netWorthChange:)`
+    /// instead (`LedgerBudgetAPI.monthlyRecap`).
+    func recapNetWorthChange(from start: Date, to end: Date) -> Money? { nil }
 
     /// The spending categories that moved most against the whole month before, at least `recapChangeFloor` either way,
     /// biggest first — none when the ledger doesn't cover that month from its start.

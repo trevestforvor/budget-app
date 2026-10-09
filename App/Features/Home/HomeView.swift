@@ -124,8 +124,12 @@ struct HomeView: View {
         if let fresh = try? await api.monthlyRecap(month: nil) { monthlyRecap = fresh }
     }
 
+    /// Fresh by the clock, not by when it was worked out: a saved copy read offline weeks later is old news.
     private var shownMonthlyRecap: MonthlyRecap? {
-        monthlyRecap.flatMap { $0.isFresh && $0.month != dismissedMonthlyRecap ? $0 : nil }
+        monthlyRecap.flatMap { recap in
+            guard let until = recap.showsUntil, AppClock.now < until, recap.month != dismissedMonthlyRecap else { return nil }
+            return recap
+        }
     }
 
     // MARK: Content

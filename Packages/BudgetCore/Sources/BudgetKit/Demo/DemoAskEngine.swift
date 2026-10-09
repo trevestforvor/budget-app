@@ -130,7 +130,9 @@ struct DemoAskEngine {
         }
         if !review.candidates.isEmpty {
             let named = review.candidates.map { "\($0.merchant) (\($0.amount.formatted()))" }
-            lines.append("\(named.spokenList) looks like it repeats \(review.candidates[0].cadence.every); confirm it there to plan for it.")
+            lines.append(review.candidates.count == 1
+                ? "\(named.spokenList) looks like it repeats \(review.candidates[0].cadence.every); confirm it there to plan for it."
+                : "\(named.spokenList) look like they repeat on a schedule; confirm them there to plan for them.")
         }
         if lines.isEmpty { lines = ["Nothing to check: every recurring charge came when expected, and nothing new looks recurring."] }
         return reply(cid, text: lines.joined(separator: " "), figures: out.figures, tools: [call("recurringReview", [:])],

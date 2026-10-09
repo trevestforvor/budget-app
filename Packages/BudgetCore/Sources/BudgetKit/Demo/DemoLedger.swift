@@ -667,7 +667,7 @@ public struct Ledger: Sendable {
         }
         let flows = windows.map { flow(from: $0.0, to: $0.1) }
         // A series the person said they canceled is out of the usual month at once, not after it ages out.
-        let ended = recurringIndex.endedIDs
+        let ended = recurringIndex.endedIDs(asOf: now)
         let buckets = windows.map { budgetTotals(from: $0.0, to: $0.1, leavingOut: ended) }
         func usual(_ group: CategoryGroup) -> [Money] { buckets.map { ($0[group] ?? []).map(\.spent).sum() } }
         let income = Self.average(flows.map(\.income))

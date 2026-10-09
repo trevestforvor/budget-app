@@ -17,9 +17,13 @@ extension Ledger {
         var yearlyIDs: Set<String>
         /// Rows in a recurring series, by id, and the kind each counts as.
         var kinds: [String: Subscription.Kind]
-        /// Rows of a series the person said they canceled (`RecurringReviewMark.endedAt`): they keep their bucket, but the
-        /// usual month of bills and subscriptions leaves them out.
-        var endedIDs: Set<String> = []
+        /// Rows of a series the person said they canceled, by id, and when they said it (`RecurringReviewMark.endedAt`):
+        /// they keep their bucket, but from that instant the usual month of bills and subscriptions leaves them out
+        /// (`endedIDs(asOf:)`). Kept by instant so the index doesn't depend on `now`, which a past month moves.
+        var endedAt: [String: Date] = [:]
+
+        /// The rows a usual month worked out at `now` leaves out: a canceled series' charges, once it was canceled.
+        func endedIDs(asOf now: Date) -> Set<String> { Set(endedAt.lazy.filter { $0.value <= now }.map(\.key)) }
     }
 
     var recurringIndex: RecurringIndex { recurringCache.index(for: rowsToken) { computeRecurringIndex() } }
@@ -40,13 +44,13 @@ extension Ledger {
             }
         }
         var kinds: [String: Subscription.Kind] = [:]
-        var ended: Set<String> = []
+        var ended: [String: Date] = [:]
         for item in series {
             let kind = recurringKind(item)
             for id in item.rowIDs { kinds[id] = kind }
-            if isEnded(item) { ended.formUnion(item.rowIDs) }
+            if let at = endedAt(item) { for id in item.rowIDs { ended[id] = at } }
         }
-        return RecurringIndex(yearlyIDs: ids, kinds: kinds, endedIDs: ended)
+        return RecurringIndex(yearlyIDs: ids, kinds: kinds, endedAt: ended)
     }
 
     /// A recurring series' kind: the person's say, else a bill when its category is a bill, else a subscription.

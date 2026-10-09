@@ -21,10 +21,15 @@ extension Ledger {
                                ended: ended.map(\.merchant).sorted())
     }
 
-    /// Whether the person said this series stopped and it hasn't charged since.
-    func isEnded(_ series: RecurringSeries) -> Bool {
-        guard let endedAt = recurringReviews[RecurringChoice.key(series.merchant)]?.endedAt, let last = series.billings.last else { return false }
-        return last.date <= endedAt
+    /// Whether the person said this series stopped, by now, and it hasn't charged since. A past month worked out at its
+    /// own end (`budgetMonth`) predates an answer given later, so the answer doesn't rewrite it.
+    func isEnded(_ series: RecurringSeries) -> Bool { endedAt(series).map { $0 <= now } ?? false }
+
+    /// When the person said this series stopped, if it hasn't charged since — whatever `now` is.
+    func endedAt(_ series: RecurringSeries) -> Date? {
+        guard let endedAt = recurringReviews[RecurringChoice.key(series.merchant)]?.endedAt, let last = series.billings.last,
+              last.date <= endedAt else { return nil }
+        return endedAt
     }
 
     /// "Did this stop?": active series on the list whose last charge is past `askStoppedAfter`, unless the person said

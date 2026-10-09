@@ -181,7 +181,7 @@ An archived category still resolves by id for old rows, but nothing new is filed
 - `ended`: merchants you said stopped whose series would otherwise still be listed, so one can be put back.
 
 `{"type": "reviewRecurring", merchant, answer?: stopped|stillActive, restores?, mark?}` answers "Did this stop?" for a merchant on the list, kept in `LedgerState.recurringReviews` by lowercased merchant name as `RecurringReviewMark {merchant, endedAt?, snoozedUntil?}`:
-- `stopped` ("Yes, I canceled it") ends the series now: it leaves `/v1/subscriptions` and its totals, and its charges leave the usual month of bills or subscriptions the flex budget averages at once instead of as they age out. Its past charges keep their category and their bucket in their own months. A charge after `endedAt` brings it back. The preview's effects are the usual month of its kind before and after, and the everyday budget after.
+- `stopped` ("Yes, I canceled it") ends the series now: it leaves `/v1/subscriptions` and its totals, and its charges leave the usual month of bills or subscriptions the flex budget averages at once instead of as they age out. Its past charges keep their category and their bucket in their own months, and a past month's budget (worked out as of its end, as `/v1/budget` and the monthly recap show it) isn't rewritten. A charge after `endedAt` brings it back. The preview's effects are the usual month of its kind before and after, and the everyday budget after.
 - `stillActive` ("No, still active") keeps it and doesn't ask again for one cycle (`snoozedUntil`).
 - `restores: true` sets the mark exactly to `mark` (absent clears it), with no checks: the `undo` every answer returns, and how an ended series is put back.
 
@@ -219,7 +219,7 @@ Every spending figure uses one rule: each category is net of its own refunds and
 - `income`, `spending` and `saved` (= income − spending; negative when spending ran past income) are that month's `MonthFlow`, so they match Plan's cash flow to the cent. `movedToSavings` is what went into savings accounts as transfers, as "saved first" counts it.
 - `buckets: [RecapBucket {group, spent, planned?}]` are bills, subscriptions and everyday from that month's `BudgetMonth` (a spread charge counts its twelfth, so they can differ from `spending` by that). `planned` is nil when `hasBudget` is false: the month didn't have three full months before it.
 - `categoryChanges: [RecapCategoryChange {categoryID, name, spent, previous, change}]`: up to three spending categories that moved $20 or more against the whole month before, biggest first; empty when the ledger doesn't cover that month.
-- `cashChange` is checking and savings at the month's end less at its start. `netWorthChange` is the same for net worth once the ledger keeps a net-worth history; nil until then, and the app shows `cashChange`.
+- `cashChange` is checking and savings at the month's end less at its start. `netWorthChange` is the same for net worth once there's a net-worth history (`Ledger.recapNetWorthChange`, or passed in by `LedgerBudgetAPI.monthlyRecap`); nil until then, and the app shows `cashChange`.
 - `summary` is a sentence or two from these figures, written by the ledger. `showsUntil` is the end of the first week of the next month for last month's recap (nil for any other), and `isFresh` says whether `asOf` is before it: when Home shows the card.
 
 `navigate` also takes `month` ("2026-09", for Spending) and the `recurring` screen.
