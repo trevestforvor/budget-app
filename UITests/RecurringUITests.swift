@@ -71,7 +71,7 @@ final class RecurringUITests: XCTestCase {
         let app = launch(["-open", "recurring"])
         let spotify = app.buttons.matching(NSPredicate(format: "label CONTAINS %@", "Spotify")).firstMatch
         // Off-screen rows aren't in the accessibility tree: wait for the screen, then scroll Spotify into view.
-        XCTAssertTrue(app.staticTexts["Due in the next 30 days"].waitForExistence(timeout: 10))
+        XCTAssertTrue(app.staticTexts["Bills and subscriptions · next 30 days"].waitForExistence(timeout: 10))
         scroll(to: spotify, in: app)
         XCTAssertTrue(spotify.waitForExistence(timeout: 5))
         spotify.swipeLeft()

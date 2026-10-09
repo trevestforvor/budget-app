@@ -92,7 +92,8 @@ struct RecurringView: View {
     @ViewBuilder
     private func content(_ found: SubscriptionSummary) -> some View {
         let upcoming = Self.upcoming(found)
-        DSHeroAmount(label: "Due in the next 30 days",
+        // Bills and subscriptions only: card bills are listed apart (Card bills below, and on the calendar).
+        DSHeroAmount(label: "Bills and subscriptions · next 30 days",
                      value: (found.dueNext30Days ?? upcoming.map(\.amount).sum()).decimal,
                      caption: "Subscriptions \(found.subscriptionsMonthly.formatted(fractionDigits: 0)) a month · bills \(found.billsMonthly.formatted(fractionDigits: 0)) a month")
             .padding(.top, DSSpace.sm)
@@ -132,24 +133,27 @@ struct RecurringView: View {
         }
         if let bills = expected?.cardBills, !bills.isEmpty { CardBillsCard(bills: bills).plainRow() }
         if let off = found.notRecurring, !off.isEmpty { notRecurring(off) }
-        Text("Found from repeat charges in your ledger. Tap one to change how it repeats, or swipe it away if it isn't recurring; + adds one Budget can't know yet, like a first yearly charge.")
-            .dsFont(.caption)
-            .foregroundStyle(Color.ds.inkTertiary)
-            .fixedSize(horizontal: false, vertical: true)
-            .plainRow()
+        // How to use the list: the calendar has no rows to tap or swipe.
+        if layout == .list {
+            Text("Found from repeat charges in your ledger. Tap one to change how it repeats, or swipe it away if it isn't recurring; + adds one Budget can't know yet, like a first yearly charge.")
+                .dsFont(.caption)
+                .foregroundStyle(Color.ds.inkTertiary)
+                .fixedSize(horizontal: false, vertical: true)
+                .plainRow()
+        }
     }
 
     /// Merchants taken off recurring, each with a way back.
     private func notRecurring(_ merchants: [String]) -> some View {
         Section {
-            ForEach(merchants, id: \.self) { merchant in
+            ForEach(Array(merchants.enumerated()), id: \.element) { index, merchant in
                 DSListRow(merchant, detail: "You took it off") {
                     Button("Put back") {
                         Task { await RowEdits(app: app, toast: $toast).setRecurring(merchant, nil) }
                     }
                     .buttonStyle(.ds(.quiet))
                 }
-                .cardRow()
+                .cardRow(.init(index: index, count: merchants.count))
             }
         } header: {
             DSSectionHeader("Not recurring").sectionHeader()
@@ -199,9 +203,9 @@ struct RecurringView: View {
 
     private func group(_ title: String, _ items: [Subscription], style: RecurringRow.Style, total: Money, perMonth: Bool = false) -> some View {
         Section {
-            ForEach(items) { item in
+            ForEach(Array(items.enumerated()), id: \.element.id) { index, item in
                 RecurringRow(item: item, style: style)
-                    .cardRow()
+                    .cardRow(.init(index: index, count: items.count))
                     .swipeActions(edge: .trailing, allowsFullSwipe: true) {
                         Button(role: .destructive) { remove(item) } label: { Label("Delete", systemImage: "trash") }
                     }
@@ -226,9 +230,9 @@ private extension View {
             .listRowSeparator(.hidden)
     }
 
-    /// A row on a section's card, as `DSListSection` lays them.
-    func cardRow() -> some View {
-        listRowBackground(Color.ds.surface)
+    /// A row on a section's card, as `DSListSection` lays them: its share of the card at `position`.
+    func cardRow(_ position: DSListRowChrome.Position) -> some View {
+        listRowBackground(DSListRowChrome(position: position))
             .listRowSeparatorTint(Color.ds.hairlineStrong)
             .listRowInsets(EdgeInsets(top: 0, leading: DSSpace.md, bottom: 0, trailing: DSSpace.md))
     }

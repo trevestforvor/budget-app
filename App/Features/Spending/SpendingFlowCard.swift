@@ -86,7 +86,8 @@ struct SpendingFlowCard: View {
             // A server before 0.5.0 has no /v1/flow.
             unavailable = true
         } catch {
-            if !Task.isCancelled, state.value == nil { state = .failed(error.localizedDescription) }
+            // Keep a figure only when it's this month's (a saved copy); another month's under this header would mislead.
+            if !Task.isCancelled, state.value?.month != key { state = .failed(error.localizedDescription) }
         }
     }
 

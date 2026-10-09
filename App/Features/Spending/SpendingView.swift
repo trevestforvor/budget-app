@@ -484,10 +484,18 @@ struct SpendingView: View {
                         }
                     }
                     DSDivider()
+                    // The list above has paychecks and card bills too: its totals a kind a line, as Plan shows them, so
+                    // no single figure under it leaves out what's listed.
+                    if let expected, !expected.items.isEmpty {
+                        UpcomingTotalsLines(totals: expected.totals)
+                            .padding(.vertical, DSSpace.xs)
+                        DSDivider()
+                    }
                     Button { path.append(RecurringRoute()) } label: {
                         HStack {
                             VStack(alignment: .leading, spacing: DSSpace.xxs) {
-                                Text("Due in the next 30 days").dsFont(.callout).foregroundStyle(Color.ds.inkSecondary)
+                                Text(expected?.items.isEmpty == false ? "Every recurring charge" : "Bills and subscriptions, next 30 days")
+                                    .dsFont(.callout).foregroundStyle(Color.ds.inkSecondary)
                                 if recurringToReview > 0 {
                                     DSTag("\(recurringToReview) to review", tint: Color.ds.amber)
                                         .accessibilityIdentifier("recurringToReview")
@@ -495,7 +503,9 @@ struct SpendingView: View {
                             }
                             .padding(.vertical, recurringToReview > 0 ? DSSpace.xs : 0)
                             Spacer()
-                            DSAmountText((found.dueNext30Days ?? upcoming.map(\.amount).sum()).decimal, sign: .magnitude)
+                            if expected?.items.isEmpty != false {
+                                DSAmountText((found.dueNext30Days ?? upcoming.map(\.amount).sum()).decimal, sign: .magnitude)
+                            }
                             Image(systemName: "chevron.right").font(.system(size: DSIconSize.xs, weight: .semibold))
                                 .foregroundStyle(Color.ds.inkTertiary).accessibilityHidden(true)
                         }

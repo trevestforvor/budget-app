@@ -254,27 +254,37 @@ struct NextThirtyDaysCard: View {
         DSCard {
             VStack(alignment: .leading, spacing: DSSpace.sm) {
                 DSEyebrow("Next \(upcoming.days) days")
-                VStack(spacing: 0) {
-                    if t.income.minorUnits > 0 {
-                        HStack(alignment: .firstTextBaseline) {
-                            Text("Paychecks").dsFont(.callout).foregroundStyle(Color.ds.inkSoft)
-                            Spacer()
-                            DSAmountText(t.income.decimal, currencyCode: t.income.currencyCode, sign: .inflowPlus, tintsInflow: true)
-                        }
-                        .padding(.vertical, DSSpace.xxs)
-                        .accessibilityElement(children: .combine)
-                    }
-                    DSFigureRow(label: "Bills and subscriptions", detail: "From your recurring charges", value: t.charges.decimal)
-                    if t.cardBills.minorUnits > 0 {
-                        DSFigureRow(label: "Card bills", detail: "Paying for spending already made", value: t.cardBills.decimal)
-                    }
-                }
+                UpcomingTotalsLines(totals: t)
                 Button("See what's coming up") { app.route(Navigate(screen: .recurring)) }
                     .buttonStyle(.ds(.quiet))
                     .accessibilityHint("Opens Recurring")
             }
         }
         .accessibilityIdentifier("nextThirtyDays")
+    }
+}
+
+/// A window's totals a line each: paychecks, bills and subscriptions, and card bills apart (they pay for spending
+/// already made, so they're never added to the charges). Plan's Next 30 days and Spending's Coming up both use it.
+struct UpcomingTotalsLines: View {
+    let totals: UpcomingTotals
+
+    var body: some View {
+        VStack(spacing: 0) {
+            if totals.income.minorUnits > 0 {
+                HStack(alignment: .firstTextBaseline) {
+                    Text("Paychecks").dsFont(.callout).foregroundStyle(Color.ds.inkSoft)
+                    Spacer()
+                    DSAmountText(totals.income.decimal, currencyCode: totals.income.currencyCode, sign: .inflowPlus, tintsInflow: true)
+                }
+                .padding(.vertical, DSSpace.xxs)
+                .accessibilityElement(children: .combine)
+            }
+            DSFigureRow(label: "Bills and subscriptions", detail: "From your recurring charges", value: totals.charges.decimal)
+            if totals.cardBills.minorUnits > 0 {
+                DSFigureRow(label: "Card bills", detail: "Paying for spending already made", value: totals.cardBills.decimal)
+            }
+        }
     }
 }
 

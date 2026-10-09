@@ -35,16 +35,54 @@ struct UpcomingCalendar: View {
     private var firstMonth: Date { calendar.date(from: calendar.dateComponents([.year, .month], from: upcoming.asOf)) ?? month }
 
     var body: some View {
-        VStack(alignment: .leading, spacing: DSSpace.md) {
-            DSCard(padding: DSSpace.md) {
-                VStack(spacing: DSSpace.sm) {
-                    header
-                    weekdays
-                    grid
+        if dynamicTypeSize.isAccessibilitySize {
+            // Seven columns of about 47pt can't hold accessibility-size text: the days with something on them, as a list.
+            agenda
+        } else {
+            VStack(alignment: .leading, spacing: DSSpace.md) {
+                DSCard(padding: DSSpace.md) {
+                    VStack(spacing: DSSpace.sm) {
+                        header
+                        weekdays
+                        grid
+                    }
                 }
+                .accessibilityIdentifier("upcomingCalendar")
+                dayList
             }
-            .accessibilityIdentifier("upcomingCalendar")
-            dayList
+        }
+    }
+
+    /// Every day with something expected, soonest first, each with its items.
+    private var agenda: some View {
+        VStack(alignment: .leading, spacing: DSSpace.lg) {
+            if upcoming.byDay.isEmpty {
+                Text("Nothing is expected in the next \(upcoming.days) days.")
+                    .dsFont(.callout).foregroundStyle(Color.ds.inkSecondary)
+                    .fixedSize(horizontal: false, vertical: true)
+            }
+            ForEach(upcoming.byDay, id: \.date) { day in
+                dayCard(day, title: day.date.formatted(.dateTime.weekday(.wide).month(.wide).day()))
+            }
+        }
+        .accessibilityElement(children: .contain)
+        .accessibilityIdentifier("upcomingCalendar")
+    }
+
+    private func dayCard(_ day: UpcomingDay, title: String) -> some View {
+        VStack(alignment: .leading, spacing: DSSpace.sm) {
+            DSSectionHeader(title)
+            DSCard(padding: 0) {
+                VStack(spacing: 0) {
+                    let items = upcoming.items(on: day)
+                    ForEach(Array(items.enumerated()), id: \.element.id) { index, item in
+                        if index > 0 { DSDivider() }
+                        UpcomingRow(item: item, showsDate: false, payCadence: upcoming.payCadence,
+                                    subscription: subscriptions.first { $0.covers(item.title) })
+                    }
+                }
+                .padding(.horizontal, DSSpace.md)
+            }
         }
     }
 
@@ -92,19 +130,26 @@ struct UpcomingCalendar: View {
         return Array(repeating: nil, count: lead) + range.compactMap { calendar.date(byAdding: .day, value: $0 - 1, to: month) }
     }
 
+    /// A week a row, laid out at once: a lazy grid inside the List row that holds the calendar sent the list's
+    /// collection view into a re-layout loop (and a crash) at large text sizes.
     private var grid: some View {
-        let columns = Array(repeating: GridItem(.flexible(), spacing: 0), count: 7)
         let today = calendar.startOfDay(for: upcoming.asOf)
         let byDay = days
-        return LazyVGrid(columns: columns, spacing: DSSpace.xxs) {
-            ForEach(Array(cells.enumerated()), id: \.offset) { _, date in
-                if let date {
-                    DayCell(date: date, day: byDay[date], items: byDay[date].map(upcoming.items(on:)) ?? [], isPast: date < today,
-                            isToday: date == today, isSelected: selected == date, large: dynamicTypeSize.isAccessibilitySize) {
-                        withAnimation(DSMotion.standard) { selected = byDay[date] == nil ? nil : date }
+        let all = cells
+        let weeks = stride(from: 0, to: all.count, by: 7).map { Array(all[$0..<min($0 + 7, all.count)]) }
+        return VStack(spacing: DSSpace.xxs) {
+            ForEach(weeks.indices, id: \.self) { week in
+                HStack(spacing: 0) {
+                    ForEach(0..<7, id: \.self) { column in
+                        if column < weeks[week].count, let date = weeks[week][column] {
+                            DayCell(date: date, day: byDay[date], items: byDay[date].map(upcoming.items(on:)) ?? [], isPast: date < today,
+                                    isToday: date == today, isSelected: selected == date, large: dynamicTypeSize.isAccessibilitySize) {
+                                withAnimation(DSMotion.standard) { selected = byDay[date] == nil ? nil : date }
+                            }
+                        } else {
+                            Color.clear.frame(maxWidth: .infinity, minHeight: DSSize.hitTarget).accessibilityHidden(true)
+                        }
                     }
-                } else {
-                    Color.clear.frame(minHeight: DSSize.hitTarget).accessibilityHidden(true)
                 }
             }
         }
@@ -113,21 +158,8 @@ struct UpcomingCalendar: View {
     @ViewBuilder
     private var dayList: some View {
         if let selected, let day = days[selected] {
-            VStack(alignment: .leading, spacing: DSSpace.sm) {
-                DSSectionHeader(selected.formatted(.dateTime.weekday(.wide).month(.wide).day()))
-                DSCard(padding: 0) {
-                    VStack(spacing: 0) {
-                        let items = upcoming.items(on: day)
-                        ForEach(Array(items.enumerated()), id: \.element.id) { index, item in
-                            if index > 0 { DSDivider() }
-                            UpcomingRow(item: item, showsDate: false, payCadence: upcoming.payCadence,
-                                        subscription: subscriptions.first { $0.covers(item.title) })
-                        }
-                    }
-                    .padding(.horizontal, DSSpace.md)
-                }
-            }
-            .accessibilityIdentifier("upcomingDay")
+            dayCard(day, title: selected.formatted(.dateTime.weekday(.wide).month(.wide).day()))
+                .accessibilityIdentifier("upcomingDay")
         } else {
             Text("Tap a day with a dot to see what's expected.")
                 .dsFont(.caption).foregroundStyle(Color.ds.inkTertiary)
