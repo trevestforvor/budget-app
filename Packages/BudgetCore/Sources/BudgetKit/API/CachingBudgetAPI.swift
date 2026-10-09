@@ -92,7 +92,7 @@ public protocol SavedCopies: Sendable {
 }
 
 public struct CachingBudgetAPI: BudgetAPI {
-    private let upstream: any BudgetAPI
+    let upstream: any BudgetAPI
     private let cache: ResponseCache
     private let onFreshness: @Sendable (Freshness) -> Void
 

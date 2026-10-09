@@ -14,6 +14,7 @@ struct DemoAskEngine {
         let q = question.lowercased()
         let category = matchedCategory(in: q)
 
+        if let r = rememberIntent(question, conversationID) { return r }
         if q.contains("q3"), q.contains("q2") { return compareQuarters(category: category, conversationID: conversationID) }
         if let r = cancelIntent(q, conversationID) { return r }
         if let r = subscriptionIntent(q, conversationID) { return r }
@@ -483,6 +484,16 @@ struct DemoAskEngine {
         else if q.contains("home") { action = Navigate(screen: .home) }
         else { return nil }
         return proposal(.navigate(action), cid, lead: "Here's where to look.")
+    }
+
+    /// "Remember that we're saving for a trip in March" → a card that keeps it in assistant memory.
+    private func rememberIntent(_ question: String, _ cid: String) -> AskReply? {
+        let pattern = /(?i)^\s*(?:please\s+)?(?:remember|keep in mind|note)(?:\s+that)?[\s:,]+(.+)$/
+        guard let match = question.firstMatch(of: pattern) else { return nil }
+        let fact = String(match.1).trimmingCharacters(in: CharacterSet(charactersIn: " .!"))
+        guard !fact.isEmpty else { return nil }
+        let sentence = fact.prefix(1).uppercased() + fact.dropFirst()
+        return proposal(.rememberFact(RememberFact(fact: sentence)), cid, lead: "I can keep that in mind for later conversations.")
     }
 
     private func proposal(_ action: AppAction, _ cid: String, lead: String) -> AskReply {

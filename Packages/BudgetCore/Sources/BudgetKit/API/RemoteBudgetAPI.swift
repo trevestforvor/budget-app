@@ -114,23 +114,23 @@ public struct RemoteBudgetAPI: BudgetAPI, MorningSummaryAPI {
     // MARK: - Transport
 
     /// A row id is one path segment whatever it holds (a statement row's id can contain a slash); `then` follows it.
-    private func endpoint(_ path: String, id: String?, then tail: String? = nil) -> URL {
+    func endpoint(_ path: String, id: String?, then tail: String? = nil) -> URL {
         let url = baseURL.appending(path: path)
         let withID = id.map { url.appending(component: $0) } ?? url
         return tail.map { withID.appending(path: $0) } ?? withID
     }
 
-    private func get<T: Decodable>(_ path: String, id: String? = nil, then tail: String? = nil, query: [URLQueryItem] = []) async throws -> T {
+    func get<T: Decodable>(_ path: String, id: String? = nil, then tail: String? = nil, query: [URLQueryItem] = []) async throws -> T {
         var components = URLComponents(url: endpoint(path, id: id, then: tail), resolvingAgainstBaseURL: false)!
         if !query.isEmpty { components.queryItems = query }
         return try decode(try await load(URLRequest(url: components.url!)))
     }
 
-    private func send<T: Decodable>(_ method: String, _ path: String, body: some Encodable, timeout: TimeInterval = timeout) async throws -> T {
+    func send<T: Decodable>(_ method: String, _ path: String, body: some Encodable, timeout: TimeInterval = timeout) async throws -> T {
         try decode(try await load(try request(method, path, body: body), timeout: timeout))
     }
 
-    private func request(_ method: String, _ path: String, id: String? = nil, body: some Encodable) throws -> URLRequest {
+    func request(_ method: String, _ path: String, id: String? = nil, body: some Encodable) throws -> URLRequest {
         var request = URLRequest(url: endpoint(path, id: id))
         request.httpMethod = method
         request.setValue("application/json", forHTTPHeaderField: "Content-Type")
@@ -140,7 +140,7 @@ public struct RemoteBudgetAPI: BudgetAPI, MorningSummaryAPI {
 
     /// The body of a 2xx response (empty for a 204); anything else becomes a `BudgetAPIError`: no connection, a server
     /// that didn't answer in time and one that can't be reached are each said as what they are.
-    private func load(_ request: URLRequest, timeout: TimeInterval = timeout) async throws -> Data {
+    func load(_ request: URLRequest, timeout: TimeInterval = timeout) async throws -> Data {
         var request = request
         request.timeoutInterval = timeout
         request.setValue("application/json", forHTTPHeaderField: "Accept")
@@ -173,7 +173,7 @@ public struct RemoteBudgetAPI: BudgetAPI, MorningSummaryAPI {
         }
     }
 
-    private func decode<T: Decodable>(_ data: Data) throws -> T {
+    func decode<T: Decodable>(_ data: Data) throws -> T {
         do {
             return try Self.decoder.decode(T.self, from: data)
         } catch {

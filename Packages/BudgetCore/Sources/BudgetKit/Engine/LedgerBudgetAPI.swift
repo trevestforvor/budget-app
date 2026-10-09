@@ -78,16 +78,23 @@ public typealias DemoBudgetAPI = LedgerBudgetAPI
 /// The Budget API over a `Ledger`. The server runs it against Postgres-backed state with real
 /// sources and models; the app's demo mode runs it over fixtures. Same code, same numbers.
 public actor LedgerBudgetAPI: BudgetAPI {
-    private var ledger: Ledger
+    var ledger: Ledger
     private let latency: Duration
     private let clock: (@Sendable () -> Date)?
     /// When set, Ask runs the real agent loop; otherwise the templated demo engine answers.
     private var chatModel: (any ChatModel)?
     private var decisions: DecisionRouting
     private let persistence: (any LedgerPersistence)?
-    private var deployment: DeploymentInfo
+    var deployment: DeploymentInfo
     private var escalatedAccepts = 0
     private var escalationNote: String?
+    /// Ask's conversations (`ChatSessionStore`): in memory unless the server hands over its own.
+    var chatStore: any ChatSessionStore = InMemoryChatSessionStore()
+    /// The demo fills its chat history with a few conversations the first time it's read.
+    var seedsDemoChats = false
+    /// Chat turns are recorded one at a time (`recordingTurn`).
+    var recordingChat = false
+    var waitingChatRecorders: [CheckedContinuation<Void, Never>] = []
 
     /// Server: persisted state, the wall clock, configured models.
     public init(state: LedgerState, calendar: Calendar = .current, clock: @escaping @Sendable () -> Date = { .now },
@@ -124,6 +131,7 @@ public actor LedgerBudgetAPI: BudgetAPI {
             return link
         }
         deployment = DeploymentInfo(endpoint: "demo://ledger", version: "demo", sources: [.teller, .plaid, .fileImport], institutions: institutions)
+        seedsDemoChats = true
     }
 
     /// The demo connection that waits for a sign-in (balance-only, so no spending figure depends on it).
@@ -160,11 +168,11 @@ public actor LedgerBudgetAPI: BudgetAPI {
 
     // MARK: Plumbing
 
-    private func tick() {
+    func tick() {
         if let clock { ledger.now = clock() }
     }
 
-    private func pause(_ factor: Double = 1) async {
+    func pause(_ factor: Double = 1) async {
         guard latency > .zero else { return }
         try? await Task.sleep(for: latency * factor)
     }
@@ -176,7 +184,7 @@ public actor LedgerBudgetAPI: BudgetAPI {
     private var waitingWriters: [CheckedContinuation<Void, Never>] = []
 
     /// Makes `change` (synchronous, so nothing else runs in the middle of it) and saves it, taking its turn.
-    private func write<T>(_ change: () throws -> T) async throws -> T {
+    func write<T>(_ change: () throws -> T) async throws -> T {
         if writing { await withCheckedContinuation { waitingWriters.append($0) } } else { writing = true }
         defer { if waitingWriters.isEmpty { writing = false } else { waitingWriters.removeFirst().resume() } }
         let before = ledger.state
@@ -197,7 +205,7 @@ public actor LedgerBudgetAPI: BudgetAPI {
         }
     }
 
-    private var toolbox: DemoToolbox {
+    var toolbox: DemoToolbox {
         DemoToolbox(ledger: ledger, decisions: try? decisions.model(for: ledger.decisionPolicy.isActive ? ledger.decisionPolicy.provider : .localDecide),
                     institutions: deployment.institutions)
     }
@@ -318,14 +326,25 @@ public actor LedgerBudgetAPI: BudgetAPI {
         return results
     }
 
+    /// Answers within a conversation: a known `conversationID` continues it (the model sees the turns before), a new one
+    /// or none starts one. Either way the turn is kept in chat history (`LedgerBudgetAPI+Assistant.swift`).
     public func ask(_ question: String, conversationID: String?) async throws -> AskReply {
         tick()
         let id = conversationID ?? UUID().uuidString
+        let history = await chatHistory(for: id)
+        let reply: AskReply
+        let transcript: [ChatMessage]
         if let chatModel {
-            return try await AgentLoop(model: chatModel, toolbox: toolbox).run(question, conversationID: id).reply
+            let outcome = try await AgentLoop(model: chatModel, toolbox: toolbox).run(question, conversationID: id, history: history)
+            reply = outcome.reply
+            transcript = Array(outcome.transcript.dropFirst(1 + history.count))
+        } else {
+            await pause(2.5)
+            reply = DemoAskEngine(ledger: ledger, institutions: deployment.institutions).answer(question, conversationID: id)
+            transcript = []
         }
-        await pause(2.5)
-        return DemoAskEngine(ledger: ledger, institutions: deployment.institutions).answer(question, conversationID: id)
+        await recordTurn(question, reply: reply, transcript: transcript, in: id)
+        return reply
     }
 
     /// Runs the agent loop and returns the full outcome (steps, repairs, grounding) — for tools and tests.
@@ -409,8 +428,7 @@ public actor LedgerBudgetAPI: BudgetAPI {
 
     public func assistantConfig() async throws -> AssistantConfig {
         tick()
-        let context = AssistantContext(now: ledger.now, timeZone: ledger.calendar.timeZone, categories: ledger.activeCategories, monthlyTargets: ledger.monthlyTargets)
-        return AssistantConfig(promptVersion: AssistantPrompt.version, systemPrompt: AssistantPrompt.system(context),
+        return AssistantConfig(promptVersion: AssistantPrompt.version, systemPrompt: AssistantPrompt.system(ledger.assistantContext),
                                tools: ToolCatalog.definitions(for: ledger.activeCategories))
     }
 

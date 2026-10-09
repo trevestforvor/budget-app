@@ -29,6 +29,7 @@ struct ToolSchemaTests {
         .editTransactions(EditTransactions(transactionIDs: ["tx-4", "tx-5"], merchant: "Blue Bottle", renameSimilar: true)),
         .updateDecisionPolicy(UpdateDecisionPolicy(provider: .localDecide, autoAcceptPercent: 80)),
         .updateDecisionPolicy(UpdateDecisionPolicy(reviewNewMerchants: true, holdPending: true, reviewAbove: DecimalAmount(string: "500"))),
+        .rememberFact(RememberFact(fact: "Saving for a trip to Lisbon in March")),
         .navigate(Navigate(screen: .spending, categoryID: "dining", range: .lastMonth)),
     ]
 

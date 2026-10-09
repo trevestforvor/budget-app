@@ -55,14 +55,18 @@ public struct AgentLoop: Sendable {
         let spendingIDs = categories.filter(\.countsAsSpending).map(\.id)
         let mergeableIDs = categories.filter { $0.countsAsSpending || $0.isMoneyIn }.map(\.id)
         let tools = ToolCatalog.openAITools(for: categories)
-        let prompt = AssistantPrompt.system(toolbox.assistantContext)
+        let context = toolbox.assistantContext
+        let prompt = AssistantPrompt.system(context)
 
         var messages: [ChatMessage] = [.system(prompt)] + history + [.user(question)]
         var calls: [ToolCall] = []
         var proposals: [ProposedAction] = []
         var figures: [Figure] = []
-        // Everything the model may quote: tool results plus the prompt's category list.
-        var groundingText = prompt + "\n" + question
+        // Everything the model may quote: tool results (this turn's, and those an earlier turn of the conversation got,
+        // replayed in `history`), the prompt's category list and the person's own questions. Never assistant memory, and
+        // never the model's own earlier prose: neither is a ledger figure.
+        let earlier = history.filter { $0.role == .tool || $0.role == .user }.compactMap(\.content)
+        var groundingText = ([AssistantPrompt.system(context.withoutMemories)] + earlier + [question]).joined(separator: "\n")
         var repairs = 0
         var groundingRetried = false
 
