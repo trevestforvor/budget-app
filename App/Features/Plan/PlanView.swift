@@ -14,6 +14,8 @@ struct PlanView: View {
     @State private var isChecking = false
     @State private var savings: SavingsPlan?
     @State private var editsSavings = false
+    /// The next 30 days of paychecks, bills and card bills (`GET /v1/upcoming`); nil from a server without it.
+    @State private var upcoming: Upcoming?
 
     var body: some View {
         NavigationStack {
@@ -41,6 +43,7 @@ struct PlanView: View {
                     case let .loaded(projection):
                         projectionSection(projection)
                     }
+                    if let upcoming, !upcoming.items.isEmpty { NextThirtyDaysCard(upcoming: upcoming) }
                     if let savings {
                         if let history = savings.history, history.count > 1 { CashFlowCard(plan: savings, history: history) }
                         savingsCard(savings)
@@ -79,6 +82,7 @@ struct PlanView: View {
         app.endUpdating(updating)
         state = next
         savings = await plan
+        if let fresh = try? await api.upcoming(days: UpcomingWindow.days) { upcoming = fresh }
         return error
     }
 

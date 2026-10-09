@@ -15,6 +15,10 @@ struct RecurringView: View {
     @Environment(AppModel.self) private var app
     @State private var state: LoadState<SubscriptionSummary> = .loading
     @State private var mode: Mode = .upcoming
+    /// List or calendar (`UpcomingCalendar`).
+    @State private var layout: RecurringLayout = .launched
+    /// Paychecks, bills and card bills by day (`GET /v1/upcoming`); nil from a server without it.
+    @State private var expected: Upcoming?
     @State private var adding = false
     @State private var toast: DSToastMessage?
 
@@ -69,6 +73,7 @@ struct RecurringView: View {
         let (next, error) = await state.refreshing { try await api.subscriptions() }
         app.endUpdating(updating)
         state = next
+        if let fresh = try? await api.upcoming(days: UpcomingWindow.calendarDays) { expected = fresh }
         return error
     }
 
@@ -81,7 +86,13 @@ struct RecurringView: View {
             .padding(.top, DSSpace.sm)
             .plainRow()
 
-        if found.items.isEmpty {
+        DSSegmented("Show", selection: $layout, options: RecurringLayout.allCases) { $0.title }
+            .plainRow()
+            .accessibilityIdentifier("recurringLayout")
+
+        if layout == .calendar {
+            RecurringCalendarContent(upcoming: expected).plainRow()
+        } else if found.items.isEmpty {
             DSStateView(systemImage: "repeat", title: "No repeat charges yet",
                         message: found.monthsSearched < 3 ? "They show up once there are a few months of history." : "Nothing charges you on a schedule.")
                 .plainRow()
@@ -102,6 +113,7 @@ struct RecurringView: View {
                 AskLink("Which of these could I cancel?", question: "Which of my subscriptions could I cancel?").plainRow()
             }
         }
+        if let bills = expected?.cardBills, !bills.isEmpty { CardBillsCard(bills: bills).plainRow() }
         if let off = found.notRecurring, !off.isEmpty { notRecurring(off) }
         Text("Found from repeat charges in your ledger. Tap one to change how it repeats, or swipe it away if it isn't recurring; + adds one Budget can't know yet, like a first yearly charge.")
             .dsFont(.caption)
