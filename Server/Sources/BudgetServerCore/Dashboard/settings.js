@@ -1,7 +1,7 @@
 // Settings: one column, one sticky save bar for everything editable. A value's source shows only when it
 // isn't the default. Removing data is its own guarded action at the bottom and never rides the save bar.
 import { fill, h, api, store, heavy, cached, forget, loadCore, pageHead, sectionHead, button, busy, callout, details, tag, afterWrite, reportError, toast,
-  plural, ago, duration, dateTime, nextSyncIn, ROLE, skeleton } from "./core.js";
+  plural, ago, duration, dateTime, nextSyncIn, ROLE, skeleton, loadInto, dot, money } from "./core.js";
 import { plaidForm, tellerForm, removeKeysButton, providerStates } from "./providers.js";
 
 /// Plain names for the server's settings (the server's own label and help are the fallback).
@@ -322,6 +322,30 @@ function section(id, title, ...children) {
   return [sectionHead(title, null, `sec-${id}`), h("section", { class: "card", id: `section-${id}`, "aria-labelledby": `sec-${id}` }, children)];
 }
 
+/// Pace alerts as the phone would get them now (`GET /v1/alerts/pace`): read-only; each phone picks its own kinds.
+function paceAlerts() {
+  const region = h("div", { class: "rows" });
+  loadInto(region, () => api("/v1/alerts/pace"), (report) => {
+    const rows = [];
+    if (report.everyday) {
+      const e = report.everyday;
+      const pace = e.projected ? `on pace for ${money(e.projected, { cents: false })}` : "too early to project";
+      rows.push(h("div", { class: "row" }, dot(report.alerts.some((a) => a.kind === "everyday") ? "act" : "ok"),
+        h("div", { class: "grow" }, h("div", { class: "title" }, "Everyday budget"),
+          h("div", { class: "sub wrap" }, `${money(e.spent, { cents: false })} of ${money(e.limit, { cents: false })} spent, ${pace}.`))));
+    }
+    for (const a of report.alerts) {
+      rows.push(h("div", { class: "row" }, dot(a.threshold === "used80" ? "watch" : "act"),
+        h("div", { class: "grow" }, h("div", { class: "title" }, a.title), h("div", { class: "sub wrap" }, a.body))));
+    }
+    if (!report.alerts.length) rows.push(h("p", { class: "t-callout muted" }, "Nothing is running ahead this month."));
+    return rows;
+  });
+  return [h("h3", { class: "t-headline" }, "Pace alerts right now"),
+    h("p", { class: "t-callout muted" }, "A heads-up when the everyday budget is on pace to finish the month over, or a category target or merchant cap passes 80% or is on pace to go over. Each phone picks which it gets in its Settings; each goes once a month, between 9 am and 9 pm where the phone is."),
+    region];
+}
+
 function copyButton(getText, label = "Copy") {
   const b = button(label, { compact: true, onclick: async () => {
     const value = getText();
@@ -505,8 +529,8 @@ export default {
         section("sync", "Sync and time", ...take("syncIntervalHours", "timeZone"), ...rest("sync"), tz),
         phoneSection(byKey.publicURL ? (placed.add("publicURL"), byKey.publicURL) : null, rest("phone")),
         section("notifications", "Notifications",
-          h("p", { class: "t-callout muted" }, "The morning summary: yesterday's spending at 9:30 wherever the phone is. Turn it on in the phone's Settings; it needs an APNs key here to send."),
-          ...take("apnsKey", "apnsKeyID", "apnsTeamID", "apnsTopic"), ...rest("notifications")),
+          h("p", { class: "t-callout muted" }, "The morning summary (yesterday's spending at 9:30 wherever the phone is) and pace alerts. Turn them on in the phone's Settings; they need an APNs key here to send."),
+          ...take("apnsKey", "apnsKeyID", "apnsTeamID", "apnsTopic"), ...rest("notifications"), ...paceAlerts()),
         settingControls.some((c) => !placed.has(c.key)) ? section("other", "More", ...settingControls.filter((c) => !placed.has(c.key)).map((c) => c.el)) : null,
         sectionHead("About this server", null, "sec-about"), this.about,
         removeDataSection(),
