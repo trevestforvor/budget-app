@@ -79,17 +79,22 @@ extension LedgerBudgetAPI: AssistantAPI {
 
     /// What the model sees of the conversation before the next question; nothing for a new one, or when the
     /// conversation can't be read (the question is still answered, on its own).
-    func chatHistory(for id: String) async -> [ChatMessage] {
+    /// `existed` says whether the conversation was kept when the question came in (`recordTurn` needs it).
+    func chatHistory(for id: String) async -> (messages: [ChatMessage], existed: Bool) {
         await seedDemoChatsIfNeeded()
-        return ((try? await chatStore.chatRecord(id: id)) ?? nil)?.modelHistory() ?? []
+        let record = (try? await chatStore.chatRecord(id: id)) ?? nil
+        return (record?.modelHistory() ?? [], record != nil)
     }
 
     /// Keeps the turn with its conversation (starting one for a new id), then drops the least recently used past
-    /// `ChatSession.maxSessions`. A store that can't be written loses the turn, not the answer.
-    func recordTurn(_ question: String, reply: AskReply, transcript: [ChatMessage], in id: String) async {
+    /// `ChatSession.maxSessions`. A store that can't be written loses the turn, not the answer. A conversation that
+    /// existed when the question came in (`existed`) and is gone now was deleted while the answer was on its way: it
+    /// stays deleted.
+    func recordTurn(_ question: String, reply: AskReply, transcript: [ChatMessage], in id: String, existed: Bool = false) async {
         let askedAt = ledger.now
         try? await oneAtATime {
             let existing = try await chatStore.chatRecord(id: id)
+            if existing == nil, existed { return }
             var record = existing ?? .new(id: id, question: question, at: askedAt)
             record.append(ChatTurn(id: reply.id, question: question, askedAt: askedAt, reply: reply), transcript: transcript)
             try await chatStore.saveChatRecord(record)

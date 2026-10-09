@@ -195,6 +195,32 @@ struct ChatHistoryTests {
         await #expect(throws: BudgetAPIError.notFound) { try await api.deleteChatSession(id: reply.conversationID) }
     }
 
+    @Test("A conversation deleted while its answer is on the way stays deleted; a new one is still kept")
+    func deletedWhileAnswering() async throws {
+        let api = LedgerBudgetAPI.serverLike()
+        let first = try await api.ask("Where did my money go this month?", conversationID: nil)
+        let id = first.conversationID
+        // ask() read the conversation, then the person deleted it before the answer was recorded.
+        let (_, existed) = await api.chatHistory(for: id)
+        #expect(existed)
+        try await api.deleteChatSession(id: id)
+        await api.recordTurn("And last month?", reply: first, transcript: [], in: id, existed: existed)
+        #expect(try await api.chatSessions().isEmpty)
+        // A conversation that didn't exist when asked is started as usual.
+        await api.recordTurn("Fresh question", reply: first, transcript: [], in: "fresh", existed: false)
+        #expect(try await api.chatSessions().map(\.id) == ["fresh"])
+    }
+
+    @Test("Ask for an app before 0.5.0: no rememberFact card, a plain answer instead")
+    func legacyRemember() async throws {
+        let api = LedgerBudgetAPI.serverLike()
+        let reply = try await api.ask("Remember that we're saving for a new bike", conversationID: nil, capabilities: .legacy)
+        #expect(reply.proposedActions.isEmpty)
+        #expect(reply.text.contains("Update the app"))
+        let current = try await api.ask("Remember that we're saving for a new bike", conversationID: nil, capabilities: .all)
+        #expect(current.proposedActions.count == 1)
+    }
+
     @Test("Past the cap the least recently used conversation goes")
     func pruned() async throws {
         let api = LedgerBudgetAPI.serverLike()
