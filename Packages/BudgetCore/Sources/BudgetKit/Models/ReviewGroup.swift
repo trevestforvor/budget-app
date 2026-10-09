@@ -59,7 +59,9 @@ public struct ReviewGroup: Identifiable, Hashable, Sendable {
 
     public static func key(for item: ReviewItem) -> Key {
         let row = item.transaction
-        return Key(accountID: row.accountID, descriptor: Descriptor.normalize(row.rawDescription), isOutflow: row.amount.isNegative,
+        // A charge matched to a store order is answered with its own order: its items say what it was, not its descriptor.
+        let order = row.orderMatch.map { " #\($0.orderID)" } ?? ""
+        return Key(accountID: row.accountID, descriptor: Descriptor.normalize(row.rawDescription) + order, isOutflow: row.amount.isNegative,
                    merchant: Descriptor.isGeneric(row.rawDescription) ? row.merchant.uppercased() : nil,
                    rowID: item.isLarge == true ? row.id : nil)
     }

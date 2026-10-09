@@ -307,6 +307,7 @@ extension Ledger {
         if old.isHidden { new.isHidden = true }
         if new.note == nil { new.note = old.note }
         if new.isYearly == nil { new.isYearly = old.isYearly }
+        if new.orderMatch == nil { new.orderMatch = old.orderMatch }
         if old.originalMerchant != nil, new.originalMerchant == nil, old.merchant != new.merchant {
             new.originalMerchant = new.merchant
             new.merchant = old.merchant

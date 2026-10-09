@@ -403,21 +403,26 @@ public struct LedgerTransaction: Identifiable, Hashable, Codable, Sendable {
     /// Whether the budget treats the row as yearly: the person's say, or what Budget found. Filled in on rows the API
     /// hands out; never stored.
     public var countsAsYearly: Bool?
+    /// The store order this charge paid for, matched from an imported order history (Amazon's). Nil for most rows,
+    /// and on rows from servers before 0.5.0.
+    public var orderMatch: OrderMatch?
 
     public init(id: String, accountID: String, postedAt: Date, merchant: String, rawDescription: String, amount: Money,
                 categorization: Categorization?, isPending: Bool, source: SourceKind, batchID: String? = nil, providerCategory: String? = nil,
                 isHidden: Bool = false, note: String? = nil, transferPeerID: String? = nil, originalMerchant: String? = nil,
-                isYearly: Bool? = nil) {
+                isYearly: Bool? = nil, orderMatch: OrderMatch? = nil) {
         self.id = id; self.accountID = accountID; self.postedAt = postedAt; self.merchant = merchant; self.rawDescription = rawDescription
         self.amount = amount; self.categorization = categorization; self.isPending = isPending; self.source = source
         self.batchID = batchID; self.providerCategory = providerCategory
         self.isHidden = isHidden; self.note = note; self.transferPeerID = transferPeerID; self.originalMerchant = originalMerchant
         self.isYearly = isYearly
+        self.orderMatch = orderMatch
     }
 
     enum CodingKeys: String, CodingKey {
         case id, accountID, postedAt, merchant, rawDescription, amount, categorization, isPending, source, batchID, providerCategory
         case isHidden, note, transferPeerID, originalMerchant, isYearly, countsAsYearly
+        case orderMatch
     }
 
     /// Rows stored and cached before hiding, notes, transfer pairs and yearly charges existed decode with those unset.
@@ -440,6 +445,7 @@ public struct LedgerTransaction: Identifiable, Hashable, Codable, Sendable {
         originalMerchant = try c.decodeIfPresent(String.self, forKey: .originalMerchant)
         isYearly = try c.decodeIfPresent(Bool.self, forKey: .isYearly)
         countsAsYearly = try c.decodeIfPresent(Bool.self, forKey: .countsAsYearly)
+        orderMatch = try c.decodeIfPresent(OrderMatch.self, forKey: .orderMatch)
     }
 
     /// Whether the row counts toward spending and income. Hidden rows don't, and neither does money moving
