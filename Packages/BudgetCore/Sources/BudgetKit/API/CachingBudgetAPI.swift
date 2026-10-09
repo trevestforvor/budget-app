@@ -65,6 +65,8 @@ public enum SavedRead: Hashable, Sendable {
     case projection(horizonMonths: Int)
     /// `GET /v1/networth?range=` ("3M").
     case netWorth(range: String)
+    case scenarios(horizonMonths: Int)
+    case cashFlowSankey(month: String?)
 
     var key: String {
         switch self {
@@ -84,6 +86,8 @@ public enum SavedRead: Hashable, Sendable {
         case let .categoryHistory(id, months): "category-history-\(id)-\(months)"
         case let .projection(horizon): "projection-\(horizon)"
         case let .netWorth(range): "networth-\(range)"
+        case let .scenarios(horizon): "scenarios-\(horizon)"
+        case let .cashFlowSankey(month): "flow-\(month ?? "current")"
         }
     }
 }

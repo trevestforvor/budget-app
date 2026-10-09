@@ -700,6 +700,8 @@ public struct GoalCheck: Hashable, Codable, Sendable {
     public var shortfall: Money
     public var monthlyNeeded: Money
     public var summary: String
+    /// The scenario the goal was checked against; nil is the plain forecast.
+    public var scenarioID: String? = nil
 }
 
 public struct ProjectedPoint: Hashable, Codable, Sendable {
@@ -723,6 +725,14 @@ public struct Projection: Hashable, Codable, Sendable {
     /// What's owed on cards now, which the balances above are net of. Nil from servers before 0.3.1, whose
     /// projection was cash alone at the pace cash itself moved.
     public var cardsOwed: Money? = nil
+    /// Projected with a scenario's changes on top (`projected`, `endBalance` and the goal include them): its id and name,
+    /// the plain forecast beside it, and how far apart the two end. All nil for the plain forecast, and from servers
+    /// before 0.5.0.
+    public var scenarioID: String? = nil
+    public var scenarioName: String? = nil
+    public var baseline: [ProjectedPoint]? = nil
+    public var baselineEndBalance: Money? = nil
+    public var scenarioEffect: Money? = nil
 }
 
 public enum ModelRole: String, Codable, Sendable, CaseIterable {
@@ -776,6 +786,10 @@ extension ServerStatus {
     /// The first server that keeps a yearly-charge mark on a transaction and the person's say on recurring charges. An
     /// older one drops the mark (or refuses the edit as empty) and doesn't know the recurring action.
     public static let yearlyAndRecurringSince = "0.3.0"
+    /// The first server with Plan scenarios (`/v1/scenarios`, a projection against one, the scenario actions).
+    public static let planScenariosSince = "0.5.0"
+    /// The first server with the month's cash flow as a Sankey (`/v1/flow`).
+    public static let cashFlowSankeySince = "0.5.0"
 
     /// Whether `version` ("0.2.0") is `minimum` or later, compared number by number; anything unreadable is older.
     public static func version(_ version: String, isAtLeast minimum: String) -> Bool {

@@ -247,6 +247,7 @@ enum DashboardAssets {
         "imports.js": Asset(PackageResources.imports_js, "text/javascript; charset=utf-8"),
         "review.js": Asset(PackageResources.review_js, "text/javascript; charset=utf-8"),
         "settings.js": Asset(PackageResources.settings_js, "text/javascript; charset=utf-8"),
+        "flow.js": Asset(PackageResources.flow_js, "text/javascript; charset=utf-8"),
         "rules.js": Asset(PackageResources.rules_js, "text/javascript; charset=utf-8"),
         "categories.js": Asset(PackageResources.categories_js, "text/javascript; charset=utf-8"),
         "groups.js": Asset(PackageResources.groups_js, "text/javascript; charset=utf-8"),

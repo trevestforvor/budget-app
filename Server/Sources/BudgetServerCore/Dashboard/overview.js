@@ -4,6 +4,7 @@ import { fill, h, store, cached, heavy, pageHead, sectionHead, button, busy, cal
   institutionGroups, syncProblem, syncNow, describeSync, reportError, toast, bigMoney, money, plural, spell, count, dateShort, ago, skeleton,
   providerName, TIERS, tierName, emptyState } from "./core.js";
 import { reconnect, reconnectLabel } from "./accounts.js";
+import { flowCard } from "./flow.js";
 
 const TONE_RANK = { act: 0, watch: 1, info: 2 };
 const TONE_WORD = { act: "Needs you:", watch: "Worth a look:", info: "For you:" };
@@ -194,6 +195,7 @@ export default {
         n ? h("div", { class: "rows" }, items.map(attentionRow)) : h("p", { class: "empty-line" }, "You're all caught up.")),
       sectionHead("Connections", h("a", { class: "btn quiet", href: "#/accounts" }, "All accounts"), "conn-title"),
       connectionsCard(),
-      h("div", { class: "grid-2" }, glanceCard(), categoriesCard()));
+      h("div", { class: "grid-2" }, glanceCard(), categoriesCard()),
+      flowCard());
   },
 };

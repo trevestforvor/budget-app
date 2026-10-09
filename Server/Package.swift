@@ -14,6 +14,7 @@ let dashboardAssets = [
     "orders.js",
     "assistant.js",
     "networth.js",
+    "flow.js",
     "icon-64.png", "icon-180.png",
 ]
 

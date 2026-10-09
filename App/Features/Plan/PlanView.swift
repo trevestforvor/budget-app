@@ -14,6 +14,25 @@ struct PlanView: View {
     @State private var isChecking = false
     @State private var savings: SavingsPlan?
     @State private var editsSavings = false
+    /// The scenario laid over the forecast; nil is the plain forecast. Remembered on this phone.
+    @AppStorage("plan.scenario") private var scenarioID: String?
+    /// Nil until loaded, and on a server without scenarios.
+    @State private var scenarios: ScenarioList?
+    @State private var scenarioEdit: ScenarioEdit?
+    @State private var eventEdit: EventEdit?
+
+    private struct ScenarioEdit: Identifiable {
+        var scenario: PlanScenario?
+        var id: String { scenario?.id ?? "new" }
+    }
+
+    private struct EventEdit: Identifiable {
+        var scenario: PlanScenario
+        var event: PlanEvent?
+        var id: String { "\(scenario.id)/\(event?.id ?? "new")" }
+    }
+
+    private var selectedScenario: PlanScenario? { scenarios?.scenarios.first { $0.id == scenarioID } }
 
     var body: some View {
         NavigationStack {
@@ -31,6 +50,9 @@ struct PlanView: View {
                     }
                     .contentMargins(.horizontal, DSSpace.gutter, for: .scrollContent)
                     .padding(.horizontal, -DSSpace.gutter)
+                    if let scenarios {
+                        ScenarioPicker(list: scenarios, selection: $scenarioID) { scenarioEdit = ScenarioEdit(scenario: nil) }
+                    }
                     switch state {
                     case .loading:
                         LoadingPlaceholder(text: "Projecting…")
@@ -40,6 +62,12 @@ struct PlanView: View {
                         }
                     case let .loaded(projection):
                         projectionSection(projection)
+                    }
+                    if let scenarios {
+                        ScenarioCard(list: scenarios, scenario: selectedScenario, selection: $scenarioID,
+                                     onEditEvent: { eventEdit = EventEdit(scenario: $0, event: $1) },
+                                     onEditScenario: { scenarioEdit = ScenarioEdit(scenario: $0) },
+                                     onNew: { scenarioEdit = ScenarioEdit(scenario: nil) })
                     }
                     if let savings {
                         if let history = savings.history, history.count > 1 { CashFlowCard(plan: savings, history: history) }
@@ -62,8 +90,13 @@ struct PlanView: View {
                 app.planHorizon = nil
             }
         }
-        .task(id: "\(horizon)|\(app.revision)") { await load() }
+        .task(id: "\(horizon)|\(scenarioID ?? "")|\(app.revision)") { await load() }
+        .onChange(of: scenarioID) { goalCheck = nil }
         .sheet(isPresented: $editsSavings) { MonthlySavingsSheet(current: savings?.plannedSavings, suggested: savings?.twentyPercentOfIncome) }
+        .sheet(item: $scenarioEdit) { edit in
+            ScenarioSheet(scenario: edit.scenario) { saved in scenarioID = saved }
+        }
+        .sheet(item: $eventEdit) { PlanEventSheet(scenario: $0.scenario, event: $0.event) }
     }
 
     @discardableResult
@@ -71,15 +104,39 @@ struct PlanView: View {
         let api = app.api
         let horizon = horizon
         let first = state.isLoading
-        state = await state.orSaved(.projection(horizonMonths: horizon), app)
+        let scenarioID = scenarioID
+        let planning = api as? any PlanScenariosAPI
+        if scenarioID == nil { state = await state.orSaved(.projection(horizonMonths: horizon), app) }
         if savings == nil { savings = await app.saved(.savings) }
+        if scenarios == nil { scenarios = await app.saved(.scenarios(horizonMonths: horizon)) }
         async let plan = try? api.savingsPlan()
+        async let list = Self.scenarioList(planning, horizon: horizon)
         let updating = app.beginUpdating(showingSaved: first && state.value != nil)
-        let (next, error) = await state.refreshing { try await api.projection(horizonMonths: horizon, goal: nil) }
+        let (next, error) = await state.refreshing {
+            guard let scenarioID, let planning else { return try await api.projection(horizonMonths: horizon, goal: nil) }
+            do {
+                return try await planning.projection(horizonMonths: horizon, goal: nil, scenarioID: scenarioID)
+            } catch BudgetAPIError.notFound {
+                // Deleted elsewhere: show the plain forecast, and the selection falls back below.
+                return try await api.projection(horizonMonths: horizon, goal: nil)
+            }
+        }
         app.endUpdating(updating)
         state = next
         savings = await plan
+        // Kept as it was when the list didn't load (offline with no saved copy); cleared on a server without scenarios.
+        if case let .success(fresh) = await list { scenarios = fresh }
+        // A scenario deleted elsewhere falls back to the plain forecast.
+        if let id = self.scenarioID, let scenarios, !scenarios.scenarios.contains(where: { $0.id == id }) { self.scenarioID = nil }
         return error
+    }
+
+    /// The scenario list; nil on a server before 0.5.0, which has no scenarios (a 404), so the picker stays away.
+    private static func scenarioList(_ planning: (any PlanScenariosAPI)?, horizon: Int) async -> Result<ScenarioList?, any Error> {
+        guard let planning else { return .success(nil) }
+        do { return .success(try await planning.scenarios(horizonMonths: horizon)) }
+        catch BudgetAPIError.notFound { return .success(nil) }
+        catch { return .failure(error) }
     }
 
     @ViewBuilder
@@ -93,14 +150,15 @@ struct PlanView: View {
             label: afterCards ? "Cash after cards · in \(projection.horizonMonths) months" : "Projected cash · \(projection.horizonMonths) months",
             value: projection.endBalance.decimal,
             currencyCode: projection.endBalance.currencyCode,
-            caption: !hasPace ? "Not enough history to project a pace yet"
+            caption: projection.scenarioName.map { Self.scenarioCaption($0, effect: projection.scenarioEffect ?? .zero, months: projection.horizonMonths) }
+                ?? (!hasPace ? "Not enough history to project a pace yet"
                 : afterCards
                 ? (projection.monthlyNet.isNegative ? "Spending ran about \(pace) a month over income — the last three months"
                                                     : "Income beat spending by about \(pace) a month — the last three months")
                 : projection.monthlyNet.isNegative
                 ? "Cash shrinks about \(pace) a month — the last three months' pace"
-                : "Cash grows about \(pace) a month — the last three months' pace",
-            captionTint: projection.monthlyNet.isNegative ? Color.ds.caution : Color.ds.inkSecondary
+                : "Cash grows about \(pace) a month — the last three months' pace"),
+            captionTint: projection.scenarioName == nil && projection.monthlyNet.isNegative ? Color.ds.caution : Color.ds.inkSecondary
         )
         DSCard(padding: DSSpace.md) {
             VStack(alignment: .leading, spacing: DSSpace.sm) {
@@ -109,15 +167,18 @@ struct PlanView: View {
                     projected: projection.projected.map { DSChartPoint(date: $0.date, value: $0.expected.doubleValue) },
                     band: hasPace ? projection.projected.map { DSBandPoint(date: $0.date, low: $0.low.doubleValue, high: $0.high.doubleValue) } : [],
                     style: .full,
+                    comparison: (projection.baseline ?? []).map { DSChartPoint(date: $0.date, value: $0.expected.doubleValue) },
                     accessibilitySummary: "\(afterCards ? "Cash after cards" : "Cash"), history and projection, ending near \(projection.endBalance.formatted(fractionDigits: 0))"
+                        + (projection.baselineEndBalance.map { ", against \($0.formatted(fractionDigits: 0)) without the scenario" } ?? "")
                 )
                 .frame(height: 220)
-                // Side by side, or one per line when large text won't fit three.
+                // Side by side, wrapping onto a second line when they don't fit; one per line at large text sizes.
                 let legends = dynamicTypeSize.isAccessibilitySize ? AnyLayout(VStackLayout(alignment: .leading, spacing: DSSpace.xs))
-                                                                  : AnyLayout(HStackLayout(spacing: DSSpace.md))
+                                                                  : AnyLayout(DSFlowLayout(spacing: DSSpace.md, lineSpacing: DSSpace.xs))
                 legends {
                     legend("Actual", color: Color.ds.accent)
-                    legend("Projected", color: Color.ds.iris)
+                    legend(projection.scenarioName ?? "Projected", color: Color.ds.iris)
+                    if projection.baseline != nil { legend("Plain forecast", color: Color.ds.inkTertiary) }
                     if hasPace { legend("Likely range", color: Color.ds.iris.opacity(0.35)) }
                 }
                 if let owed = projection.cardsOwed, owed.minorUnits > 0 {
@@ -128,6 +189,12 @@ struct PlanView: View {
                 }
             }
         }
+    }
+
+    /// "New car: $6,240 less than the plain forecast in 12 months".
+    static func scenarioCaption(_ name: String, effect: Money, months: Int) -> String {
+        guard effect.minorUnits != 0 else { return "\(name): the same as the plain forecast in \(months) months" }
+        return "\(name): \(effect.magnitude.formatted(fractionDigits: 0)) \(effect.isNegative ? "less" : "more") than the plain forecast in \(months) months"
     }
 
     private func legend(_ label: String, color: Color) -> some View {
@@ -192,7 +259,8 @@ struct PlanView: View {
             DSFigureRow(label: "Projected by then", value: check.projectedSavings.decimal)
             if !check.isOnTrack { DSFigureRow(label: "Shortfall", value: check.shortfall.decimal) }
             DSFigureRow(label: "Needed per month", value: check.monthlyNeeded.decimal)
-            DSToolTrace(name: "projectBalance", arguments: "goal: \(check.query.amount.formatted(fractionDigits: 0))")
+            DSToolTrace(name: check.scenarioID == nil ? "projectBalance" : "planScenarios",
+                        arguments: "goal: \(check.query.amount.formatted(fractionDigits: 0))" + (selectedScenario.map { " · \($0.name)" } ?? ""))
         }
     }
 
@@ -202,7 +270,10 @@ struct PlanView: View {
         let api = app.api
         let query = GoalQuery(amount: Money(goalAmount), targetDate: goalDate)
         let months = max(horizon, (Calendar.current.dateComponents([.month], from: AppClock.now, to: goalDate).month ?? 0) + 1)
-        if let projection = try? await api.projection(horizonMonths: months, goal: query) {
+        // Against the scenario on the chart, when there is one.
+        if let scenarioID, let planning = api as? any PlanScenariosAPI {
+            goalCheck = (try? await planning.projection(horizonMonths: months, goal: query, scenarioID: scenarioID))?.goal
+        } else if let projection = try? await api.projection(horizonMonths: months, goal: query) {
             goalCheck = projection.goal
         }
     }

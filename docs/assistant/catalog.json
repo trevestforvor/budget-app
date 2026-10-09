@@ -124,7 +124,7 @@
     }
   },
   {
-    "description" : "Project cash after cards (cash less what's owed on cards) forward at the recent pace of income less spending — the last three complete months, a yearly charge counted a twelfth a month — optionally checking whether a savings goal fits.",
+    "description" : "Project cash after cards (cash less what's owed on cards) forward at the recent pace of income less spending — the last three complete months, a yearly charge counted a twelfth a month — optionally checking whether a savings goal fits. With scenarioID (from planScenarios), the projection and the goal include that Plan scenario's switched-on changes, with the plain forecast's end beside them.",
     "kind" : "read",
     "name" : "projectBalance",
     "parameters" : {
@@ -163,12 +163,78 @@
           "maximum" : 36,
           "minimum" : 1,
           "type" : "integer"
+        },
+        "scenarioID" : {
+          "description" : "A Plan scenario id from planScenarios, to project with its changes; leave out for the plain forecast.",
+          "maxLength" : 64,
+          "minLength" : 1,
+          "type" : "string"
         }
       },
       "required" : [
         "account",
         "horizonMonths"
       ],
+      "type" : "object"
+    }
+  },
+  {
+    "description" : "The user's Plan scenarios: named sets of planned changes (a car payment from a month on, a one-time bonus, rent going up), each change with its amount, money in or out, how often, its months and whether it's switched on — and where each scenario leaves cash after cards at the end of the horizon against the plain forecast (projectBalance's). With scenarioID it also projects that scenario month by month and, with a goal, checks the goal against it. Read only: the user edits scenarios on the Plan screen.",
+    "kind" : "read",
+    "name" : "planScenarios",
+    "parameters" : {
+      "additionalProperties" : false,
+      "properties" : {
+        "goal" : {
+          "additionalProperties" : false,
+          "description" : "A goal to check against the scenario.",
+          "properties" : {
+            "amount" : {
+              "description" : "A positive amount exactly as the user stated it, digits only, e.g. \"500\" or \"42.50\".",
+              "pattern" : "^[0-9]{1,9}(\\.[0-9]{1,2})?$",
+              "type" : "string"
+            },
+            "targetDate" : {
+              "description" : "A date, YYYY-MM-DD.",
+              "format" : "date",
+              "type" : "string"
+            }
+          },
+          "required" : [
+            "amount",
+            "targetDate"
+          ],
+          "type" : "object"
+        },
+        "horizonMonths" : {
+          "description" : "How many months ahead.",
+          "maximum" : 36,
+          "minimum" : 1,
+          "type" : "integer"
+        },
+        "scenarioID" : {
+          "description" : "A scenario id from an earlier planScenarios result.",
+          "maxLength" : 64,
+          "minLength" : 1,
+          "type" : "string"
+        }
+      },
+      "type" : "object"
+    }
+  },
+  {
+    "description" : "Where one month's money came from and where it went — the Flow view in Spending: income by source (the smaller sources together), what Bills, Subscriptions and Everyday took with each one's top categories (spending as the budget counts it: each category net of refunds, a yearly charge a twelfth a month), and what was left (saved) or drawn from cash when spending passed income.",
+    "kind" : "read",
+    "name" : "monthFlow",
+    "parameters" : {
+      "additionalProperties" : false,
+      "properties" : {
+        "month" : {
+          "description" : "A month like 2026-09; this month so far when left out.",
+          "pattern" : "^[0-9]{4}-(0[1-9]|1[0-2])$",
+          "type" : "string"
+        }
+      },
       "type" : "object"
     }
   },

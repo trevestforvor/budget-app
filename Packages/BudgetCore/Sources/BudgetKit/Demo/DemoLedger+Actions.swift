@@ -243,6 +243,9 @@ extension DemoLedger {
         case let .removeManualAsset(p):
             return try manualAssetRemovalPreview(p)
 
+        case let .savePlanScenario(p): return try scenarioPreview(p)
+        case let .deletePlanScenario(p): return try scenarioPreview(p)
+
         case let .navigate(p):
             let month = p.month.flatMap(monthStart).map { " · \($0.formatted(Self.monthStyle(calendar)))" }
             let focus = p.categoryID.flatMap(category).map { " · \($0.name)" } ?? month ?? p.search.map { " · “\($0)”" } ?? ""
@@ -426,6 +429,9 @@ extension DemoLedger {
 
         case let .removeManualAsset(p):
             return try performRemoveManualAsset(p)
+
+        case let .savePlanScenario(p): return try saveScenario(p)
+        case let .deletePlanScenario(p): return try deleteScenario(p)
 
         case .navigate:
             throw BudgetAPIError.rejected("Navigation is handled on the device.")

@@ -349,6 +349,9 @@ public enum AppAction: Hashable, Sendable {
     /// Hand-kept assets and debts (net worth); not tools the assistant can call.
     case saveManualAsset(SaveManualAsset)
     case removeManualAsset(RemoveManualAsset)
+    /// From Plan's scenario editor; not a tool the assistant can call.
+    case savePlanScenario(SavePlanScenario)
+    case deletePlanScenario(DeletePlanScenario)
     case navigate(Navigate)
 
     public var toolName: String {
@@ -374,6 +377,8 @@ public enum AppAction: Hashable, Sendable {
         case .rememberFact: "rememberFact"
         case .saveManualAsset: "saveManualAsset"
         case .removeManualAsset: "removeManualAsset"
+        case .savePlanScenario: "savePlanScenario"
+        case .deletePlanScenario: "deletePlanScenario"
         case .navigate: "navigate"
         }
     }
@@ -444,6 +449,8 @@ public enum AppAction: Hashable, Sendable {
         case let .rememberFact(p): return try e.encode(p)
         case let .saveManualAsset(p): return try e.encode(p)
         case let .removeManualAsset(p): return try e.encode(p)
+        case let .savePlanScenario(p): return try e.encode(p)
+        case let .deletePlanScenario(p): return try e.encode(p)
         case let .navigate(p): return try e.encode(p)
         }
     }
@@ -476,6 +483,8 @@ extension AppAction: Codable {
         case "rememberFact": self = .rememberFact(try RememberFact(from: decoder))
         case "saveManualAsset": self = .saveManualAsset(try SaveManualAsset(from: decoder))
         case "removeManualAsset": self = .removeManualAsset(try RemoveManualAsset(from: decoder))
+        case "savePlanScenario": self = .savePlanScenario(try SavePlanScenario(from: decoder))
+        case "deletePlanScenario": self = .deletePlanScenario(try DeletePlanScenario(from: decoder))
         case "navigate": self = .navigate(try Navigate(from: decoder))
         default:
             throw DecodingError.dataCorruptedError(forKey: .type, in: try decoder.container(keyedBy: Keys.self), debugDescription: "Unknown action \(type)")
@@ -507,6 +516,8 @@ extension AppAction: Codable {
         case let .rememberFact(p): try p.encode(to: encoder)
         case let .saveManualAsset(p): try p.encode(to: encoder)
         case let .removeManualAsset(p): try p.encode(to: encoder)
+        case let .savePlanScenario(p): try p.encode(to: encoder)
+        case let .deletePlanScenario(p): try p.encode(to: encoder)
         case let .navigate(p): try p.encode(to: encoder)
         }
     }

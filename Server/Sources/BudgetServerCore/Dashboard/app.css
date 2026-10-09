@@ -683,3 +683,15 @@ input.input.above { width: 120px; }
 .nw-form { display: grid; gap: var(--s-sm); margin-top: var(--s-md); }
 .nw-form h3, .nw-form > .help { margin: 0; }
 @media (max-width: 640px) { .nw-lists { grid-template-columns: minmax(0, 1fr); } }
+
+/* The month's flow (flow.js): an SVG Sankey, coloured by the .tone-* classes; "Other" nodes are steel. */
+.flow .card-head { display: flex; align-items: center; justify-content: space-between; gap: var(--s-sm); margin-bottom: var(--s-sm); }
+.flow .card-head .card-title { margin-bottom: 0; }
+.flow .card-head select { width: auto; min-height: var(--chip-h); }
+.sankey { display: block; width: 100%; height: auto; overflow: visible; }
+.sankey .bar, .sankey .key { fill: var(--tone, var(--steel)); }
+.sankey .band { fill: var(--tone, var(--steel)); fill-opacity: .3; }
+.sankey .band.neutral { fill-opacity: .5; }
+.sankey .name { font: 500 13px var(--font-sans); fill: var(--ink); }
+.sankey .amt { font: 400 12px var(--font-sans); fill: var(--ink-secondary); font-variant-numeric: tabular-nums; }
+.grid-2 + .flow { margin-top: var(--s-md); }

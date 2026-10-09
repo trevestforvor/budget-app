@@ -10,7 +10,7 @@ struct DemoAskEngine {
     var balanceSnapshots: [BalanceSnapshot] = []
     static let modelLabel = "demo · templated, no model"
 
-    private var calendar: Calendar { ledger.calendar }
+    var calendar: Calendar { ledger.calendar }
 
     func answer(_ question: String, conversationID: String) -> AskReply {
         let q = question.lowercased()
@@ -31,6 +31,8 @@ struct DemoAskEngine {
         if let r = weekIntent(q, conversationID) { return r }
         if let r = pastMonthIntent(q, conversationID) { return r }
         if let r = idleCashIntent(q, conversationID) { return r }
+        if let r = scenarioIntent(q, conversationID) { return r }
+        if let r = flowIntent(q, conversationID) { return r }
         if let r = planningIntent(q, conversationID) { return r }
         if let r = merchantProfileIntent(q, conversationID) { return r }
         if let r = merchantIntent(q, conversationID) { return r }
@@ -297,7 +299,7 @@ struct DemoAskEngine {
     }
 
     /// The most recent month named in the question that has started ("august" in September → this year's August).
-    private func pastMonthKey(_ q: String) -> String? {
+    func pastMonthKey(_ q: String) -> String? {
         let names = calendar.monthSymbols.map { $0.lowercased() }
         guard let index = names.firstIndex(where: q.contains) else { return nil }
         var components = calendar.dateComponents([.year], from: ledger.now)
@@ -310,7 +312,7 @@ struct DemoAskEngine {
 
     // MARK: Near-term planning — same toolbox the live agent uses, templated prose
 
-    private var toolbox: DemoToolbox { DemoToolbox(ledger: ledger, decisions: nil) }
+    var toolbox: DemoToolbox { DemoToolbox(ledger: ledger, decisions: nil) }
 
     /// "What subscriptions am I paying for?" → one findSubscriptions call.
     private func subscriptionIntent(_ q: String, _ cid: String) -> AskReply? {
