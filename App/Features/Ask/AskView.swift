@@ -27,6 +27,15 @@ struct AskView: View {
     /// Which conversation a reply belongs to. Starting a new one retires the old id, so a late reply
     /// to an earlier question can't land in the new conversation.
     @State private var session = UUID()
+    @State private var path: [AskRoute] = []
+    /// Recents for the hub; nil where this connection keeps no conversations (an older server).
+    @State private var recents: [ChatSessionSummary]?
+    @State private var memoryCount: Int?
+    /// Bumped after every answer, so Recents is read again.
+    @State private var historyVersion = 0
+    @State private var isOpening = false
+    @State private var renaming: ChatSessionSummary?
+    @State private var deletingSession: ChatSessionSummary?
 
     static let starters = [
         "What did we spend on dining in Q3 vs Q2?",
@@ -36,7 +45,7 @@ struct AskView: View {
     ]
 
     var body: some View {
-        NavigationStack {
+        NavigationStack(path: $path) {
             ScrollViewReader { proxy in
                 ScrollView {
                     LazyVStack(alignment: .leading, spacing: DSSpace.lg) {
@@ -58,6 +67,9 @@ struct AskView: View {
                         }
                         if isAsking {
                             DSThinkingLine("Running ledger tools…").id("thinking")
+                        }
+                        if isOpening {
+                            DSThinkingLine("Opening the conversation…").id("opening")
                         }
                     }
                     .padding(.horizontal, DSSpace.gutter)
@@ -81,12 +93,40 @@ struct AskView: View {
             .scrollEdgeEffectStyle(.soft, for: .top)
             .dsScreenBackground(bloom: .ai)
             .toolbar {
+                if recents != nil {
+                    ToolbarItem(placement: .topBarLeading) {
+                        Button("Conversations", systemImage: "clock.arrow.circlepath") { path = [.conversations] }
+                            .accessibilityIdentifier("askConversations")
+                    }
+                }
                 if !entries.isEmpty {
                     ToolbarItem(placement: .topBarTrailing) {
                         Button("New conversation", systemImage: "square.and.pencil") { startOver() }
                     }
                 }
             }
+            .navigationDestination(for: AskRoute.self) { route in
+                switch route {
+                case .conversations: ChatHistoryView { open($0) }
+                case .memory: AssistantMemoryView()
+                }
+            }
+            .task(id: "\(app.revision)|\(historyVersion)") { await loadHistory() }
+            .sheet(item: $renaming) { summary in
+                RenameConversationSheet(initial: summary.title) { await rename(summary, to: $0) }
+            }
+            .confirmationDialog(deletingSession.map { "Delete “\($0.title)”?" } ?? "",
+                                isPresented: Binding(get: { deletingSession != nil }, set: { if !$0 { deletingSession = nil } }),
+                                titleVisibility: .visible, presenting: deletingSession) { summary in
+                Button("Delete", role: .destructive) { Task { await delete(summary) } }
+            } message: { _ in
+                Text("The conversation is removed from this server. Changes you applied from it stay.")
+            }
+        }
+        .onChange(of: app.askRoute, initial: true) {
+            guard let route = app.askRoute else { return }
+            app.askRoute = nil
+            path = [route]
         }
         // A question handed over from another screen ("Ask about this") starts its own conversation, whether
         // Ask is opening for the first time or was already open — so it never continues an unrelated thread.
@@ -105,6 +145,63 @@ struct AskView: View {
         phases = [:]
         queued = []
         isAsking = false
+        isOpening = false
+    }
+
+    // MARK: Conversations
+
+    private func loadHistory() async {
+        guard let assistant = app.assistant else {
+            (recents, memoryCount) = (nil, nil)
+            return
+        }
+        do {
+            recents = try await assistant.chatSessions()
+        } catch BudgetAPIError.notFound {
+            recents = nil
+        } catch {
+            // Offline: keep what was shown.
+        }
+        if let memories = try? await assistant.assistantMemories() { memoryCount = memories.count }
+    }
+
+    /// Reopens a kept conversation where it left off: its turns as they were answered, and the next question continues
+    /// it. Proposals from back then show as earlier, not to apply again.
+    private func open(_ summary: ChatSessionSummary) {
+        path = []
+        startOver()
+        guard let assistant = app.assistant else { return }
+        isOpening = true
+        let opened = session
+        Task {
+            do {
+                let kept = try await assistant.chatSession(id: summary.id)
+                guard session == opened else { return }
+                entries = kept.turns.flatMap { [ChatEntry(kind: .user($0.question)), ChatEntry(kind: .answer($0.reply))] }
+                for proposal in kept.turns.flatMap(\.reply.proposedActions) { phases[proposal.id] = .earlier }
+                conversationID = kept.id
+            } catch {
+                guard session == opened else { return }
+                entries = [ChatEntry(kind: .failure(error.localizedDescription))]
+            }
+            isOpening = false
+        }
+    }
+
+    private func rename(_ summary: ChatSessionSummary, to title: String) async -> Bool {
+        do {
+            _ = try await app.assistant?.renameChatSession(id: summary.id, title: title)
+            historyVersion += 1
+            return true
+        } catch {
+            return false
+        }
+    }
+
+    private func delete(_ summary: ChatSessionSummary) async {
+        _ = try? await app.assistant?.deleteChatSession(id: summary.id)
+        if conversationID == summary.id { startOver() }
+        historyVersion += 1
     }
 
     private var intro: some View {
@@ -128,6 +225,20 @@ struct AskView: View {
                     }
                     .buttonStyle(.plain)
                 }
+            }
+            if let recents, !recents.isEmpty {
+                AskRecentsCard(sessions: recents, onOpen: open, onRename: { renaming = $0 }, onDelete: { deletingSession = $0 })
+            }
+            if let memoryCount {
+                NavigationLink(value: AskRoute.memory) {
+                    DSCard(padding: 0) {
+                        DSListRow("Assistant memory", detail: memoryCount == 0 ? "Nothing kept yet" : "\(memoryCount) thing\(memoryCount == 1 ? "" : "s") Ask keeps in mind",
+                                  systemImage: "sparkles", tone: .iris, showsChevron: true)
+                            .padding(.horizontal, DSSpace.md)
+                    }
+                }
+                .buttonStyle(.plain)
+                .accessibilityIdentifier("askAssistantMemory")
             }
         }
     }
@@ -164,6 +275,7 @@ struct AskView: View {
                 guard session == asked else { return }
                 conversationID = reply.conversationID
                 entry = ChatEntry(kind: .answer(reply))
+                historyVersion += 1
             } catch {
                 guard session == asked else { return }
                 entry = ChatEntry(kind: .failure(error.localizedDescription))

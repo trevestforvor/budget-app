@@ -92,6 +92,8 @@ public actor LedgerBudgetAPI: BudgetAPI {
     var chatStore: any ChatSessionStore = InMemoryChatSessionStore()
     /// The demo fills its chat history with a few conversations the first time it's read.
     var seedsDemoChats = false
+    /// The demo's seeding under way; every chat read waits for it, so none sees half of it.
+    var demoChatSeeding: Task<Void, Never>?
     /// Chat turns are recorded one at a time (`recordingTurn`).
     var recordingChat = false
     var waitingChatRecorders: [CheckedContinuation<Void, Never>] = []

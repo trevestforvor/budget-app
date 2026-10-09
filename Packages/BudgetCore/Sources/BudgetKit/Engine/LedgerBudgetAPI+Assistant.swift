@@ -73,6 +73,7 @@ extension LedgerBudgetAPI: AssistantAPI {
     /// Every conversation goes with the ledger it talked about (an admin reset).
     public func clearChatSessions() async throws {
         seedsDemoChats = false
+        await demoChatSeeding?.value
         try await oneAtATime { try await chatStore.deleteAllChatRecords() }
     }
 
@@ -109,24 +110,28 @@ extension LedgerBudgetAPI: AssistantAPI {
     /// The demo's history: a few conversations answered by the templated engine over today's demo ledger, so
     /// Recents has something to open.
     private func seedDemoChatsIfNeeded() async {
-        guard seedsDemoChats else { return }
-        seedsDemoChats = false
-        let engine = DemoAskEngine(ledger: ledger, institutions: deployment.institutions)
-        let now = ledger.now
-        let conversations: [(id: String, ago: TimeInterval, questions: [String])] = [
-            ("demo-chat-month", 50 * 60, ["Where did my money go this month?"]),
-            ("demo-chat-dining", 26 * 3600, ["What did we spend on dining in Q3 vs Q2?", "Set the dining target to $500"]),
-            ("demo-chat-subscriptions", 6 * 86_400, ["How much do subscriptions cost me?"]),
-        ]
-        for conversation in conversations {
-            let start = now.addingTimeInterval(-conversation.ago)
-            var record = ChatSessionRecord.new(id: conversation.id, question: conversation.questions[0], at: start)
-            for (index, question) in conversation.questions.enumerated() {
-                let reply = engine.answer(question, conversationID: conversation.id)
-                record.append(ChatTurn(id: "\(conversation.id)-\(index + 1)", question: question, askedAt: start.addingTimeInterval(Double(index) * 90),
-                                       reply: reply), transcript: [])
+        if seedsDemoChats {
+            seedsDemoChats = false
+            let engine = DemoAskEngine(ledger: ledger, institutions: deployment.institutions)
+            let now = ledger.now
+            let conversations: [(id: String, ago: TimeInterval, questions: [String])] = [
+                ("demo-chat-month", 50 * 60, ["Where did my money go this month?"]),
+                ("demo-chat-dining", 26 * 3600, ["What did we spend on dining in Q3 vs Q2?", "Set the dining target to $500"]),
+                ("demo-chat-subscriptions", 6 * 86_400, ["How much do subscriptions cost me?"]),
+            ]
+            let records = conversations.map { conversation in
+                let start = now.addingTimeInterval(-conversation.ago)
+                var record = ChatSessionRecord.new(id: conversation.id, question: conversation.questions[0], at: start)
+                for (index, question) in conversation.questions.enumerated() {
+                    let reply = engine.answer(question, conversationID: conversation.id)
+                    record.append(ChatTurn(id: "\(conversation.id)-\(index + 1)", question: question,
+                                           askedAt: start.addingTimeInterval(Double(index) * 90), reply: reply), transcript: [])
+                }
+                return record
             }
-            try? await chatStore.saveChatRecord(record)
+            let store = chatStore
+            demoChatSeeding = Task { for record in records { try? await store.saveChatRecord(record) } }
         }
+        await demoChatSeeding?.value
     }
 }

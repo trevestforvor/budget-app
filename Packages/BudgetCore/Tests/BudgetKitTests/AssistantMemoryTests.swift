@@ -283,6 +283,14 @@ struct ChatHistoryTests {
         #expect(dining.turns[1].reply.proposedActions.count == 1)
         #expect(dining.turns.allSatisfy { !DemoAskEngine.isFallback($0.reply) })
 
+        // Two screens reading at once (the hub and Conversations) both see all of it.
+        let fresh = Fixture.api()
+        async let a = fresh.chatSessions()
+        async let b = fresh.chatSessions()
+        let (seenA, seenB) = try await (a, b)
+        #expect(seenA.count == 3)
+        #expect(seenB.count == 3)
+
         // Asking again continues it.
         _ = try await api.ask("How is groceries doing?", conversationID: "demo-chat-subscriptions")
         #expect(try await api.chatSessions().first?.id == "demo-chat-subscriptions")
