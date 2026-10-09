@@ -42,6 +42,34 @@ struct FileSimilarTests {
         #expect(try ledger.preview(Rows.edit(["a"], categoryID: "dining")).matchCount == 1)
     }
 
+    @Test("A row matched to an order reaches only that order's other charges; rows matched to other orders are never swept")
+    func orderMatchedRows() throws {
+        func amazon(_ id: String, _ day: Double, _ amount: Decimal, order: String?, items: [String]) -> LedgerTransaction {
+            var row = Rows.row(id, "card", day, amount, "AMZN MKTP US*\(id)", "shopping")
+            row.merchant = "Amazon"
+            row.orderMatch = order.map { OrderMatch(store: "Amazon", orderID: $0, items: items) }
+            return row
+        }
+        let rows = [amazon("a", 10, -24.99, order: "111", items: ["Multivitamin 200ct"]),
+                    amazon("a2", 11, -6.50, order: "111", items: ["Multivitamin 200ct"]),
+                    amazon("b", 8, -18.50, order: "222", items: ["Paperback novel"]),
+                    amazon("c", 5, -42, order: nil, items: []),
+                    amazon("d", 4, -12, order: nil, items: [])]
+        var ledger = Rows.ledger(rows)
+        func similar(_ ids: [String], _ category: String) -> Set<String> {
+            let indices = ids.compactMap { id in ledger.transactions.firstIndex { $0.id == id } }
+            return Set(ledger.similarRows(to: indices, under: category).rows.map { ledger.transactions[$0].id })
+        }
+        // The vitamins reach the same order's other shipment, not the novel or the unmatched charges.
+        #expect(similar(["a"], "health") == ["a2"])
+        // An unmatched charge reaches other unmatched ones from the merchant, never an order-matched one.
+        #expect(similar(["c"], "groceries") == ["d"])
+        _ = try ledger.perform(Rows.fileSimilar(["a"], "health"))
+        let filed = Dictionary(uniqueKeysWithValues: ledger.transactions.map { ($0.id, $0.categorization?.categoryID) })
+        #expect(filed["a"] == "health" && filed["a2"] == "health")
+        #expect(filed["b"] == "shopping" && filed["c"] == "shopping" && filed["d"] == "shopping")
+    }
+
     @Test("Applying files them as the person's answer, and one undo puts every row back")
     func applyAndUndo() throws {
         var ledger = Rows.ledger(Self.rows, suggestions: ["waiting": [CategorySuggestion(categoryID: "dining", confidence: 0.4)]])

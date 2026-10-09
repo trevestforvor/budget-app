@@ -66,11 +66,19 @@ extension Ledger {
     /// and a payment app ("Venmo", "PayPal", where the merchant is a person or hidden) reach nothing; a matched transfer
     /// stays one unless it's being filed as a transfer; rows already filed there and settled are left alone, and rows the
     /// person filed themselves keep their category (`yours` counts those that would otherwise move).
+    ///
+    /// A row matched to a store order was filed by its items, not its merchant: it reaches only other charges of the
+    /// same order (`ReviewGroup` keys the same way), and a row matched to an order none of the chosen rows share is never
+    /// reached — vitamins under Health don't take the novel in the next Amazon order with them.
     func similarRows(to chosen: [Int], under categoryID: String) -> (rows: [Int], yours: Int) {
         struct Key: Hashable { var text: String; var isOutflow: Bool }
-        var descriptors = Set<Key>(), merchants = Set<Key>()
+        var descriptors = Set<Key>(), merchants = Set<Key>(), orders = Set<String>()
         for index in chosen {
             let row = transactions[index]
+            if let order = row.orderMatch {
+                orders.insert(order.orderID)
+                continue
+            }
             guard !Descriptor.isGeneric(row.rawDescription), !Self.isPaymentApp(row) else { continue }
             let out = row.amount.isNegative
             let descriptor = Descriptor.normalize(row.rawDescription).trimmingCharacters(in: .whitespaces)
@@ -78,7 +86,7 @@ extension Ledger {
             let merchant = RecurringChoice.key(row.merchant)
             if !merchant.isEmpty { merchants.insert(Key(text: merchant, isOutflow: out)) }
         }
-        guard !descriptors.isEmpty || !merchants.isEmpty else { return ([], 0) }
+        guard !descriptors.isEmpty || !merchants.isEmpty || !orders.isEmpty else { return ([], 0) }
         let skip = Set(chosen)
         let targetIsSpending = category(categoryID)?.countsAsSpending == true
         func alike(_ row: LedgerTransaction, isOutflow: Bool) -> Bool {
@@ -92,7 +100,11 @@ extension Ledger {
             guard row.amount.minorUnits != 0, !Self.isPaymentApp(row) else { continue }
             // A refund: money back from a merchant whose purchases are going to a spending category, filed under spending now.
             let isRefund = !out && targetIsSpending && row.categorization.flatMap { category($0.categoryID) }?.countsAsSpending == true
-            guard alike(row, isOutflow: out) || (isRefund && alike(row, isOutflow: true)) else { continue }
+            if let order = row.orderMatch {
+                guard orders.contains(order.orderID) else { continue }
+            } else {
+                guard alike(row, isOutflow: out) || (isRefund && alike(row, isOutflow: true)) else { continue }
+            }
             if row.transferPeerID != nil, categoryID != "transfer" { continue }
             switch Self.refiling(row, under: categoryID) {
             case .moves?, .leavesReview?: reached.append(index)
