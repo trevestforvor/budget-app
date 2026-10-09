@@ -95,6 +95,17 @@ struct MerchantRouteTests {
                 let report = try RemoteBudgetAPI.decoder.decode(OrderImportReport.self, from: Data(response.body.readableBytesView))
                 #expect(report.beforeLedger == 1 && report.matched == 0)
             }
+            // The dashboard's write guard holds here too: no header, or another site's origin, and nothing runs.
+            try await client.execute(uri: "/v1/imports/amazon", method: .post, headers: [.contentType: "application/json"],
+                                     body: TestServer.body(#"{"content":"Order ID,Order Date,Total Owed\n112-1,2020-01-02,5.00"}"#)) { response in
+                #expect(response.status == .forbidden)
+            }
+            var crossSite = write
+            crossSite[.origin] = "https://elsewhere.example"
+            try await client.execute(uri: "/v1/imports/amazon", method: .post, headers: crossSite,
+                                     body: TestServer.body(#"{"content":"Order ID,Order Date,Total Owed\n112-1,2020-01-02,5.00"}"#)) { response in
+                #expect(response.status == .forbidden)
+            }
         }
     }
 }

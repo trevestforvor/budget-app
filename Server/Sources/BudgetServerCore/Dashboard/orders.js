@@ -50,7 +50,7 @@ function summary(r, done) {
   if (r.alreadyMatched) parts.push(`${plural(r.alreadyMatched, "order")} matched before`);
   if (r.unmatched) parts.push(`${plural(r.unmatched, "order")} found no charge`);
   if (r.beforeLedger) parts.push(`${plural(r.beforeLedger, "order")} from before your first transaction`);
-  if (r.skippedLines) parts.push(`${plural(r.skippedLines, "line")} cancelled or unreadable`);
+  if (r.skippedLines) parts.push(`${plural(r.skippedLines, "line")} skipped (cancelled, free or unreadable)`);
   return parts.join(" · ") + ".";
 }
 

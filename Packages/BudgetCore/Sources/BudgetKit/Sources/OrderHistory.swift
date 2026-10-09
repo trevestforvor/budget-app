@@ -40,7 +40,7 @@ public enum OrderHistory {
     /// What reading a file found.
     public struct Parsed: Sendable {
         public var orders: [Order]
-        /// Lines that couldn't be read, were cancelled, or owed nothing.
+        /// Lines that couldn't be read, were cancelled, or belong to an order that owed nothing.
         public var skippedLines: Int
     }
 
@@ -73,8 +73,10 @@ public enum OrderHistory {
                 let value = line[index].trimmingCharacters(in: .whitespacesAndNewlines)
                 return value.isEmpty || value.lowercased() == "not available" ? nil : value
             }
+            // A free item (nothing owed) is still part of what its order bought; only an order that owed nothing at all is
+            // left out below, since no charge can be its.
             guard let id = field(idColumn), let date = field(dateColumn).flatMap(parseDate), let owed = field(owedColumn).flatMap(parseMoney),
-                  owed.minorUnits > 0, field(statusColumn)?.lowercased().contains("cancel") != true else {
+                  owed.minorUnits >= 0, field(statusColumn)?.lowercased().contains("cancel") != true else {
                 skipped += 1
                 continue
             }
@@ -90,10 +92,13 @@ public enum OrderHistory {
             orders[id]!.items.append(item)
             orders[id]!.orderedAt = min(orders[id]!.orderedAt, date)
         }
-        return Parsed(orders: order.compactMap { orders[$0] }, skippedLines: skipped)
+        let all = order.compactMap { orders[$0] }
+        let owing = all.filter { $0.total.minorUnits > 0 }
+        skipped += all.filter { $0.total.minorUnits == 0 }.map(\.items.count).reduce(0, +)
+        return Parsed(orders: owing, skippedLines: skipped)
     }
 
-    /// "2026-09-14T18:22:11Z", "2026-09-14T18:22:11.000Z", "2026-09-14", "09/14/2026".
+    /// "2026-09-14T18:22:11Z", "2026-09-14T18:22:11.000Z", "2026-09-14", "09/14/2026", "09/14/26" (Amazon's older reports).
     static func parseDate(_ raw: String) -> Date? {
         let s = raw.trimmingCharacters(in: CharacterSet(charactersIn: "'\" "))
         if let instant = try? Date(s, strategy: .iso8601) { return instant }
@@ -103,8 +108,8 @@ public enum OrderHistory {
         if let m = s.prefixMatch(of: /(\d{4})-(\d{2})-(\d{2})/) {
             return utc.date(from: DateComponents(year: Int(m.1), month: Int(m.2), day: Int(m.3), hour: 12))
         }
-        if let m = s.wholeMatch(of: /(\d{1,2})\/(\d{1,2})\/(\d{4})/) {
-            return utc.date(from: DateComponents(year: Int(m.3), month: Int(m.1), day: Int(m.2), hour: 12))
+        if let m = s.wholeMatch(of: /(\d{1,2})\/(\d{1,2})\/(\d{2}|\d{4})/), let year = Int(m.3) {
+            return utc.date(from: DateComponents(year: year < 100 ? 2000 + year : year, month: Int(m.1), day: Int(m.2), hour: 12))
         }
         return nil
     }

@@ -130,7 +130,7 @@ public struct OrderImportReport: Hashable, Codable, Sendable {
     public var store: String
     /// False for a preview: nothing changed.
     public var applied: Bool
-    /// Orders read from the file: cancelled ones and lines with nothing owed left out.
+    /// Orders read from the file: cancelled lines and orders that owed nothing left out.
     public var orders: Int
     /// Charges matched to an order (or a shipment of one) by this import.
     public var matched: Int
@@ -143,7 +143,7 @@ public struct OrderImportReport: Hashable, Codable, Sendable {
     /// Matched charges whose items read as another category than the charge's: sent to review with that suggestion.
     /// Nothing is re-filed without the person.
     public var suggested: Int
-    /// Lines that couldn't be read, or were cancelled.
+    /// Lines that couldn't be read, were cancelled, or belong to an order that owed nothing.
     public var skippedLines: Int
     /// The matches made, newest first (at most `sampleSize`).
     public var matches: [Match]

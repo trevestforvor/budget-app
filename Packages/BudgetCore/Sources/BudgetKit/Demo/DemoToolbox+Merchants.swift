@@ -82,7 +82,12 @@ extension DemoAskEngine {
         if let average = m.averageCharge { text += " at about \(average.display) a charge" }
         text += ". \(m.thisMonth.display) so far this month."
         if let recurring = m.recurring { text += " It recurs \(recurring.cadence.every) at \(recurring.amount.display)." }
+        // A cap fits everyday spending, not a subscription: offer one at its usual month, in whole tens of dollars.
+        let usualMonth = m.months.isEmpty ? 0 : m.lastTwelveMonths.minorUnits / Int64(m.months.count)
+        let followUp = m.recurring == nil && usualMonth > 0
+            ? "Cap \(m.merchant) at \(Money(minorUnits: max(usualMonth / 1000, 1) * 1000).formatted(fractionDigits: 0)) a month"
+            : "Where do I go most often?"
         return reply(cid, text: text, figures: out.figures, tools: [call("merchantSummary", ["merchant": .string(m.merchant)])],
-                     followUps: ["Cap \(m.merchant) at \(Money(minorUnits: max(m.thisMonth.minorUnits / 1000, 1) * 1000).formatted(fractionDigits: 0)) a month"])
+                     followUps: [followUp])
     }
 }

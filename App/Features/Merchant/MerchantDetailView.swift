@@ -117,6 +117,7 @@ struct MerchantDetailView: View {
                     .lineLimit(2)
                     .minimumScaleFactor(0.7)
                     .accessibilityAddTraits(.isHeader)
+                    .accessibilityIdentifier("merchantName")
             }
             Spacer(minLength: DSSpace.xs)
             DSAskButton(label: name) { app.ask("Tell me about \(name)") }
@@ -205,20 +206,22 @@ struct MerchantDetailView: View {
                 .buttonStyle(.plain)
                 .disabled(fileableIDs(m).isEmpty)
                 .accessibilityHint("Files all of its transactions under another category")
+                .accessibilityIdentifier("merchantCategory")
                 DSDivider()
                 Button { renames = true } label: { DSListRow("Rename", value: m.merchant, showsChevron: true) }
                     .buttonStyle(.plain)
                     .disabled(m.transactions.isEmpty)
+                    .accessibilityIdentifier("merchantRename")
                 DSDivider()
                 Button { makesRule = true } label: {
                     DSListRow("Make a rule", detail: "File new \(m.merchant) charges the same way, always", showsChevron: true)
                 }
                 .buttonStyle(.plain)
+                .accessibilityIdentifier("merchantRule")
                 if let cap = m.cap {
                     DSDivider()
                     Button { editsCap = true } label: {
-                        DSListRow("Monthly cap", detail: "\(cap.spent.formatted(fractionDigits: 0)) of \(cap.target.formatted(fractionDigits: 0)) this month",
-) {
+                        DSListRow("Monthly cap", detail: "\(cap.spent.formatted(fractionDigits: 0)) of \(cap.target.formatted(fractionDigits: 0)) this month") {
                             HStack(spacing: DSSpace.xs) {
                                 if cap.spent > cap.target { DSTag.over() }
                                 DSListValue(cap.target.shortString, showsChevron: true)
@@ -226,6 +229,7 @@ struct MerchantDetailView: View {
                         }
                     }
                     .buttonStyle(.plain)
+                    .accessibilityIdentifier("merchantCap")
                 }
             }
             .padding(.horizontal, DSSpace.md)
@@ -242,6 +246,7 @@ struct MerchantDetailView: View {
                         if index > 0 { DSDivider() }
                         Button { detail = row } label: { LedgerRow(transaction: row) }
                             .buttonStyle(.plain)
+                            .accessibilityIdentifier("merchantRow-\(row.id)")
                     }
                 }
                 .padding(.horizontal, DSSpace.md)

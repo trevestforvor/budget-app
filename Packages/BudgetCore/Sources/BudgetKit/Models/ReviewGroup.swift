@@ -16,9 +16,13 @@ public struct ReviewGroup: Identifiable, Hashable, Sendable {
         public let merchant: String?
         /// A row over the check-above amount, answered on its own; nil otherwise.
         public let rowID: String?
+        /// The store order a charge was matched to (`LedgerTransaction.orderMatch`): its items say what it was, so it's
+        /// answered with its own order's charges, never with others sharing its descriptor. Nil otherwise.
+        public let orderID: String?
 
-        public init(accountID: String, descriptor: String, isOutflow: Bool, merchant: String? = nil, rowID: String? = nil) {
+        public init(accountID: String, descriptor: String, isOutflow: Bool, merchant: String? = nil, rowID: String? = nil, orderID: String? = nil) {
             self.accountID = accountID; self.descriptor = descriptor; self.isOutflow = isOutflow; self.merchant = merchant; self.rowID = rowID
+            self.orderID = orderID
         }
     }
 
@@ -29,6 +33,7 @@ public struct ReviewGroup: Identifiable, Hashable, Sendable {
     public var id: String {
         if let rowID = key.rowID { return "row|\(rowID)" }
         return "\(key.accountID)|\(key.isOutflow ? "out" : "in")|\(key.descriptor)" + (key.merchant.map { "|\($0)" } ?? "")
+            + (key.orderID.map { "|order:\($0)" } ?? "")
     }
     public var first: ReviewItem { items[0] }
     public var count: Int { items.count }
@@ -59,11 +64,9 @@ public struct ReviewGroup: Identifiable, Hashable, Sendable {
 
     public static func key(for item: ReviewItem) -> Key {
         let row = item.transaction
-        // A charge matched to a store order is answered with its own order: its items say what it was, not its descriptor.
-        let order = row.orderMatch.map { " #\($0.orderID)" } ?? ""
-        return Key(accountID: row.accountID, descriptor: Descriptor.normalize(row.rawDescription) + order, isOutflow: row.amount.isNegative,
+        return Key(accountID: row.accountID, descriptor: Descriptor.normalize(row.rawDescription), isOutflow: row.amount.isNegative,
                    merchant: Descriptor.isGeneric(row.rawDescription) ? row.merchant.uppercased() : nil,
-                   rowID: item.isLarge == true ? row.id : nil)
+                   rowID: item.isLarge == true ? row.id : nil, orderID: row.orderMatch?.orderID)
     }
 
     /// The queue in a sentence, counted in decisions as the tab badge counts it: "3 transactions need a quick look." or

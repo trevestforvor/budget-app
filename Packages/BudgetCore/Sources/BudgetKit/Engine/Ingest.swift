@@ -390,7 +390,8 @@ extension Ledger {
     /// What merchant memory holds: for each descriptor with a settled answer, the category its newest settled row
     /// has, where that answer came from, and how many rows share the descriptor. The person's answers, their
     /// rules, what statements said and the decision model's filings all teach it; a generic descriptor
-    /// ("Withdrawal"), a matched transfer (it says something about that row, not the descriptor), a hidden row
+    /// ("Withdrawal"), a matched transfer (it says something about that row, not the descriptor), the person's answer
+    /// on a charge matched to a store order (it says what that order bought, not what the store sells), a hidden row
     /// and a forgotten descriptor teach it nothing. Most recently seen first.
     func merchantMemoryEntries(excluding ids: Set<String> = []) -> [RememberedMerchant] {
         struct Entry { var winner: LedgerTransaction; var origins: [String: LedgerTransaction] = [:] }
@@ -400,7 +401,8 @@ extension Ledger {
             let descriptor = Descriptor.normalize(row.rawDescription)
             seen[descriptor] = ((seen[descriptor]?.count ?? 0) + 1, row)
             guard let c = row.categorization, !c.needsReview, [.user, .rule, .statement, .merchantMemory, .decisionModel].contains(c.tier),
-                  !Descriptor.isGeneric(row.rawDescription), !forgottenMerchants.contains(descriptor) else { continue }
+                  !Descriptor.isGeneric(row.rawDescription), !forgottenMerchants.contains(descriptor),
+                  !(c.tier == .user && row.orderMatch != nil) else { continue }
             var entry = entries[descriptor] ?? Entry(winner: row)
             entry.winner = row
             // A row memory filed repeats an earlier answer; the answer itself came from the newest row that wasn't.

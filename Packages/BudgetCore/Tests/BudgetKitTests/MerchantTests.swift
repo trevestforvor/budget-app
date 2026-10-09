@@ -219,6 +219,42 @@ struct OrderMatchingTests {
         #expect(ledger.row("o2a")?.categorization?.needsReview == true)
     }
 
+    @Test("The order sets the group apart without changing its descriptor, so rules and memory still read the bank's text")
+    func groupKey() throws {
+        var ledger = Orders.ledger()
+        _ = ledger.matchOrders(try OrderHistory.parseAmazon(Orders.csv).orders, apply: true)
+        let group = try #require(ReviewGroup.groups(ledger.reviewItems).first { $0.contains("o1") })
+        #expect(group.key.orderID == "111-0000001-0000001")
+        #expect(group.key.descriptor == Descriptor.normalize("AMAZON MKTPLACE PMTS"))
+        #expect(group.scopedRule.descriptorContains == Descriptor.normalize("AMAZON MKTPLACE PMTS"))
+    }
+
+    @Test("Answering one order doesn't teach merchant memory that the store is that category")
+    func memory() throws {
+        var ledger = Orders.ledger()
+        _ = ledger.matchOrders(try OrderHistory.parseAmazon(Orders.csv).orders, apply: true)
+        _ = try ledger.confirm(transactionID: "o1", categoryID: "groceries")
+        // The coffee order was groceries; the next Amazon charge is still filed the way the store's other charges are.
+        #expect(ledger.merchantMemory(excluding: [])[Descriptor.normalize("AMAZON MKTPLACE PMTS")] == "shopping")
+    }
+
+    @Test("Older reports: two-digit years, Item Total and Title; a free item stays with its order, an order owing nothing is left out")
+    func olderReport() throws {
+        let csv = """
+        Order ID,Order Date,Title,Item Total,Shipment Date
+        D01-1,09/10/26,Wool socks,$20.00,09/11/26
+        D01-1,09/10/26,Free sample,$0.00,09/11/26
+        D01-2,09/12/26,Free ebook,$0.00,
+        """
+        let parsed = try OrderHistory.parseAmazon(csv)
+        #expect(parsed.orders.count == 1 && parsed.skippedLines == 1)
+        let order = try #require(parsed.orders.first)
+        #expect(order.items.map(\.name) == ["Wool socks", "Free sample"] && order.total == Money(20))
+        var utc = Calendar(identifier: .gregorian)
+        utc.timeZone = TimeZone(identifier: "UTC")!
+        #expect(utc.dateComponents([.year, .month, .day], from: order.orderedAt) == DateComponents(year: 2026, month: 9, day: 10))
+    }
+
     @Test("Importing the same file again changes nothing, and a preview never does")
     func idempotent() throws {
         var ledger = Orders.ledger()
