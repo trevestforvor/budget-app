@@ -48,6 +48,9 @@ struct ScenarioCard: View {
     @Environment(AppModel.self) private var app
     @State private var problem: String?
     @State private var busy = false
+    /// Switches the person just flipped, by event id: shown as flipped until the reloaded scenario agrees (or the
+    /// write fails), so a switch doesn't snap back during the round trip.
+    @State private var pending: [String: Bool] = [:]
 
     var body: some View {
         DSCard {
@@ -92,6 +95,10 @@ struct ScenarioCard: View {
             }
         }
         .announcesProblem(problem)
+        .onChange(of: scenario?.events) { _, events in
+            // Settled once the scenario the server sent back says the same.
+            pending = pending.filter { id, on in events?.first { $0.id == id }.map { $0.isEnabled != on } ?? false }
+        }
         // A container, so the rows and "Add a change" keep their own identifiers instead of taking the card's.
         .accessibilityElement(children: .contain)
         .accessibilityIdentifier("scenarioCard")
@@ -110,27 +117,30 @@ struct ScenarioCard: View {
     }
 
     private func eventRow(_ event: PlanEvent, in scenario: PlanScenario) -> some View {
-        HStack(spacing: DSSpace.sm) {
+        let isOn = pending[event.id] ?? event.isEnabled
+        return HStack(spacing: DSSpace.sm) {
             Button { onEditEvent(scenario, event) } label: {
                 HStack(spacing: DSSpace.sm) {
                     DSGlyph(systemImage: event.kind == .income ? "arrow.down" : "arrow.up", tone: event.kind == .income ? .cyan : .violet)
+                    // The amount is in the summary ("$3,000 in February 2027"): no trailing figure to squeeze the name.
                     VStack(alignment: .leading, spacing: 2) {
                         Text(event.name).dsFont(.body)
-                            .foregroundStyle(event.isEnabled ? Color.ds.ink : Color.ds.inkSecondary)
-                        Text(event.summary()).dsFont(.caption)
-                            .foregroundStyle(event.isEnabled ? Color.ds.inkSecondary : Color.ds.inkTertiary)
+                            .foregroundStyle(isOn ? Color.ds.ink : Color.ds.inkSecondary)
+                            .fixedSize(horizontal: false, vertical: true)
+                        Text(event.kind == .income ? "+" + event.summary() : event.summary()).dsFont(.caption)
+                            .foregroundStyle(isOn ? Color.ds.inkSecondary : Color.ds.inkTertiary)
                             .fixedSize(horizontal: false, vertical: true)
                     }
-                    Spacer(minLength: DSSpace.xs)
-                    Text(event.kind == .income ? "+\(event.amount.formatted(fractionDigits: 0))" : event.amount.formatted(fractionDigits: 0))
-                        .dsFont(.amountRow)
-                        .foregroundStyle(!event.isEnabled ? Color.ds.inkTertiary : event.kind == .income ? Color.ds.inflow : Color.ds.ink)
+                    .frame(maxWidth: .infinity, alignment: .leading)
                 }
                 .contentShape(Rectangle())
             }
             .buttonStyle(.plain)
             .accessibilityHint("Edits this change")
-            Toggle(isOn: Binding(get: { event.isEnabled }, set: { on in Task { await toggle(event, in: scenario, on: on) } })) {
+            Toggle(isOn: Binding(get: { isOn }, set: { on in
+                pending[event.id] = on
+                Task { await toggle(event, in: scenario, on: on) }
+            })) {
                 Text("Include \(event.name)")
             }
             .labelsHidden()
@@ -188,6 +198,7 @@ struct ScenarioCard: View {
             try await app.perform(.savePlanScenario(save))
             problem = nil
         } catch {
+            pending[event.id] = nil // back to what the server has
             problem = error.localizedDescription
         }
     }

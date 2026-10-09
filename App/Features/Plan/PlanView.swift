@@ -12,6 +12,8 @@ struct PlanView: View {
     @State private var goalDate = Calendar.current.date(byAdding: .month, value: 6, to: AppClock.now)!
     @State private var goalCheck: GoalCheck?
     @State private var isChecking = false
+    /// Why the last goal check has no answer.
+    @State private var goalError: String?
     @State private var savings: SavingsPlan?
     @State private var editsSavings = false
     /// The scenario laid over the forecast; nil is the plain forecast. Remembered on this phone.
@@ -95,7 +97,7 @@ struct PlanView: View {
             }
         }
         .task(id: "\(horizon)|\(scenarioID ?? "")|\(app.revision)") { await load() }
-        .onChange(of: scenarioID) { goalCheck = nil }
+        .onChange(of: scenarioID) { goalCheck = nil; goalError = nil }
         .sheet(isPresented: $editsSavings) { MonthlySavingsSheet(current: savings?.plannedSavings, suggested: savings?.twentyPercentOfIncome) }
         .sheet(item: $scenarioEdit) { edit in
             ScenarioSheet(scenario: edit.scenario) { saved in scenarioID = saved }
@@ -113,28 +115,51 @@ struct PlanView: View {
         if scenarioID == nil { state = await state.orSaved(.projection(horizonMonths: horizon), app) }
         if savings == nil { savings = await app.saved(.savings) }
         if scenarios == nil { scenarios = await app.saved(.scenarios(horizonMonths: horizon)) }
-        async let plan = try? api.savingsPlan()
         // A task, not a second async let: two here crashed in swift_task_dealloc (asyncLet_finish) when the view loaded.
+        // Cancelled with this load, so a load .task(id:) replaced can't finish late.
         let list = Task { await Self.scenarioList(planning, horizon: horizon) }
-        let updating = app.beginUpdating(showingSaved: first && state.value != nil)
-        let (next, error) = await state.refreshing {
-            guard let scenarioID, let planning else { return try await api.projection(horizonMonths: horizon, goal: nil) }
-            do {
-                return try await planning.projection(horizonMonths: horizon, goal: nil, scenarioID: scenarioID)
-            } catch BudgetAPIError.notFound {
-                // Deleted elsewhere: show the plain forecast, and the selection falls back below.
-                return try await api.projection(horizonMonths: horizon, goal: nil)
+        return await withTaskCancellationHandler {
+            async let plan = try? api.savingsPlan()
+            let updating = app.beginUpdating(showingSaved: first && state.value != nil)
+            let (next, error) = await state.refreshing {
+                guard let scenarioID, let planning else { return try await api.projection(horizonMonths: horizon, goal: nil) }
+                do {
+                    return try await planning.projection(horizonMonths: horizon, goal: nil, scenarioID: scenarioID)
+                } catch BudgetAPIError.notFound {
+                    // Deleted elsewhere: show the plain forecast, and the selection falls back below.
+                    return try await api.projection(horizonMonths: horizon, goal: nil)
+                }
             }
+            app.endUpdating(updating)
+            let fetchedPlan = await plan
+            let fetchedList = await list.value
+            // A newer load (another horizon or scenario, or one that replaced this) owns the screen now: write nothing.
+            guard isCurrent(horizon: horizon, scenarioID: scenarioID) else { return nil }
+            state = next
+            savings = fetchedPlan
+            switch fetchedList {
+            case let .success(fresh?):
+                scenarios = fresh
+                // A scenario deleted elsewhere falls back to the plain forecast.
+                if let id = self.scenarioID, !fresh.scenarios.contains(where: { $0.id == id }) { self.scenarioID = nil }
+            case .success(nil):
+                // A server without scenarios (before 0.5.0, or after leaving the demo): nothing to pick, nothing picked.
+                scenarios = nil
+                if self.scenarioID != nil { self.scenarioID = nil }
+            case .failure:
+                break // Kept as it was when the list didn't load (offline with no saved copy).
+            }
+            let fresh = try? await api.upcoming(days: UpcomingWindow.days)
+            if let fresh, isCurrent(horizon: horizon, scenarioID: self.scenarioID) { upcoming = fresh }
+            return error
+        } onCancel: {
+            list.cancel()
         }
-        app.endUpdating(updating)
-        state = next
-        savings = await plan
-        // Kept as it was when the list didn't load (offline with no saved copy); cleared on a server without scenarios.
-        if case let .success(fresh) = await list.value { scenarios = fresh }
-        // A scenario deleted elsewhere falls back to the plain forecast.
-        if let id = self.scenarioID, let scenarios, !scenarios.scenarios.contains(where: { $0.id == id }) { self.scenarioID = nil }
-        if let fresh = try? await api.upcoming(days: UpcomingWindow.days) { upcoming = fresh }
-        return error
+    }
+
+    /// Whether a load for `horizon` and `scenarioID` is still the one the screen shows.
+    private func isCurrent(horizon: Int, scenarioID: String?) -> Bool {
+        !Task.isCancelled && horizon == self.horizon && scenarioID == self.scenarioID
     }
 
     /// The scenario list; nil on a server before 0.5.0, which has no scenarios (a 404), so the picker stays away.
@@ -250,7 +275,10 @@ struct PlanView: View {
                     .buttonStyle(.ds(.primary, fullWidth: true))
                     .disabled(isChecking || goalAmount <= 0)
 
-                if let goalCheck { goalResult(goalCheck) }
+                if let goalError {
+                    Text(goalError).dsFont(.callout).foregroundStyle(Color.ds.caution)
+                        .fixedSize(horizontal: false, vertical: true)
+                } else if let goalCheck { goalResult(goalCheck) }
             }
         }
     }
@@ -272,15 +300,26 @@ struct PlanView: View {
 
     private func checkGoal() async {
         isChecking = true
+        goalError = nil
         defer { isChecking = false }
         let api = app.api
         let query = GoalQuery(amount: Money(goalAmount), targetDate: goalDate)
         let months = max(horizon, (Calendar.current.dateComponents([.month], from: AppClock.now, to: goalDate).month ?? 0) + 1)
-        // Against the scenario on the chart, when there is one.
-        if let scenarioID, let planning = api as? any PlanScenariosAPI {
-            goalCheck = (try? await planning.projection(horizonMonths: months, goal: query, scenarioID: scenarioID))?.goal
-        } else if let projection = try? await api.projection(horizonMonths: months, goal: query) {
-            goalCheck = projection.goal
+        do {
+            // Against the scenario on the chart, when there is one; the plain forecast when it's gone (as load() does).
+            if let scenarioID, let planning = api as? any PlanScenariosAPI {
+                do {
+                    goalCheck = try await planning.projection(horizonMonths: months, goal: query, scenarioID: scenarioID).goal
+                } catch BudgetAPIError.notFound {
+                    goalCheck = try await api.projection(horizonMonths: months, goal: query).goal
+                }
+            } else {
+                goalCheck = try await api.projection(horizonMonths: months, goal: query).goal
+            }
+            if goalCheck == nil { goalError = "The ledger didn't check that goal. Try again." }
+        } catch {
+            goalCheck = nil
+            goalError = "Couldn't check it: \(error.localizedDescription)"
         }
     }
 }
