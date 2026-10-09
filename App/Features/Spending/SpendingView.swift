@@ -459,7 +459,7 @@ struct SpendingView: View {
                         // Paychecks too, from a server with Upcoming.
                         ForEach(Array(expected.items.prefix(4).enumerated()), id: \.element.id) { index, item in
                             if index > 0 { DSDivider() }
-                            UpcomingRow(item: item, payCadence: expected.payCadence)
+                            UpcomingRow(item: item, payCadence: expected.payCadence, subscription: found.items.first { $0.covers(item.title) })
                         }
                     } else if upcoming.isEmpty {
                         Text("Nothing recurring is due in the next 30 days.")

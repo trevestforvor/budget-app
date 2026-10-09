@@ -93,6 +93,18 @@ struct UpcomingIncomeTests {
         #expect(upcoming.payCadence == "twice a month")
     }
 
+    @Test("Pay that stopped two paydays ago has no schedule")
+    func stopped() {
+        let fridays = [(6, 12), (6, 26), (7, 10), (7, 24), (8, 7), (8, 21)]
+        let rows = fridays.map { PayRows.pay($0.0, $0.1) }
+        // Sep 4 and Sep 18 never came: 35 days after the last one.
+        let upcoming = PayRows.ledger(rows).upcoming(days: 30)
+        #expect(upcoming.nextPaycheck == nil)
+        #expect(!upcoming.items.contains { $0.kind == .income })
+        // Within two paydays it's still expected.
+        #expect(PayRows.ledger(rows, now: PayRows.day(9, 10, hour: 12)).upcoming(days: 30).nextPaycheck != nil)
+    }
+
     @Test("No regular pay: no income expected, and no cadence")
     func none() {
         let upcoming = PayRows.ledger([PayRows.pay(9, 1)]).upcoming(days: 30)
@@ -170,6 +182,16 @@ struct CardBillTests {
         #expect(!ledger.upcoming(days: 30).items.contains { $0.kind == .cardBill })
     }
 
+    @Test("A statement the issuer hasn't confirmed in over a month is left out, not shown as past due forever")
+    func stale() {
+        var old = Self.bill(due: (8, 25))
+        old.updatedAt = Fixture.calendar.date(byAdding: .day, value: -36, to: Fixture.now)!
+        let ledger = PayRows.ledger([], cardBills: [old])
+        #expect(ledger.presentedCardBills().isEmpty)
+        #expect(!ledger.upcoming(days: 30).items.contains { $0.kind == .cardBill })
+        #expect(ledger.dueSoonFacts(from: Fixture.now).isEmpty)
+    }
+
     @Test("Issuer statements are stored only on credit cards the ledger holds")
     func apply() {
         var state = LedgerState.empty
@@ -189,8 +211,10 @@ struct CardBillTests {
     func digest() {
         let start = Fixture.calendar.date(byAdding: .day, value: -1, to: Fixture.calendar.startOfDay(for: Fixture.now))!
         let soon = PayRows.ledger([], cardBills: [Self.bill(due: (9, 26))])
-        #expect(soon.dayDigest("2026-09-24", from: start).facts.filter { $0.kind == .dueSoon }.map(\.text)
+        #expect(soon.dayDigest("2026-09-24", from: start).facts.filter { $0.text.hasPrefix("Gold Card") }.map(\.text)
                 == ["Gold Card is due tomorrow: $500 (minimum $40)."])
+        // A kind apps before 0.5.0 know, so their decoding never fails on it.
+        #expect(soon.dueSoonFacts(from: Fixture.now).map(\.kind) == [.bills])
         let today = PayRows.ledger([], cardBills: [Self.bill(due: (9, 25), minimum: nil)])
         #expect(today.dueSoonFacts(from: Fixture.now).map(\.text) == ["Gold Card is due today: $500."])
         let far = PayRows.ledger([], cardBills: [Self.bill(due: (10, 1))])
@@ -265,6 +289,21 @@ struct UpcomingTests {
         let after = Fixture.ledger().upcoming(days: 30)
         #expect(after.cardBills.map(\.status) == [.paid])
         #expect(!after.items.contains { $0.kind == .cardBill })
+    }
+
+    @Test("A monthly charge keeps its day of the month across months, not a fixed count of days")
+    func monthlyDay() {
+        let rows = [4, 5, 6, 7, 8].map { month in
+            LedgerTransaction(id: "box-\(month)", accountID: "card", postedAt: PayRows.day(month, 30, hour: 12), merchant: "Stream Box",
+                              rawDescription: "STREAM BOX", amount: Money(-12),
+                              categorization: Categorization(categoryID: "subscriptions", confidence: 1, tier: .rule, needsReview: false),
+                              isPending: false, source: .plaid)
+        }
+        let ledger = PayRows.ledger(rows)
+        let charges = ledger.upcoming(days: 120).items.filter { $0.title == "Stream Box" }
+        // The first is the recurring list's own next expected charge; the rest stay on the 30th.
+        #expect(PayRows.days(charges, ledger) == ["2026-09-29", "2026-10-30", "2026-11-30", "2026-12-30"])
+        #expect(Set(charges.map(\.id)).count == charges.count)
     }
 
     @Test("Asking for an out-of-range window is clamped")

@@ -53,7 +53,7 @@ public struct PlaidSource: TransactionSource {
 
     /// `/link/token/create` — asks for transactions (with `daysRequested` of history, fixed at Item
     /// creation: max 730), with consent for investments (when the institution has them) and liabilities (card bills),
-    /// which are billed only once used.
+    /// which are billed only once used. A Plaid account not enabled for Liabilities (INVALID_PRODUCT) links without it.
     /// - Parameter redirectURI: the Universal Link registered in the Dashboard, required for OAuth banks on iOS.
     /// - Parameter accessToken: set to open Link in update mode for an existing Item (re-auth).
     /// - Parameter grantLiabilities: with `accessToken`, update mode that asks the person to consent to liabilities on
@@ -80,7 +80,15 @@ public struct PlaidSource: TransactionSource {
             body["additional_consented_products"] = .array((investments ? ["investments"] : []).map(JSONValue.string) + [.string(liabilitiesProduct)])
         }
         if let redirectURI { body["redirect_uri"] = .string(redirectURI) }
-        let json = try await transport.json(try request(environment, "link/token/create", body, credentials))
+        let json: JSONValue
+        do {
+            json = try await transport.json(try request(environment, "link/token/create", body, credentials))
+        } catch let error as SourceHTTPError where accessToken == nil && PlaidAPIError(error)?.errorCode == "INVALID_PRODUCT" {
+            // A Plaid account without Liabilities access refuses its consent: link the bank without card bills rather
+            // than not at all (card bills then say "not supported").
+            body["additional_consented_products"] = investments ? .array([.string("investments")]) : nil
+            json = try await transport.json(try request(environment, "link/token/create", body, credentials))
+        }
         guard case let .object(o) = json, case let .string(token)? = o["link_token"] else { throw DecisionError.malformed("no link_token") }
         return token
     }

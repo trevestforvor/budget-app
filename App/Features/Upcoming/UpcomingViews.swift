@@ -59,17 +59,32 @@ extension UpcomingItem {
     }
 }
 
-/// One expected thing: glyph, title, when and what it is, and the amount ("+$3,850" in cyan for money in).
+/// One expected thing: glyph, title, when and what it is, and the amount ("+$3,850" in cyan for money in). A bill or
+/// subscription given its `subscription` opens the recurring edit sheet when tapped, as the recurring list's rows do.
 struct UpcomingRow: View {
     let item: UpcomingItem
     var showsDate = true
     var payCadence: String?
+    /// The recurring charge a bill or subscription comes from, when the screen has the recurring list.
+    var subscription: Subscription?
     @Environment(AppModel.self) private var app
     @Environment(\.dynamicTypeSize) private var dynamicTypeSize
+    @State private var editing = false
 
     var body: some View {
+        if let subscription, item.kind == .bill || item.kind == .subscription {
+            Button { editing = true } label: { row }
+                .buttonStyle(.plain)
+                .accessibilityHint("Change how it repeats, or take it off recurring")
+                .sheet(isPresented: $editing) { RecurringEditSheet(merchant: subscription.merchant, current: subscription) }
+        } else {
+            row
+        }
+    }
+
+    private var row: some View {
         let large = dynamicTypeSize.isAccessibilitySize
-        HStack(alignment: large ? .top : .center, spacing: DSSpace.sm) {
+        return HStack(alignment: large ? .top : .center, spacing: DSSpace.sm) {
             DSGlyph(systemImage: item.symbol(app), tone: item.tone(app))
             let layout = large ? AnyLayout(VStackLayout(alignment: .leading, spacing: DSSpace.xxs)) : AnyLayout(HStackLayout(spacing: DSSpace.xs))
             layout {
@@ -207,7 +222,7 @@ struct NextPaycheckCard: View {
                     }
                     if let pay = upcoming.nextPaycheck {
                         UpcomingAmount(item: pay, size: .title)
-                        Text([pay.dayLabel, pay.title, upcoming.payCadence].compactMap { $0 }.joined(separator: " · "))
+                        Text([pay.isLate == true ? "Expected any day" : pay.dayLabel, pay.title, upcoming.payCadence].compactMap { $0 }.joined(separator: " · "))
                             .dsFont(.callout).foregroundStyle(Color.ds.inkSecondary)
                             .fixedSize(horizontal: false, vertical: true)
                     }

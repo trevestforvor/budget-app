@@ -28,6 +28,27 @@ final class StatusTransport: HTTPTransport, @unchecked Sendable {
     var paths: [String] { lock.withLock { requests.map { $0.url!.path } } }
 }
 
+/// Answers each request in turn with the next scripted status and body, and records the JSON bodies sent.
+final class SequenceTransport: HTTPTransport, @unchecked Sendable {
+    private let lock = NSLock()
+    private var answers: [(status: Int, body: String)]
+    private var sent: [JSONValue] = []
+
+    init(_ answers: [(status: Int, body: String)]) { self.answers = answers }
+
+    func send(_ request: URLRequest) async throws -> (Data, HTTPURLResponse) {
+        let (status, body) = lock.withLock { () -> (Int, String) in
+            if let data = request.httpBody, let json = try? JSONValue.parse(data) { sent.append(json) }
+            return answers.isEmpty ? (404, #"{"error":"not found"}"#) : answers.removeFirst()
+        }
+        return (Data(body.utf8), HTTPURLResponse(url: request.url!, statusCode: status, httpVersion: nil, headerFields: nil)!)
+    }
+
+    var bodies: [[String: JSONValue]] {
+        lock.withLock { sent.compactMap { if case let .object(o) = $0 { o } else { nil } } }
+    }
+}
+
 @Suite("Plaid Liabilities (card bills)")
 struct PlaidLiabilitiesTests {
     static let credentials = PlaidSource.Credentials(clientID: "cid", secret: "sec")
@@ -135,6 +156,26 @@ struct PlaidLiabilitiesTests {
         #expect(body["products"] == .array([.string("transactions")]))
         #expect(body["additional_consented_products"] == .array([.string("investments"), .string("liabilities")]))
         #expect(body["access_token"] == nil)
+    }
+
+    @Test("A Plaid account without Liabilities access still links new banks, without card-bill consent")
+    func noLiabilitiesAccess() async throws {
+        let refused = #"{"error_code": "INVALID_PRODUCT", "error_type": "INVALID_REQUEST", "error_message": "client is not authorized", "request_id": "req-1"}"#
+        let transport = SequenceTransport([(400, refused), (200, #"{"link_token": "link-sandbox-4"}"#)])
+        let token = try await PlaidSource.linkToken(environment: .sandbox, credentials: Self.credentials, userID: "owner", investments: true, transport: transport)
+        #expect(token == "link-sandbox-4")
+        let bodies = transport.bodies
+        #expect(bodies.count == 2)
+        #expect(bodies.last?["additional_consented_products"] == .array([.string("investments")]))
+        #expect(bodies.last?["products"] == .array([.string("transactions")]))
+
+        // The grant isn't retried without what it asks for: the refusal is the answer.
+        let grant = SequenceTransport([(400, refused), (200, #"{"link_token": "link-sandbox-5"}"#)])
+        await #expect(throws: SourceHTTPError.self) {
+            try await PlaidSource.linkToken(environment: .sandbox, credentials: Self.credentials, userID: "owner", investments: true,
+                                            accessToken: "access-test-1", grantLiabilities: true, transport: grant)
+        }
+        #expect(grant.bodies.count == 1)
     }
 
     @Test("The card-bill grant is update mode on the same Item: its access token, no products, liabilities consent, the redirect kept")

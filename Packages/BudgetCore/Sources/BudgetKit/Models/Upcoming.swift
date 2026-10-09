@@ -25,6 +25,8 @@ public struct CardBill: Identifiable, Hashable, Codable, Sendable {
     public var purchaseAPR: Double?
     /// When the issuer's figures were fetched.
     public var updatedAt: Date
+    /// Days after `updatedAt` a statement is no longer shown: a statement cycle and a few days.
+    static let staleAfter: Double = 35
 
     // The ledger's reading, set when presented (nil in storage).
     /// "Gold Card ••1008".

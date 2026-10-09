@@ -46,9 +46,9 @@ public struct DayDigest: Codable, Hashable, Sendable {
 
     public struct Fact: Codable, Hashable, Sendable {
         public enum Kind: String, Codable, Sendable {
+            /// `bills` also carries a card bill due in the next few days, or past due (server 0.5.0): a new kind would fail
+            /// to decode on an app from before this fallback.
             case pace, firstTime, bills, safeToSpend, pending
-            /// A card bill due in the next few days, or past due.
-            case dueSoon
 
             /// A kind a later version adds reads as `.bills`, instead of failing a saved digest's load.
             public init(from decoder: any Decoder) throws {

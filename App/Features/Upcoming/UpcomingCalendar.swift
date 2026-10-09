@@ -6,6 +6,7 @@ import SwiftUI
 /// biggest amount, then the chosen day's items. The months it shows are the ones `upcoming` reaches.
 struct UpcomingCalendar: View {
     let upcoming: Upcoming
+    var subscriptions: [Subscription] = []
     @State private var month: Date
     @State private var selected: Date?
     @Environment(AppModel.self) private var app
@@ -13,8 +14,9 @@ struct UpcomingCalendar: View {
 
     private var calendar: Calendar { .current }
 
-    init(upcoming: Upcoming) {
+    init(upcoming: Upcoming, subscriptions: [Subscription] = []) {
         self.upcoming = upcoming
+        self.subscriptions = subscriptions
         let cal = Calendar.current
         _month = State(initialValue: cal.date(from: cal.dateComponents([.year, .month], from: upcoming.asOf)) ?? upcoming.asOf)
         _selected = State(initialValue: upcoming.byDay.first.map { cal.startOfDay(for: $0.date) })
@@ -118,7 +120,8 @@ struct UpcomingCalendar: View {
                         let items = upcoming.items(on: day)
                         ForEach(Array(items.enumerated()), id: \.element.id) { index, item in
                             if index > 0 { DSDivider() }
-                            UpcomingRow(item: item, showsDate: false, payCadence: upcoming.payCadence)
+                            UpcomingRow(item: item, showsDate: false, payCadence: upcoming.payCadence,
+                                        subscription: subscriptions.first { $0.covers(item.title) })
                         }
                     }
                     .padding(.horizontal, DSSpace.md)

@@ -68,9 +68,11 @@ struct PaySchedule: Equatable {
 extension Ledger {
     /// How pay comes, from the regular paydays in the last 120 days; nil when no regular pay shows. Two a month every
     /// 14 days (give or take a day) is every two weeks; two a month on varying gaps is twice a month, on the days of the
-    /// month each payday usually lands.
+    /// month each payday usually lands. Pay that stopped (two paydays missed, give or take a few days) has no schedule:
+    /// a job that ended doesn't keep paying.
     func paySchedule() -> PaySchedule? {
-        guard let history = paydayHistory(), let last = history.paydays.last else { return nil }
+        guard let history = paydayHistory(), let last = history.paydays.last,
+              now.timeIntervalSince(last.date) <= (history.medianGap * 2 + 4) * 86_400 else { return nil }
         let amounts = history.paydays.suffix(4).map(\.amount.minorUnits).sorted()
         let typical = Money(minorUnits: amounts[amounts.count / 2])
         let rhythm: PaySchedule.Rhythm
@@ -106,11 +108,14 @@ extension Ledger {
 
     /// Each card's statement from its issuer, read against the card's own rows: what's been paid into it since the
     /// statement (a move between accounts, or the issuer's own last payment when that's later), what's left, and
-    /// whether it's due, paid or overdue. Cards no longer in the ledger are left out; soonest due first.
+    /// whether it's due, paid or overdue. Cards no longer in the ledger are left out, and so is a statement the issuer
+    /// hasn't confirmed in `CardBill.staleAfter` days (card bills turned off, or the bank's connection broken): a
+    /// newer statement has surely closed since, and an old unpaid one would read as past due forever. Soonest due first.
     func presentedCardBills() -> [CardBill] {
         let today = calendar.startOfDay(for: now)
         return cardBills.values.compactMap { stored -> CardBill? in
-            guard let account = accounts.first(where: { $0.id == stored.accountID }) else { return nil }
+            guard let account = accounts.first(where: { $0.id == stored.accountID }),
+                  now.timeIntervalSince(stored.updatedAt) <= CardBill.staleAfter * 86_400 else { return nil }
             var bill = stored
             bill.accountName = account.shortLabel
             let owed = stored.statementBalance ?? .zero
@@ -184,7 +189,10 @@ extension Ledger {
         }
 
         for item in subscriptions().items where item.status == .active {
-            // Only the first can be late (an active charge is within its grace, which is shorter than its cadence).
+            // Only the first can be late (an active charge is within its grace, which is shorter than its cadence). The
+            // first is the list's own next expected charge; later ones keep the last charge's day of the month (a
+            // monthly one on the 15th stays on the 15th), not a fixed count of days that drifts across short months.
+            var occurrence = 1
             var next = item.nextExpected
             while true {
                 let day = calendar.startOfDay(for: next)
@@ -194,7 +202,8 @@ extension Ledger {
                 items.append(UpcomingItem(id: "\(item.kind.rawValue)-\(item.merchant)-\(dayKey(day))", kind: item.kind == .bill ? .bill : .subscription,
                                           date: date, title: item.merchant, amount: -item.amount, categoryID: item.categoryID,
                                           cadence: item.cadence, isEstimate: true, isLate: late ? true : nil))
-                next = next.addingTimeInterval(item.cadence.days * 86_400)
+                occurrence += 1
+                next = Self.recurrence(of: item, number: occurrence, calendar: calendar)
             }
         }
 
@@ -224,21 +233,35 @@ extension Ledger {
     }
 
     /// The morning summary's word on card bills, read on the morning of `morning` (the day after the one it sums up): a
-    /// card past due, or one due within three days, with what's left of its statement. Soonest first.
+    /// card past due, or one due within three days, with what's left of its statement. Soonest first. They're `bills`
+    /// facts: apps before 0.5.0 fail to decode a fact kind they don't know.
     func dueSoonFacts(from morning: Date) -> [DayDigest.Fact] {
         let day = calendar.startOfDay(for: morning)
         let soon = calendar.date(byAdding: .day, value: 3, to: day)!
         return presentedCardBills().compactMap { bill -> DayDigest.Fact? in
             guard let remaining = bill.remaining, remaining.minorUnits > 0, let name = bill.accountName else { return nil }
             if bill.status == .overdue {
-                return .init(kind: .dueSoon, text: "\(name) is past due: \(Self.amount(remaining)) is left on its statement.")
+                return .init(kind: .bills, text: "\(name) is past due: \(Self.amount(remaining)) is left on its statement.")
             }
             guard bill.status == .due, let due = bill.dueDate.map({ calendar.startOfDay(for: $0) }), due >= day, due < soon else { return nil }
             let when = due == day ? "today" : calendar.date(byAdding: .day, value: 1, to: day) == due ? "tomorrow"
                 : "on " + due.formatted(Date.FormatStyle(timeZone: calendar.timeZone).weekday(.wide))
             let minimum = bill.minimumPayment.map { " (minimum \(Self.amount($0)))" } ?? ""
-            return .init(kind: .dueSoon, text: "\(name) is due \(when): \(Self.amount(remaining))\(minimum).")
+            return .init(kind: .bills, text: "\(name) is due \(when): \(Self.amount(remaining))\(minimum).")
         }
+    }
+
+    /// The `number`th charge after `item`'s last one: weeks for a weekly one, calendar months (1, 3 or 12) for the
+    /// rest, so it keeps its day of the month (the 31st falls on a shorter month's last day).
+    static func recurrence(of item: Subscription, number: Int, calendar: Calendar) -> Date {
+        let months: Int
+        switch item.cadence {
+        case .weekly: return calendar.date(byAdding: .day, value: 7 * number, to: item.lastCharged)!
+        case .monthly: months = 1
+        case .quarterly: months = 3
+        case .yearly: months = 12
+        }
+        return calendar.date(byAdding: .month, value: months * number, to: item.lastCharged)!
     }
 
     /// Each kind's amounts, as magnitudes.
