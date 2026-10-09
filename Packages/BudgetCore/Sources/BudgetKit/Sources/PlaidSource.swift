@@ -236,7 +236,7 @@ public struct PlaidSource: TransactionSource {
                                  name: displayName(a), kind: kind,
                                  balance: money(current * sign, currency),
                                  availableBalance: number(b, "available").map { money($0, currency) },
-                                 balanceDate: .now, transactions: [], holdings: [], mask: string(a, "mask"))
+                                 balanceDate: .now, transactions: [], holdings: [], mask: string(a, "mask"), providerType: type)
         }
     }
 

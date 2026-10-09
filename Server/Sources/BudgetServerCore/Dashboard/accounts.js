@@ -54,6 +54,40 @@ function reconnectHelp(g) {
   return `${g.name} ended this connection, which banks do every so often for security. Sign in again and it carries on where it stopped: your history is safe, and nothing new comes in until then.`;
 }
 
+// MARK: Card bills (Plaid Liabilities)
+
+/// What the last card-bill check said about a Plaid link, as a status line (tone, words, when).
+const CARD_BILLS = {
+  ok: (c) => ({ tone: "ok", label: "Card bills on", detail: [plural(c.cards || 0, "card"), `checked ${dateTime(c.checkedAt)}`] }),
+  needsConsent: () => ({ tone: "watch", label: "Card bills need your OK", detail: ["linked before card bills"] }),
+  notSupported: () => ({ tone: "neutral", label: "No card bills from this bank", detail: ["it doesn't offer them through Plaid"] }),
+  noCreditAccounts: () => ({ tone: "neutral", label: "No card bills", detail: ["no credit card at this bank"] }),
+  notReady: (c) => ({ tone: "neutral", label: "Card bills on the way", detail: ["Plaid is still gathering them", `asked ${dateTime(c.checkedAt)}`] }),
+  failed: (c) => ({ tone: "watch", label: "Card bills didn't come through", detail: [`asked ${dateTime(c.checkedAt)}`, "tried again tomorrow"] }),
+};
+
+/// Card bills for one Plaid link, while the setting is on: its status, and for a bank linked before card bills, the
+/// one sign-in that grants access. That sign-in is Plaid's update mode on the same connection: nothing is relinked
+/// or removed, and it starts only from this button.
+function cardBillsPanel(link) {
+  if (link.provider !== "plaid" || !store.summary.settings.cardBills) return null;
+  const check = link.cardBills;
+  const state = check ? (CARD_BILLS[check.access] || CARD_BILLS.failed)(check) : { tone: "neutral", label: "Card bills on", detail: ["checked at the next sync"] };
+  const line = statusLine(state);
+  if (!check || check.access !== "needsConsent") {
+    return h("div", { class: "card-bills" }, line, check && check.access === "failed" && check.message ? details("What Plaid said", check.message) : null);
+  }
+  return h("div", { class: "card-bills" }, line, callout({ tone: "watch", title: `Grant card-bill access for ${link.institution}`,
+    body: "This bank was linked before card bills. Sign in once to add access to the same connection: nothing is relinked, your history stays, and Plaid starts billing for card bills on this bank.",
+    actions: [button("Grant card-bill access", { compact: true, onclick: (e) => grantCardBills(link, e.currentTarget) })] }));
+}
+
+async function grantCardBills(link, buttonEl) {
+  const flash = document.getElementById("flash");
+  if (window.top !== window.self) { fill(flash, framedNote()); flash.scrollIntoView({ block: "nearest", behavior: "smooth" }); return; }
+  await busy(buttonEl, "Signing in…", () => linkPlaid({ update: link, grant: true, where: flash }), { errorTarget: flash });
+}
+
 async function removeLink(link) {
   try {
     await api(`/v1/links/${encodeURIComponent(link.id)}`, { method: "DELETE" });
@@ -129,6 +163,7 @@ function institutionCard(g, view) {
   } else if (g.state.problem) {
     body.append(callout({ tone: "watch", title: syncProblem(g.state.problem), body: "Nothing is lost; the next sync picks up where this one stopped.", detail: providerDetail(g.state.problem) }));
   }
+  for (const l of g.links) { const panel = cardBillsPanel(l); if (panel) body.append(panel); }
   if (view.open.has(g.key)) body.append(detailsPanel(g));
   return h("section", { class: `card${act ? " problem" : ""}`, "aria-labelledby": id, dataset: { bank: g.key } }, head, body);
 }

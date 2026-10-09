@@ -412,6 +412,8 @@ dialog.drawer::backdrop { background: var(--scrim); }
 .inst-head h2 { overflow-wrap: anywhere; }
 .inst-body { margin: var(--s-sm) 0 0 48px; }
 .inst-body > .callout, .inst-body > .btn, .inst-body > .inst-details { margin-top: var(--s-sm); }
+.inst-body > .card-bills { margin-top: var(--s-sm); }
+.card-bills > * + * { margin-top: var(--s-xs); }
 .inst-details { padding: var(--s-sm) var(--s-md); border-radius: var(--r-control); background: var(--canvas); border: 1px solid var(--hairline); }
 .inst-details .kv { margin: 0; }
 .inst-details .help { margin-top: var(--s-sm); }

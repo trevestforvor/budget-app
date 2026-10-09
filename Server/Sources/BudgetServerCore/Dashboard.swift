@@ -24,6 +24,8 @@ struct DashboardSummary: Encodable {
         var syncIntervalHours: Double
         var timeZone: String
         var apiURL: String?
+        /// Card bills from Plaid Liabilities are on (the server setting).
+        var cardBills: Bool
     }
 
     var version: String
@@ -65,7 +67,7 @@ func addDashboardRoutes(_ router: Router<BasicRequestContext>, _ service: Budget
             modelBaseURL: await live.modelBaseURL?.absoluteString, decisionBaseURL: await live.decisionBaseURL?.absoluteString,
             modelName: await live.modelName, plaid: (try? await service.providers.plaid())?.environment.rawValue, teller: await service.providers.teller() != nil,
             jev: await live.openRouterKey != nil, linkingEnabled: service.sealer != nil, demoAllowed: config.allowDemo,
-            syncIntervalHours: await live.syncIntervalHours, timeZone: await live.timeZone.identifier, apiURL: await live.publicURL)
+            syncIntervalHours: await live.syncIntervalHours, timeZone: await live.timeZone.identifier, apiURL: await live.publicURL, cardBills: await live.cardBillsEnabled)
         let imports = try await service.store.imports().sorted { $0.createdAt > $1.createdAt }
         return try HTTP.json(DashboardSummary(
             version: BudgetServerVersion.current, startedAt: serverStartedAt, now: Date(), stats: await service.api.stats(),

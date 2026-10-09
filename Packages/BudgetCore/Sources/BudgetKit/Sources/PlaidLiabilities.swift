@@ -103,6 +103,12 @@ extension PlaidSource {
     /// The product name Plaid uses for card bills.
     public static let liabilitiesProduct = "liabilities"
 
+    /// The Item's credit cards in a snapshot (Plaid type "credit"; loans aren't card bills). Card bills are asked for
+    /// only when there's one: a depository-only Item would answer NO_LIABILITY_ACCOUNTS.
+    public static func cardAccountIDs(_ snapshot: SourceSnapshot) -> [String] {
+        snapshot.accounts.filter { $0.providerType == "credit" }.map(\.externalID)
+    }
+
     /// `/liabilities/get` for `accountIDs` (the Item's credit cards): each card's statement, by Plaid account id, with the
     /// response's `request_id`. Plaid's errors come back as `PlaidAPIError`, so callers branch on the code.
     public func liabilities(accountIDs: [String]) async throws -> (bills: [SourceCardBill], requestID: String?) {

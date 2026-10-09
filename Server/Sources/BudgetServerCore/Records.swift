@@ -39,11 +39,13 @@ public struct StoredLink: Codable, Hashable, Sendable {
     public var lastSync: Date?
     public var lastError: String?
     public var createdAt: Date
+    /// The last card-bill check (Plaid Liabilities) on this Item; nil until one ran.
+    public var cardBills: CardBillCheck? = nil
 
     /// What clients may see — never the token.
     public var summary: LinkSummary {
         LinkSummary(id: id, provider: provider, institution: institution, status: status, lastSync: lastSync, lastError: lastError, createdAt: createdAt,
-                    externalID: externalID)
+                    externalID: externalID, cardBills: cardBills)
     }
 }
 
@@ -59,6 +61,8 @@ public struct LinkSummary: Codable, Hashable, Sendable {
     /// The provider's own id for the connection (Plaid item_id, Teller enrollment id — Teller Connect needs it to
     /// reconnect). Not a credential.
     public var externalID: String?
+    /// Whether this Item gives card bills, as last checked; nil until checked (or for links that aren't Plaid's).
+    public var cardBills: CardBillCheck? = nil
 }
 
 /// One ingest (sync or file) — the unit of rollback.

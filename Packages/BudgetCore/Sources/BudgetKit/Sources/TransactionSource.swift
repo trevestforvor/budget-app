@@ -51,6 +51,9 @@ public struct SourceAccount: Hashable, Sendable {
     public var holdings: [SourceHolding]
     /// Last digits of the account number, when the provider gives them.
     public var mask: String? = nil
+    /// The provider's own account type, when it gives one (Plaid: "credit" for cards, "loan" for loans — both `.credit`
+    /// here). Card bills are asked for only on Items with a "credit" one.
+    public var providerType: String? = nil
 }
 
 public struct SourceSnapshot: Hashable, Sendable {

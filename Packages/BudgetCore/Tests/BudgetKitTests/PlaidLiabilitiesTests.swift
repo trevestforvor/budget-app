@@ -76,6 +76,21 @@ struct PlaidLiabilitiesTests {
         #expect(transport.requests.first?.url?.host == "sandbox.plaid.com")
     }
 
+    @Test("Only credit cards are asked about: not loans, not depository or investment accounts")
+    func cardAccounts() throws {
+        let json = #"""
+        {"accounts": [
+          {"account_id": "card", "balances": {"current": 100}, "name": "Gold Card", "type": "credit", "subtype": "credit card"},
+          {"account_id": "loan", "balances": {"current": 9000}, "name": "Car loan", "type": "loan", "subtype": "auto"},
+          {"account_id": "chk", "balances": {"current": 10}, "name": "Checking", "type": "depository", "subtype": "checking"},
+          {"account_id": "inv", "balances": {"current": 10}, "name": "Brokerage", "type": "investment"}
+        ]}
+        """#
+        let accounts = try PlaidSource.parseAccounts(try JSONValue.parse(Data(json.utf8)), institution: "Summit Card")
+        #expect(PlaidSource.cardAccountIDs(SourceSnapshot(source: .plaid, accounts: accounts, warnings: [])) == ["card"])
+        #expect(accounts.first { $0.externalID == "loan" }?.kind == .credit)
+    }
+
     @Test("Plaid's errors come back by code, with the request id", arguments: [
         ("ADDITIONAL_CONSENT_REQUIRED", "INVALID_INPUT", CardBillAccess.needsConsent),
         ("PRODUCTS_NOT_SUPPORTED", "ITEM_ERROR", .notSupported),
