@@ -56,6 +56,8 @@ struct ModelTestBody: Decodable {
         var removeKey: Bool?
         var model: String?
         var zeroRetention: Bool?
+        /// A chat draft on OpenRouter: Jev's OpenRouter key instead of a typed or saved one.
+        var useOpenRouterKey: Bool?
         var description: String { "Draft(\(id ?? "new"), \(kind.rawValue))" }
     }
     var chat: [String]?
@@ -204,24 +206,27 @@ func addDashboardRoutes(_ router: Router<BasicRequestContext>, _ service: Budget
         return try HTTP.json(await service.settings.modelList())
     }
 
-    /// The model names a chat server lists (`GET /v1/models`), for the Model field's list: `{id?, address?, apiKey?}`.
-    /// `id` is a chat model's. The address is the typed one, else the model's; the key is the typed one, else the
-    /// model's only on its own server. `{models?: [String]}`, left out when the server doesn't say.
+    /// The model names a chat server lists (`GET /v1/models`), for the Model field's list: `{id?, address?, apiKey?,
+    /// useOpenRouterKey?}`. `id` is a chat model's. The address is the typed one, else the model's; the key is the typed
+    /// one, else Jev's OpenRouter key when asked for and the address is OpenRouter's, else the model's only on its own
+    /// server. `{models?: [String]}`, only those that take tools when the server says, left out when it doesn't say.
     router.post("/dash/models/names") { request, _ in
-        struct Body: Decodable { var id: String?, address: String?, apiKey: String? }
+        struct Body: Decodable { var id: String?, address: String?, apiKey: String?, useOpenRouterKey: Bool? }
         struct Names: Encodable { var models: [String]? }
         let body = (try? await HTTP.body(Body.self, request, limit: 64 * 1024)) ?? Body()
         var entry: ModelConnection?
         if let id = body.id { entry = await service.settings.connection(.chat, id: id) }
         let typed = body.address?.trimmingCharacters(in: .whitespacesAndNewlines) ?? ""
         guard let address = typed.isEmpty ? entry?.address : try? ModelCheck.address(typed) else { return try HTTP.json(Names(models: nil)) }
-        let key = ModelCheck.key(typed: body.apiKey, removeKey: false, for: address, entry: entry)
+        let key = ModelCheck.openRouterKey(await service.settings.openRouterKey, asked: body.useOpenRouterKey, typed: body.apiKey, for: address)
+            ?? ModelCheck.key(typed: body.apiKey, removeKey: false, for: address, entry: entry)
         return try HTTP.json(Names(models: await ModelCheck.listModels(at: address, key: key)))
     }
 
     /// The Models card's Test. `{chat?: [id], decision?: [id], jev?: Bool, draft?: {id?, kind: chat|decision|jev, address?,
-    /// apiKey?, removeKey?, model?, zeroRetention?}}`; `{}` tests everything listed, six at a time. A draft's blank key
-    /// is its saved model's only on that model's own server. Sends a one-word question and a made-up coffee charge,
+    /// apiKey?, removeKey?, model?, zeroRetention?, useOpenRouterKey?}}`; `{}` tests everything listed, six at a time. A
+    /// draft's blank key is its saved model's only on that model's own server; Jev's with `useOpenRouterKey` on OpenRouter.
+    /// Chat models on OpenRouter are routed as Ask's are, with Jev's "only providers that keep nothing". Sends a one-word question and a made-up coffee charge,
     /// nothing from the ledger. `{chat: {id: Outcome}, decision: {id: Outcome}, jev?, draft?, models?}`.
     router.post("/dash/models/test") { request, _ in
         let body = try await HTTP.body(ModelTestBody.self, request, limit: 64 * 1024)
@@ -235,6 +240,7 @@ func addDashboardRoutes(_ router: Router<BasicRequestContext>, _ service: Budget
         let chatIDs = once(body.chat ?? (everything ? list.chat.map(\.id) : []))
         let decisionIDs = once(body.decision ?? (everything ? list.decision.map(\.id) + (list.chatServer.address == nil ? [] : ["chat"]) : []))
         let fallbackName = await settings.modelName
+        let jevKey = await settings.openRouterKey, zeroRetention = await settings.openRouterZeroRetention
 
         var work: [@Sendable () async -> (ModelCheck.Outcome, [String]?)] = []
         for id in chatIDs {
@@ -243,7 +249,7 @@ func addDashboardRoutes(_ router: Router<BasicRequestContext>, _ service: Budget
                 guard let entry else { return (ModelCheck.Outcome(ok: false, detail: "No such model."), nil) }
                 if id == "off" { return (ModelCheck.Outcome(ok: false, off: true, detail: "Off: Ask gives simple built-in answers."), nil) }
                 guard let address = entry.address else { return (ModelCheck.Outcome(ok: false, detail: "The Olares app doesn't set its address now."), nil) }
-                return (await ModelCheck.chat(base: address, key: entry.key, model: entry.model ?? fallbackName), nil)
+                return (await ModelCheck.chat(base: address, key: entry.key, model: entry.model ?? fallbackName, zeroRetention: zeroRetention), nil)
             }
         }
         for id in decisionIDs {
@@ -257,7 +263,6 @@ func addDashboardRoutes(_ router: Router<BasicRequestContext>, _ service: Budget
                 return (await ModelCheck.decision(base: address, key: entry.key), nil)
             }
         }
-        let jevKey = await settings.openRouterKey, zeroRetention = await settings.openRouterZeroRetention
         let testJev = body.jev ?? (everything && jevKey != nil)
         if testJev { work.append { (await ModelCheck.jev(key: jevKey, zeroRetention: zeroRetention), nil) } }
         if let draft = body.draft {
@@ -283,7 +288,8 @@ func addDashboardRoutes(_ router: Router<BasicRequestContext>, _ service: Budget
                     case .success(nil): return (ModelCheck.Outcome(ok: false, detail: "Add the server's address."), nil)
                     case let .success(url?): base = url
                     }
-                    let key = ModelCheck.key(typed: draft.apiKey, removeKey: draft.removeKey == true, for: base, entry: entry)
+                    let jev = job == .chat ? ModelCheck.openRouterKey(jevKey, asked: draft.useOpenRouterKey, typed: draft.apiKey, for: base) : nil
+                    let key = jev ?? ModelCheck.key(typed: draft.apiKey, removeKey: draft.removeKey == true, for: base, entry: entry)
                     // The saved key stayed behind because this is another server: say so when that's why it was turned away.
                     func withKeyNote(_ outcome: ModelCheck.Outcome) -> ModelCheck.Outcome {
                         guard key == nil, draft.removeKey != true, entry?.key != nil, outcome.detail.hasPrefix("It wants an API key") else { return outcome }
@@ -299,7 +305,7 @@ func addDashboardRoutes(_ router: Router<BasicRequestContext>, _ service: Budget
                         let detail = "Add the model's name, as the server knows it." + (offered.map { $0.isEmpty ? "" : " It offers: \($0.prefix(12).joined(separator: ", "))." } ?? "")
                         return (ModelCheck.Outcome(ok: false, address: base.absoluteString, detail: detail), offered)
                     }
-                    let outcome = withKeyNote(await ModelCheck.chat(base: base, key: key, model: model))
+                    let outcome = withKeyNote(await ModelCheck.chat(base: base, key: key, model: model, zeroRetention: zeroRetention))
                     return (outcome, await names)
                 }
             }

@@ -316,6 +316,21 @@ struct ChatDialectTests {
                 == #"{"chat_template_kwargs":{"enable_thinking":false},"max_tokens":1200,"messages":[{"content":"s","role":"system"},{"content":"hi","role":"user"}],"model":"qwen3.8-27b","temperature":0}"#)
     }
 
+    @Test("On OpenRouter, zero retention adds Jev's provider routing to every chat request; nowhere else, and not when it's off")
+    func openRouterZeroRetention() {
+        let request = ChatRequest(messages: [.user("hi")])
+        func provider(_ address: String, _ zeroRetention: Bool) -> JSONValue? {
+            guard case let .object(o) = OpenAIChatModel(baseURL: URL(string: address)!, model: "m", zeroRetention: zeroRetention).body(request) else { return nil }
+            return o["provider"]
+        }
+        #expect(provider("https://openrouter.ai/api/v1", true) == .object(["zdr": .bool(true), "data_collection": .string("deny")]))
+        #expect(provider("https://openrouter.ai/api/v1", false) == nil)
+        #expect(provider("https://api.openai.com", true) == nil)
+        #expect(provider("https://openrouter.ai.evil.example", true) == nil)
+        #expect(OpenAIChatModel.isOpenRouter(URL(string: "https://eu.openrouter.ai/api")!))
+        #expect(!OpenAIChatModel.isOpenRouter(URL(string: "https://notopenrouter.ai")!))
+    }
+
     @Test("Hosted APIs don't get the template switch; OpenAI's reasoning models get room to think and no temperature, its others keep theirs")
     func bodies() {
         let request = ChatRequest(messages: [.user("hi")], tools: .array([]))

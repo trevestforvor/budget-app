@@ -61,7 +61,10 @@ public enum BudgetServerApp {
         if let key = snapshot.openRouterKey {
             routing.jev = SystemOneDecisionModel(transport: .openRouter(apiKey: key, zeroDataRetention: snapshot.zeroRetention))
         }
-        let chat = snapshot.chatURL.map { OpenAIChatModel(baseURL: $0, model: snapshot.chatName, apiKey: snapshot.chatKey) as any ChatModel }
+        // The same "only providers that keep nothing" as Jev, when the chat model is on OpenRouter too.
+        let chat = snapshot.chatURL.map {
+            OpenAIChatModel(baseURL: $0, model: snapshot.chatName, apiKey: snapshot.chatKey, zeroRetention: snapshot.zeroRetention) as any ChatModel
+        }
         return (chat, routing)
     }
 

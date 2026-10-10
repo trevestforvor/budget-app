@@ -9,8 +9,8 @@ import { plaidForm, tellerForm, removeKeysButton, providerStates } from "./provi
 
 /// Plain names for the server's settings (the server's own label and help are the fallback).
 const LABELS = {
-  openRouterKey: ["OpenRouter key", "Jev runs in the cloud through OpenRouter, on your own account. The key stays on this server."],
-  openRouterZeroRetention: ["Only providers that keep nothing", "Asks OpenRouter to route only to providers with zero data retention."],
+  openRouterKey: ["OpenRouter key", "Jev runs in the cloud through OpenRouter, on your own account. The key stays on this server. A chat model on OpenRouter can use it too."],
+  openRouterZeroRetention: ["Only providers that keep nothing", "Asks OpenRouter to route only to providers with zero data retention: for Jev, and for a chat model on OpenRouter."],
   syncIntervalHours: ["Sync linked banks", "How often the server pulls new transactions from every linked bank."],
   timeZone: ["Time zone", "Where months begin and end."],
   publicURL: ["Server URL", "What the phone connects to. The Olares app fills this in; change it only if you reach the server another way."],
@@ -107,6 +107,11 @@ function originOf(address) {
 /// The host without its port: what the server names a categorizing server after.
 function hostnameOf(address) {
   try { return new URL(address).hostname; } catch { return null; }
+}
+const OPENROUTER = "https://openrouter.ai/api/v1";
+/// openrouter.ai over https: the one place a chat model can take Jev's OpenRouter key (the server checks this too).
+function isOpenRouter(address) {
+  try { const u = new URL(address); return u.protocol === "https:" && (u.hostname === "openrouter.ai" || u.hostname.endsWith(".openrouter.ai")); } catch { return false; }
 }
 
 /// The categorization policy: how sure the model must be, Ask Jev when unsure, and what comes to you anyway. Where it runs
@@ -258,7 +263,7 @@ function modelsCard({ picks, policy, onChange, otherChanges, rerender, current }
   const chatTitle = "models-chat-title", catTitle = "models-categorizing-title";
   const chatGroup = h("div", { class: "rows model-list", role: "radiogroup", "aria-labelledby": chatTitle });
   const catGroup = h("div", { class: "rows model-list", role: "radiogroup", "aria-labelledby": catTitle });
-  const chatEmpty = h("p", { class: "help job-line" }, "Any OpenAI-compatible server: your switchboard, llama.cpp on the Olares, or a cloud API.");
+  const chatEmpty = h("p", { class: "help job-line" }, "Any OpenAI-compatible server: your switchboard, llama.cpp on the Olares, or a cloud API like OpenRouter.");
   const caption = h("span", { class: "t-caption muted grow", role: "status" }, TEST_LINE);
   const problem = h("div", { class: "model-problem" });
   const testButton = button("Test", { compact: true, onclick: () => test() });
@@ -472,9 +477,24 @@ function modelsCard({ picks, policy, onChange, otherChanges, rerender, current }
       ? h("span", { class: "help", id: fid("key-unreadable") }, "The saved key can't be read: the server's encryption key changed. Type the key again.") : null;
     key.setAttribute("aria-describedby", [keyMoved.id, keyUnreadable && keyUnreadable.id].filter(Boolean).join(" "));
     const removeKeyButton = savedKey ? button("Remove the key", { kind: "quiet", onclick: () => holdRemove(true) }) : null;
+    // On OpenRouter a chat model can save a copy of Jev's key instead of a typed one: on by default unless it has its own.
+    const where = () => address.value.trim() || (e && e.address) || "";
+    const useJev = chat && l.jev.hasKey ? h("input", { type: "checkbox", class: "switch", id: fid("use-jev"), checked: !savedKey, disabled: !sealing }) : null;
+    const useJevRow = useJev ? h("label", { class: "check", for: useJev.id }, useJev,
+      h("span", {}, "Use Jev's OpenRouter key", h("span", { class: "help" }, "Saves a copy for this model. Changing Jev's key later leaves this one as it is."))) : null;
+    const usingJev = () => !!useJev && useJev.checked && !removeKey && isOpenRouter(where());
+    const toOpenRouter = chat ? button("OpenRouter", { kind: "quiet", "aria-label": "Use OpenRouter's address", onclick: () => {
+      address.value = OPENROUTER;
+      if (useJev && !removeKey) useJev.checked = true;
+      sync();
+      loadNames();
+      model.focus();
+    } }) : null;
+    // What leaves for OpenRouter follows Jev's "Only providers that keep nothing".
+    const routing = h("span", { class: "help" });
     const holdRemove = (on) => {
       removeKey = on;
-      key.disabled = on || !sealing;
+      if (on && useJev) useJev.checked = false;
       if (on) key.value = "";
       removeKeyButton.hidden = on;
       const keep = on ? button("Keep it", { kind: "quiet", onclick: () => holdRemove(false) }) : null;
@@ -485,9 +505,19 @@ function modelsCard({ picks, policy, onChange, otherChanges, rerender, current }
     // The saved key only ever goes to its own server: a new one on another server needs its own key, or none.
     const moved = () => !!e && !!e.address && !!address.value.trim() && !!originOf(address.value.trim()) && originOf(address.value.trim()) !== originOf(e.address);
     const sync = () => {
-      const movedNote = !removeKey && moved() && savedKey ? `The saved key is for ${hostOf(e.address)}: type this server's key, or remove it.` : "";
+      const openRouter = isOpenRouter(where());
+      if (toOpenRouter) toOpenRouter.hidden = openRouter;
+      if (useJevRow) useJevRow.hidden = !openRouter;
+      key.disabled = removeKey || !sealing || usingJev();
+      if (removeKeyButton) removeKeyButton.hidden = removeKey || usingJev();
+      const routingNote = !chat || !openRouter ? ""
+        : l.jev.zeroRetention ? "OpenRouter sends it only to providers that keep nothing, as Jev's requests are."
+        : "OpenRouter may send it to providers that keep what they're sent. Jev → “Only providers that keep nothing” changes that for both.";
+      if (routing.textContent !== routingNote) routing.textContent = routingNote;
+      const movedNote = !removeKey && !usingJev() && moved() && savedKey ? `The saved key is for ${hostOf(e.address)}: type this server's key, or remove it.` : "";
       if (keyMoved.textContent !== movedNote) keyMoved.textContent = movedNote;
       key.placeholder = removeKey ? "None"
+        : usingJev() ? "Jev's OpenRouter key"
         : movedNote ? "Type this server's key"
         : inherits("key") ? "From the Olares app"
         : e && e.hasKey ? "Saved — type a new one to replace it"
@@ -502,10 +532,10 @@ function modelsCard({ picks, policy, onChange, otherChanges, rerender, current }
     fill(body, flash,
       h("div", { class: "form" },
         field("Name", name, { help: chat ? "Leave it blank to use the model's name." : "Leave it blank to use the server's host name." }),
-        field("Address", address, { help: chat ? "Just the address: Budget adds /v1/… itself." : "The server with /v1/systemone, like Clef on your Olares." }),
-        field("API key", key, { extra: removeKeyButton, more: [keyNote, keyMoved, !sealing ? sealingHelp() : keyUnreadable] }),
+        field("Address", address, { extra: toOpenRouter, help: chat ? "Just the address: Budget adds /v1/… itself." : "The server with /v1/systemone, like Clef on your Olares." }),
+        field("API key", key, { extra: removeKeyButton, more: [useJevRow, keyNote, keyMoved, !sealing ? sealingHelp() : keyUnreadable] }),
         chat ? field("Model", model) : null),
-      chat ? h("p", { class: "help" }, "Ask and the morning summary send this server what they read from your ledger.") : null,
+      chat ? h("p", { class: "help" }, "Ask and the morning summary send this server what they read from your ledger. ", routing) : null,
       outcome);
     // Model: type a name, or pick one the server lists (loaded now, and again a moment after the address or key changes).
     const names = chat ? combobox(model, "model names") : null;
@@ -518,13 +548,15 @@ function modelsCard({ picks, policy, onChange, otherChanges, rerender, current }
         if (!/^https?:\/\/[^\s/]+/i.test(typed)) { names.setOptions(null); return; }
         ask.address = typed;
       } else if (!e) { names.setOptions(null); return; }
-      if (key.value.trim() && !removeKey) ask.apiKey = key.value.trim();
+      if (usingJev()) ask.useOpenRouterKey = true;
+      else if (key.value.trim() && !removeKey) ask.apiKey = key.value.trim();
       try {
         const r = await api("/dash/models/names", { method: "POST", timeout: 20000, body: ask });
         if (ticket === asked) names.setOptions(r && r.models);
       } catch { if (ticket === asked) names.setOptions(null); }
     };
     for (const el of [address, key]) el.addEventListener("input", () => { sync(); clearTimeout(timer); timer = setTimeout(loadNames, 700); });
+    if (useJev) useJev.addEventListener("change", () => { if (useJev.checked) key.value = ""; sync(); loadNames(); });
     if (model) model.addEventListener("input", sync);
     sync();
     loadNames();
@@ -537,6 +569,7 @@ function modelsCard({ picks, policy, onChange, otherChanges, rerender, current }
       if (!forTest && (name.value.trim() || e)) d.name = name.value.trim();
       if (address.value.trim()) d.address = address.value.trim();
       if (removeKey) d.removeKey = true;
+      else if (usingJev()) d.useOpenRouterKey = true;
       else if (key.value.trim()) d.apiKey = key.value.trim();
       if (chat && model.value.trim()) d.model = model.value.trim();
       return d;
@@ -550,7 +583,7 @@ function modelsCard({ picks, policy, onChange, otherChanges, rerender, current }
     const save = (el) => busy(el, "Saving…", async () => {
       fill(flash);
       // The server refuses this too; saying it here first saves the round trip.
-      const problem = check() || (moved() && savedKey && !removeKey && !key.value.trim()
+      const problem = check() || (moved() && savedKey && !removeKey && !usingJev() && !key.value.trim()
         ? "The address is on another server now: type its API key, or remove the key." : null);
       if (problem) throw new Error(problem);
       const r = await api("/dash/models/save", { method: "POST", body: draft(false) });

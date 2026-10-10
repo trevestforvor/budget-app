@@ -122,6 +122,8 @@ public struct ModelDraft: Decodable, Sendable, CustomStringConvertible {
     public var apiKey: String?
     public var removeKey: Bool?
     public var model: String?
+    /// A chat model on OpenRouter: save a copy of Jev's OpenRouter key as its key, instead of a typed one.
+    public var useOpenRouterKey: Bool?
 
     public var description: String { "ModelDraft(\(id ?? "new"), \(kind))" }
 }
@@ -262,10 +264,10 @@ public actor ServerSettings {
 
     static let definitions: [Definition] = [
         .init(key: "openRouterKey", group: "Jev", label: "OpenRouter API key", kind: .secret, environmentVariable: "OPENROUTER_API_KEY",
-              help: "Enables Jev as a decision provider. Only merchant names and category ids are sent.",
+              help: "Enables Jev as a decision provider. Only merchant names and category ids are sent. A chat model on OpenRouter can save a copy of it.",
               configValue: { $0.openRouterKey }, builtInDefault: nil),
         .init(key: "openRouterZeroRetention", group: "Jev", label: "Zero data retention only", kind: .bool, environmentVariable: "OPENROUTER_ZDR",
-              help: "Ask OpenRouter to route only to providers that keep nothing.",
+              help: "Ask OpenRouter to route only to providers that keep nothing: Jev's requests, and a chat model's on OpenRouter.",
               configValue: { $0.openRouterZeroRetention ? "true" : "false" }, builtInDefault: "false"),
         .init(key: "syncIntervalHours", group: "Sync", label: "Sync every (hours)", kind: .number, environmentVariable: "BUDGET_SYNC_INTERVAL_HOURS",
               help: "How often linked accounts are pulled. At least 0.25.", configValue: { String($0.syncIntervalHours) }, builtInDefault: "6.0"),
@@ -562,6 +564,17 @@ public actor ServerSettings {
 
             if let key = typed(draft.apiKey) {
                 guard key.utf8.count <= 8 * 1024 else { throw BudgetAPIError.rejected("That key is too long.") }
+                entry.sealedKey = try seal(key)
+                inherit.removeAll { $0 == "key" }
+            } else if draft.useOpenRouterKey == true {
+                // A copy, sealed again: the rollback mirror carries it like any typed key, and a later change to Jev's key
+                // leaves this one as it is. It only ever goes to OpenRouter.
+                var probe = entry
+                probe.inherit = inherit
+                guard job == .chat, let address = resolve(probe).address, ModelCheck.isOpenRouter(address) else {
+                    throw BudgetAPIError.rejected("Jev's OpenRouter key only goes to OpenRouter: use the address https://openrouter.ai/api/v1.")
+                }
+                guard let key = openRouterKey else { throw BudgetAPIError.rejected("No OpenRouter key is saved. Add one on Jev first.") }
                 entry.sealedKey = try seal(key)
                 inherit.removeAll { $0 == "key" }
             } else if draft.removeKey == true {

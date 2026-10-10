@@ -142,13 +142,13 @@ enum ModelCheck {
 
     // MARK: Jobs
 
-    /// Ask's check: a one-word question to `model` on the chat server at `base`. When it fails and the server lists its
-    /// models without this one, the detail says which names it knows.
-    static func chat(base: URL, key: String?, model: String) async -> Outcome {
+    /// Ask's check: a one-word question to `model` on the chat server at `base`, routed as Ask's are (`zeroRetention`, on
+    /// OpenRouter). When it fails and the server lists its models without this one, the detail says which names it knows.
+    static func chat(base: URL, key: String?, model: String, zeroRetention: Bool = false) async -> Outcome {
         let started = Date()
         do {
             let response = try await within(timeout) {
-                try await OpenAIChatModel(baseURL: base, model: model, apiKey: key)
+                try await OpenAIChatModel(baseURL: base, model: model, apiKey: key, zeroRetention: zeroRetention)
                     .complete(ChatRequest(messages: [.system("Reply with one word."), .user("Say OK.")], maxTokens: 32))
             }
             let said = (response.message.content ?? "").trimmingCharacters(in: .whitespacesAndNewlines)
@@ -160,7 +160,7 @@ enum ModelCheck {
             var outcome = Outcome(ok: false, address: base.absoluteString, model: model, milliseconds: ms(since: started),
                                   detail: explain(error, path: OpenAIChatModel(baseURL: base, model: model).endpoint.path, key: key, decision: false))
             // The server answered but doesn't know the name: say which names it does know.
-            if let models = await listModels(at: base, key: key), !models.isEmpty, !models.contains(model) {
+            if let models = await listModels(at: base, key: key, toolsOnly: false), !models.isEmpty, !models.contains(model) {
                 outcome.detail = "The server answered, but has no model named “\(model)”. It offers: \(models.prefix(12).joined(separator: ", "))."
             }
             return outcome
@@ -197,15 +197,33 @@ enum ModelCheck {
     }
 
     /// The model names a server lists at `GET /v1/models` (under its API root, as chat uses), or nil when it doesn't answer that.
-    static func listModels(at base: URL, key: String?) async -> [String]? {
+    /// `toolsOnly`: see `modelNames`.
+    static func listModels(at base: URL, key: String?, toolsOnly: Bool = true) async -> [String]? {
         var request = URLRequest(url: OpenAIChatModel.apiRoot(base).appending(path: "models"))
         request.timeoutInterval = 15
         if let key { request.setValue("Bearer \(key)", forHTTPHeaderField: "Authorization") }
         guard let (data, response) = try? await URLSession.shared.data(for: request),
-              (response as? HTTPURLResponse)?.statusCode == 200,
-              let json = try? JSONSerialization.jsonObject(with: data) as? [String: Any],
+              (response as? HTTPURLResponse)?.statusCode == 200 else { return nil }
+        return modelNames(data, toolsOnly: toolsOnly)
+    }
+
+    /// The names in a `/v1/models` answer, sorted. Ask calls tools, so with `toolsOnly` a model the server says takes no
+    /// tools (OpenRouter lists `supported_parameters` for each) is left out; a server that doesn't say keeps them all.
+    static func modelNames(_ data: Data, toolsOnly: Bool) -> [String]? {
+        guard let json = try? JSONSerialization.jsonObject(with: data) as? [String: Any],
               let entries = json["data"] as? [[String: Any]] else { return nil }
-        return entries.compactMap { $0["id"] as? String }.sorted()
+        return entries.filter { !toolsOnly || (($0["supported_parameters"] as? [String])?.contains("tools") ?? true) }
+            .compactMap { $0["id"] as? String }.sorted()
+    }
+
+    /// Where Jev's OpenRouter key may go besides Jev: a chat model at https on openrouter.ai.
+    static func isOpenRouter(_ url: URL) -> Bool { url.scheme?.lowercased() == "https" && OpenAIChatModel.isOpenRouter(url) }
+
+    /// Jev's OpenRouter key (`jevKey`) for a chat draft that asks for it with no key typed, at OpenRouter's address. Nil
+    /// otherwise, so it never goes anywhere else.
+    static func openRouterKey(_ jevKey: String?, asked: Bool?, typed: String?, for address: URL) -> String? {
+        guard asked == true, (typed ?? "").trimmingCharacters(in: .whitespacesAndNewlines).isEmpty, isOpenRouter(address) else { return nil }
+        return jevKey
     }
 
     // MARK: Plumbing
@@ -258,6 +276,8 @@ enum ModelCheck {
             switch status {
             case 401, 403:
                 return key == nil ? "It wants an API key (\(status)). Add one in its Edit." : "It turned the API key down (\(status)). Check the key."
+            case 404 where body.localizedCaseInsensitiveContains("data policy"):
+                return "OpenRouter has no provider for this model that keeps nothing. Pick another model, or turn off “Only providers that keep nothing” on Jev."
             case 404 where decision:
                 return "This server has no /v1/systemone (404). Categorizing needs the decision server (the Clef one on your Olares): add it under Categorizing → Add a categorizing server, and pick it."
             case 404:

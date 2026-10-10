@@ -350,7 +350,7 @@ struct ModelSettingsTests {
             try await client.execute(uri: "/v1/status", method: .get) { response in
                 let status = try RemoteBudgetAPI.decoder.decode(ServerStatus.self, from: Data(response.body.readableBytesView))
                 #expect(status.roles.first { $0.role == .chat }?.model == "anthropic/claude")
-                #expect(status.version == "0.5.1")
+                #expect(status.version == "0.5.2")
             }
             try await client.execute(uri: "/dash/models/use", method: .post, headers: ModelFixtures.write, body: TestServer.body(#"{"chat":"nope"}"#)) { response in
                 #expect(response.status == .unprocessableContent)
@@ -498,6 +498,62 @@ struct ModelSettingsTests {
                 #expect(entry?["hasKey"] as? Bool == false && entry?["address"] as? String == other.url.absoluteString)
             }
         }
+    }
+
+    @Test("A chat model on OpenRouter can save a copy of Jev's key: only at OpenRouter's https address, only with a key saved, never sent elsewhere")
+    func jevKeyForChat() async throws {
+        let (dash, service) = try await ModelFixtures.dashboard()
+        let settings = service.settings
+        let openRouter = ModelDraft(kind: "chat", address: "https://openrouter.ai/api/v1", model: "anthropic/claude-sonnet-4.5", useOpenRouterKey: true)
+        await #expect(throws: BudgetAPIError.rejected("No OpenRouter key is saved. Add one on Jev first.")) { try await settings.saveModel(openRouter, policy: .off) }
+        try await settings.update(["openRouterKey": "sk-or-jev"])
+        for address in ["https://api.openai.com", "http://openrouter.ai/api/v1", "https://openrouter.ai.evil.example"] {
+            var elsewhere = openRouter
+            elsewhere.address = address
+            await #expect(throws: BudgetAPIError.rejected("Jev's OpenRouter key only goes to OpenRouter: use the address https://openrouter.ai/api/v1."), "\(address)") {
+                try await settings.saveModel(elsewhere, policy: .off)
+            }
+        }
+        await #expect(throws: BudgetAPIError.rejected("Jev's OpenRouter key only goes to OpenRouter: use the address https://openrouter.ai/api/v1.")) {
+            try await settings.saveModel(ModelDraft(kind: "decision", address: "https://openrouter.ai/api/v1", useOpenRouterKey: true), policy: .off)
+        }
+
+        let (id, picked) = try await settings.saveModel(openRouter, policy: .off)
+        #expect(picked)
+        #expect(await settings.connection(.chat, id: id)?.key == "sk-or-jev")
+        #expect(await settings.modelSnapshot().chatKey == "sk-or-jev")
+        // A copy: a new key on Jev leaves it as it was, and the rollback mirror carries it sealed like a typed one.
+        try await settings.update(["openRouterKey": "sk-or-new"])
+        #expect(await settings.connection(.chat, id: id)?.key == "sk-or-jev")
+        let mirrored = try #require(try await service.store.serverSettings()?.values["modelAPIKey"])
+        #expect(mirrored != "sk-or-jev" && (try? ModelFixtures.sealer.open(mirrored)) == "sk-or-jev")
+        // Editing it with the switch on takes Jev's key as it is now.
+        _ = try await settings.saveModel(ModelDraft(id: id, kind: "chat", useOpenRouterKey: true), policy: .off)
+        #expect(await settings.connection(.chat, id: id)?.key == "sk-or-new")
+
+        // Names and Test at any other address go without it.
+        try await FakeModelServer.with(1) { servers in
+            let other = servers[0]
+            try await dash.test(.router) { client in
+                for (uri, json) in [("/dash/models/names", #"{"address":"\#(other.url.absoluteString)","useOpenRouterKey":true}"#),
+                                    ("/dash/models/test", #"{"draft":{"kind":"chat","address":"\#(other.url.absoluteString)","model":"smart","useOpenRouterKey":true}}"#)] {
+                    try await client.execute(uri: uri, method: .post, headers: ModelFixtures.write, body: TestServer.body(json)) { #expect($0.status == .ok) }
+                }
+            }
+            #expect(other.server.authorizations("/v1/models").allSatisfy { $0 == nil })
+            #expect(other.server.authorizations("/v1/chat/completions") == [nil])
+        }
+    }
+
+    @Test("The Model list keeps the models that take tools when the server says which do; a test's \"no such model\" sees them all")
+    func toolNames() {
+        let data = Data(#"{"data":[{"id":"b/tools","supported_parameters":["tools","temperature"]},{"id":"a/plain","supported_parameters":["temperature"]},{"id":"c/unsaid"}]}"#.utf8)
+        #expect(ModelCheck.modelNames(data, toolsOnly: true) == ["b/tools", "c/unsaid"])
+        #expect(ModelCheck.modelNames(data, toolsOnly: false) == ["a/plain", "b/tools", "c/unsaid"])
+        #expect(ModelCheck.modelNames(Data("nope".utf8), toolsOnly: true) == nil)
+        let refused = ModelCheck.explain(DecisionError.http(404, #"{"error":{"message":"No endpoints found matching your data policy (Zero data retention)","code":404}}"#),
+                                         path: "/api/v1/chat/completions", key: "k", decision: false)
+        #expect(refused.hasPrefix("OpenRouter has no provider for this model that keeps nothing."))
     }
 
     @Test("Categorizing on the chat model's server sends DECISION_API_KEY only where it's meant to go: the Olares app's chat server, with no decision server of its own")

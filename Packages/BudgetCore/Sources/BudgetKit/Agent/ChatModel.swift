@@ -155,19 +155,28 @@ public struct OpenAIChatModel: ChatModel {
     public let baseURL: URL
     public let model: String
     public let dialect: ChatDialect
+    /// On OpenRouter, route only to providers that keep nothing (Jev's `zdr` and `data_collection: deny`). Ignored elsewhere.
+    public let zeroRetention: Bool
     private let apiKey: String?
     private let session: URLSession
 
     /// `dialect` defaults to what the address says (`ChatDialect.detect`).
-    public init(baseURL: URL, model: String, apiKey: String? = nil, dialect: ChatDialect? = nil, session: URLSession = .shared) {
+    public init(baseURL: URL, model: String, apiKey: String? = nil, dialect: ChatDialect? = nil, zeroRetention: Bool = false, session: URLSession = .shared) {
         self.baseURL = baseURL
         self.model = model
         self.apiKey = apiKey
         self.dialect = dialect ?? .detect(baseURL)
+        self.zeroRetention = zeroRetention
         self.session = session
     }
 
     public var label: String { model }
+
+    /// openrouter.ai or a subdomain of it.
+    public static func isOpenRouter(_ url: URL) -> Bool {
+        guard let host = url.host?.lowercased() else { return false }
+        return host == "openrouter.ai" || host.hasSuffix(".openrouter.ai")
+    }
 
     /// The API root an address stands for: "https://x" means https://x/v1. An address that already ends in its version
     /// ("…/v1", Gemini's "…/v1beta/openai") is kept, and "/chat/completions" at the end is dropped first. A bare "…/openai" isn't a root: Groq's and
@@ -212,6 +221,9 @@ public struct OpenAIChatModel: ChatModel {
             o["reasoning_effort"] = .string(refused.contains(.reasoningMinimal) ? "low" : refused.contains(.reasoningNone) ? "minimal" : "none")
         }
         if let tools = request.tools { o["tools"] = tools }
+        if zeroRetention, Self.isOpenRouter(baseURL) {
+            o["provider"] = .object(["zdr": .bool(true), "data_collection": .string("deny")])
+        }
         return .object(o)
     }
 
