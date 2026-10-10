@@ -4,24 +4,10 @@ import Foundation
 import FoundationNetworking
 #endif
 
-/// The Models section's Test: tries each job's model the way the job uses it — Ask's chat completion with a one-word
-/// question, categorizing's `/v1/systemone` (or Jev) with a made-up coffee charge — and lists the models the chat server
-/// offers. Nothing from the ledger is sent. Each check gives up after `timeout` seconds.
+/// The Models card's Test: tries a model the way its job uses it — Ask's chat completion with a one-word question,
+/// categorizing's `/v1/systemone` (or Jev) with a made-up coffee charge — and lists the models a chat server offers.
+/// Nothing from the ledger is sent. Each check gives up after `timeout` seconds.
 enum ModelCheck {
-    /// Where categorizing runs, as the Models section offers it.
-    enum Categorizing: String, Decodable, Sendable {
-        /// Nothing files transactions: everything waits for the person.
-        case off
-        /// `/v1/systemone` on the chat model's server.
-        case chat
-        /// `/v1/systemone` on a server of its own.
-        case own
-        /// Jev, in the cloud through OpenRouter.
-        case jev
-        /// Laya on the Olares: not tested here.
-        case laya
-    }
-
     struct Outcome: Encodable, Sendable {
         var ok: Bool
         /// Nothing set up to test.
@@ -33,25 +19,9 @@ enum ModelCheck {
         var detail: String
     }
 
-    struct Report: Encodable, Sendable {
-        var chat: Outcome
-        var categorize: Outcome
-        /// The models the chat server lists (`GET /v1/models`); nil when it doesn't say.
-        var models: [String]?
-    }
-
-    struct Setup: Sendable {
-        var chat: URL?
-        var chatKey: String?
-        var model: String
-        var categorizing: Categorizing
-        var decision: URL?
-        var decisionKey: String?
-        var openRouterKey: String?
-        var zeroRetention: Bool
-    }
-
     static let timeout: Double = 45
+    /// How many checks run at once when everything is tested.
+    static let width = 6
 
     /// "https://x/v1/chat/completions", "https://x/v1/" and "https://x" are all the server at https://x: each job adds
     /// its own path.
@@ -66,26 +36,115 @@ enum ModelCheck {
         return URL(string: text) ?? url
     }
 
-    static func run(_ setup: Setup) async -> Report {
-        let chatBase = setup.chat.map(base)
-        async let listed = chatBase.asyncMap { await listModels(at: $0, key: setup.chatKey) }
-        async let chat = chatOutcome(chatBase, key: setup.chatKey, model: setup.model)
-        async let categorize = categorizeOutcome(setup, chatBase: chatBase)
-        let models = await listed ?? nil
-        var chatResult = await chat
-        // The server answered but doesn't know the name: say which names it does know.
-        if !chatResult.ok, !chatResult.off, let models, !models.isEmpty, !models.contains(setup.model) {
-            chatResult.detail = "The server answered, but has no model named “\(setup.model)”. It offers: \(models.prefix(12).joined(separator: ", "))."
+    // MARK: Addresses
+
+    /// A typed server address, checked the one way saving, the names list and Test all use: http or https, a server
+    /// name, a port (if any) from 1 to 65535, no credentials, no query or fragment, at most 2,000 characters. Returns the
+    /// server's base.
+    static func address(_ typed: String) throws -> URL {
+        let text = typed.trimmingCharacters(in: .whitespacesAndNewlines)
+        guard text.count <= 2_000 else { throw BudgetAPIError.rejected("That address is too long.") }
+        guard let parts = URLComponents(string: text), let scheme = parts.scheme?.lowercased(), ["http", "https"].contains(scheme) else {
+            throw BudgetAPIError.rejected("The address must start with http:// or https://.")
         }
-        return Report(chat: chatResult, categorize: await categorize, models: models)
+        if parts.user != nil || parts.password != nil || parts.query != nil || parts.fragment != nil {
+            throw BudgetAPIError.rejected("Put the key in API key, not in the address.")
+        }
+        guard let host = parts.host, !host.isEmpty, let url = parts.url else {
+            throw BudgetAPIError.rejected("The address needs the server's name after \(scheme)://.")
+        }
+        // A port too big for an Int still parses, as no port at all: go by the text after the colon.
+        if let range = parts.rangeOfPort, let string = parts.string, !string[range].isEmpty, !(1...65535).contains(parts.port ?? 0) {
+            throw BudgetAPIError.rejected("That port isn't a valid one: use a number from 1 to 65535.")
+        }
+        return base(url)
+    }
+
+    /// Same scheme, host and port: a saved key only ever goes to the server it was saved for.
+    static func sameServer(_ a: URL?, _ b: URL?) -> Bool {
+        guard let a, let b, let schemeA = a.scheme?.lowercased(), let schemeB = b.scheme?.lowercased(),
+              let hostA = a.host()?.lowercased(), let hostB = b.host()?.lowercased() else { return false }
+        func port(_ url: URL, _ scheme: String) -> Int? { url.port ?? (scheme == "https" ? 443 : scheme == "http" ? 80 : nil) }
+        return schemeA == schemeB && hostA == hostB && port(a, schemeA) == port(b, schemeB)
+    }
+
+    /// The key a request to `address` carries: one typed for it, else (unless the key is being removed) the saved
+    /// entry's, and only when `address` is that entry's own server.
+    static func key(typed: String?, removeKey: Bool, for address: URL, entry: ModelConnection?) -> String? {
+        if let typed = typed?.trimmingCharacters(in: .whitespacesAndNewlines), !typed.isEmpty { return typed }
+        guard !removeKey, let entry, sameServer(address, entry.address) else { return nil }
+        return entry.key
+    }
+
+    /// Whether a server is on this network (or the Olares), so what it's sent doesn't leave: loopback, private and
+    /// link-local addresses, the shared range Olares's mesh uses, single-label and local names, and Olares hosts.
+    static func isLocal(_ url: URL) -> Bool {
+        guard var host = url.host(percentEncoded: false)?.lowercased() else { return false }
+        if host.hasPrefix("["), host.hasSuffix("]") { host = String(host.dropFirst().dropLast()) }
+        if let zone = host.firstIndex(of: "%") { host = String(host[..<zone]) }
+        while host.hasSuffix(".") { host.removeLast() }
+        if host == "localhost" { return true }
+        for suffix in [".localhost", ".local", ".internal", ".lan", ".home.arpa", ".olares.com", ".olares.cn"] where host.hasSuffix(suffix) { return true }
+        if let bytes = ipv4(host) { return isLocal(ipv4: bytes) }
+        if let bytes = ipv6(host) {
+            if bytes == [UInt8](repeating: 0, count: 15) + [1] { return true }       // ::1
+            if bytes[0] & 0xfe == 0xfc { return true }                               // fc00::/7
+            if bytes[0] == 0xfe, bytes[1] & 0xc0 == 0x80 { return true }             // fe80::/10
+            if bytes[0..<10].allSatisfy({ $0 == 0 }), bytes[10] == 0xff, bytes[11] == 0xff { return isLocal(ipv4: Array(bytes[12...])) }  // ::ffff:a.b.c.d
+            return false
+        }
+        return !host.isEmpty && !host.contains(".") && !host.contains(":")          // a single-label name
+    }
+
+    private static func isLocal(ipv4 b: [UInt8]) -> Bool {
+        b[0] == 127 || b[0] == 10 || (b[0] == 172 && (16...31).contains(b[1])) || (b[0] == 192 && b[1] == 168)
+            || (b[0] == 100 && (64...127).contains(b[1])) || (b[0] == 169 && b[1] == 254)
+    }
+
+    private static func ipv4(_ text: String) -> [UInt8]? {
+        let parts = text.split(separator: ".", omittingEmptySubsequences: false)
+        guard parts.count == 4 else { return nil }
+        let bytes = parts.compactMap { part in part.allSatisfy(\.isASCII) && part.allSatisfy(\.isNumber) && part.count <= 3 ? UInt8(part) : nil }
+        return bytes.count == 4 ? bytes : nil
+    }
+
+    private static func ipv6(_ text: String) -> [UInt8]? {
+        guard text.contains(":") else { return nil }
+        var tail = text
+        var embedded: [UInt8] = []
+        if let lastColon = text.lastIndex(of: ":"), text[lastColon...].contains(".") {
+            guard let v4 = ipv4(String(text[text.index(after: lastColon)...])) else { return nil }
+            embedded = v4
+            tail = String(text[...lastColon]) + "0:0"  // stands in for the two groups the dotted quad fills
+        }
+        func groups(_ s: Substring) -> [UInt16]? {
+            if s.isEmpty { return [] }
+            let parts = s.split(separator: ":", omittingEmptySubsequences: false)
+            let values = parts.compactMap { $0.count <= 4 ? UInt16($0, radix: 16) : nil }
+            return values.count == parts.count ? values : nil
+        }
+        let halves = tail.components(separatedBy: "::")
+        var all: [UInt16]
+        switch halves.count {
+        case 1:
+            guard let g = groups(Substring(tail)), g.count == 8 else { return nil }
+            all = g
+        case 2:
+            guard let left = groups(Substring(halves[0])), let right = groups(Substring(halves[1])), left.count + right.count < 8 else { return nil }
+            all = left + Array(repeating: 0, count: 8 - left.count - right.count) + right
+        default:
+            return nil
+        }
+        var bytes = all.flatMap { [UInt8($0 >> 8), UInt8($0 & 0xff)] }
+        if !embedded.isEmpty { bytes.replaceSubrange(12..<16, with: embedded) }
+        return bytes
     }
 
     // MARK: Jobs
 
-    private static func chatOutcome(_ base: URL?, key: String?, model: String) async -> Outcome {
-        guard let base else {
-            return Outcome(ok: false, off: true, detail: "No chat model address, so Ask gives simple built-in answers.")
-        }
+    /// Ask's check: a one-word question to `model` on the chat server at `base`. When it fails and the server lists its
+    /// models without this one, the detail says which names it knows.
+    static func chat(base: URL, key: String?, model: String) async -> Outcome {
         let started = Date()
         do {
             let response = try await within(timeout) {
@@ -98,46 +157,42 @@ enum ModelCheck {
                            detail: cutOff ? "It answered, but used this test's 32 tokens before saying anything, as a model that reasons first does. Ask gives it 1,200."
                                    : said.isEmpty ? "It answered." : "It answered “\(said.prefix(40))”.")
         } catch {
-            return Outcome(ok: false, address: base.absoluteString, model: model, milliseconds: ms(since: started),
-                           detail: explain(error, path: OpenAIChatModel(baseURL: base, model: model).endpoint.path, key: key, decision: false))
+            var outcome = Outcome(ok: false, address: base.absoluteString, model: model, milliseconds: ms(since: started),
+                                  detail: explain(error, path: OpenAIChatModel(baseURL: base, model: model).endpoint.path, key: key, decision: false))
+            // The server answered but doesn't know the name: say which names it does know.
+            if let models = await listModels(at: base, key: key), !models.isEmpty, !models.contains(model) {
+                outcome.detail = "The server answered, but has no model named “\(model)”. It offers: \(models.prefix(12).joined(separator: ", "))."
+            }
+            return outcome
         }
     }
 
-    private static func categorizeOutcome(_ setup: Setup, chatBase: URL?) async -> Outcome {
-        let model: (any DecisionModel)?
-        let address: String?
-        switch setup.categorizing {
-        case .off:
-            return Outcome(ok: false, off: true, detail: "Off: everything Budget isn't sure about waits for you.")
-        case .laya:
-            return Outcome(ok: false, off: true, detail: "Laya isn't checked from here.")
-        case .chat, .own:
-            let decisionBase = setup.categorizing == .chat ? chatBase : setup.decision.map(base)
-            guard let decisionBase else {
-                return Outcome(ok: false, detail: setup.categorizing == .chat ? "It uses the chat model's server, and there's no chat model address."
-                                                                            : "Add the categorizing model's address.")
-            }
-            address = decisionBase.absoluteString
-            model = SystemOneDecisionModel(transport: .selfHosted(baseURL: decisionBase, model: "clef", apiKey: setup.decisionKey))
-        case .jev:
-            guard let key = setup.openRouterKey else { return Outcome(ok: false, detail: "Jev needs an OpenRouter key.") }
-            address = "OpenRouter"
-            model = SystemOneDecisionModel(transport: .openRouter(apiKey: key, zeroDataRetention: setup.zeroRetention))
-        }
+    /// Categorizing's check on a local decision server: a made-up coffee charge to `/v1/systemone` at `base`.
+    static func decision(base: URL, key: String?) async -> Outcome {
+        await decide(SystemOneDecisionModel(transport: .selfHosted(baseURL: base, model: "clef", apiKey: key)),
+                     address: base.absoluteString, label: nil, path: "/v1/systemone", key: key, decision: true)
+    }
+
+    /// Jev's check, through OpenRouter (the address is always OpenRouter's).
+    static func jev(key: String?, zeroRetention: Bool) async -> Outcome {
+        guard let key else { return Outcome(ok: false, detail: "Jev needs an OpenRouter key.") }
+        return await decide(SystemOneDecisionModel(transport: .openRouter(apiKey: key, zeroDataRetention: zeroRetention)),
+                            address: "OpenRouter", label: "Jev", path: "OpenRouter", key: key, decision: false)
+    }
+
+    private static func decide(_ model: any DecisionModel, address: String, label: String?, path: String, key: String?, decision: Bool) async -> Outcome {
         let request = DecisionRequest(state: "Merchant: Test Coffee Shop. Money out.",
                                       questions: ["category": .choice(instructions: "Which category is this charge?",
                                                                       options: [(id: "dining", description: "Dining: restaurants and coffee"),
                                                                                 (id: "groceries", description: "Groceries")])])
         let started = Date()
         do {
-            let answers = try await within(timeout) { try await model!.decide([request]) }
+            let answers = try await within(timeout) { try await model.decide([request]) }
             let value = answers.first?.answers["category"]?.value
-            return Outcome(ok: value != nil, address: address, model: setup.categorizing == .jev ? "Jev" : nil, milliseconds: ms(since: started),
+            return Outcome(ok: value != nil, address: address, model: label, milliseconds: ms(since: started),
                            detail: value.map { "It filed a test coffee charge under “\($0)”." } ?? "It answered, but without a category.")
         } catch {
-            return Outcome(ok: false, address: address, milliseconds: ms(since: started),
-                           detail: explain(error, path: setup.categorizing == .jev ? "OpenRouter" : "/v1/systemone", key: setup.categorizing == .jev ? setup.openRouterKey : setup.decisionKey,
-                                           decision: setup.categorizing != .jev))
+            return Outcome(ok: false, address: address, milliseconds: ms(since: started), detail: explain(error, path: path, key: key, decision: decision))
         }
     }
 
@@ -171,6 +226,28 @@ enum ModelCheck {
         }
     }
 
+    /// Each of `work`, at most `width` at a time, results in the same order.
+    static func bounded<T: Sendable>(_ work: [@Sendable () async -> T], width: Int = width) async -> [T] {
+        await withTaskGroup(of: (Int, T).self) { group in
+            var results = [T?](repeating: nil, count: work.count)
+            var started = 0
+            while started < min(width, work.count) {
+                let i = started
+                group.addTask { (i, await work[i]()) }
+                started += 1
+            }
+            while let (i, value) = await group.next() {
+                results[i] = value
+                if started < work.count {
+                    let next = started
+                    group.addTask { (next, await work[next]()) }
+                    started += 1
+                }
+            }
+            return results.compactMap { $0 }
+        }
+    }
+
     private static func ms(since start: Date) -> Int { Int(Date().timeIntervalSince(start) * 1000) }
 
     /// What went wrong, and what to change, in plain words.
@@ -180,9 +257,9 @@ enum ModelCheck {
             let said = body.trimmingCharacters(in: .whitespacesAndNewlines).prefix(160)
             switch status {
             case 401, 403:
-                return key == nil ? "It wants an API key (\(status)). Add one above." : "It turned the API key down (\(status)). Check the key."
+                return key == nil ? "It wants an API key (\(status)). Add one in its Edit." : "It turned the API key down (\(status)). Check the key."
             case 404 where decision:
-                return "This server has no /v1/systemone (404). Categorizing needs the decision server (the Clef one on your Olares): choose Its own server and put that address in."
+                return "This server has no /v1/systemone (404). Categorizing needs the decision server (the Clef one on your Olares): add it under Categorizing → Add a categorizing server, and pick it."
             case 404:
                 return "Nothing at \(path) on this server (404). Check the address." + (said.isEmpty ? "" : " It said: \(said)")
             default:
@@ -204,12 +281,5 @@ enum ModelCheck {
             return "It answered, but not the way Budget expects: \(what.prefix(160))"
         }
         return (error as? LocalizedError)?.errorDescription ?? String(describing: error)
-    }
-}
-
-private extension Optional {
-    func asyncMap<T>(_ transform: (Wrapped) async -> T) async -> T? {
-        guard let self else { return nil }
-        return await transform(self)
     }
 }

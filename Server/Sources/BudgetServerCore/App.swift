@@ -27,8 +27,9 @@ public enum BudgetServerApp {
         let sealer = try config.tokenKey.map(TokenSealer.init(base64Key:))
         if sealer == nil { logger.warning("No BUDGET_TOKEN_KEY: account linking is disabled.") }
 
-        let settings = ServerSettings(config: config, store: store, sealer: sealer)
-        let (chat, routing) = await models(settings)
+        let settings = ServerSettings(config: config, store: store, sealer: sealer, logger: logger)
+        // Before load(): only what the Olares app sets. prepare() applies the saved models.
+        let (chat, routing) = models(await settings.modelSnapshot())
 
         let plaid = plaidTransport ?? AHCTransport.shared
         let teller = try config.teller.map { try AHCTransport.mutualTLS(certificatePath: $0.certificatePath, keyPath: $0.keyPath) as any HTTPTransport }
@@ -51,25 +52,22 @@ public enum BudgetServerApp {
                               settings: settings, logger: logger), postgres)
     }
 
-    /// The chat model and decision providers the settings describe.
-    static func models(_ settings: ServerSettings) async -> ((any ChatModel)?, DecisionRouting) {
-        let name = await settings.modelName
+    /// The chat model and decision providers one snapshot of the settings describes.
+    static func models(_ snapshot: ModelSnapshot) -> ((any ChatModel)?, DecisionRouting) {
         var routing = DecisionRouting()
-        if let url = await settings.decisionBaseURL {
-            routing.local = SystemOneDecisionModel(transport: .selfHosted(baseURL: url, model: "clef", apiKey: await settings.decisionAPIKey))
+        if let url = snapshot.decisionURL {
+            routing.local = SystemOneDecisionModel(transport: .selfHosted(baseURL: url, model: "clef", apiKey: snapshot.decisionKey))
         }
-        if let key = await settings.openRouterKey {
-            routing.jev = SystemOneDecisionModel(transport: .openRouter(apiKey: key, zeroDataRetention: await settings.openRouterZeroRetention))
+        if let key = snapshot.openRouterKey {
+            routing.jev = SystemOneDecisionModel(transport: .openRouter(apiKey: key, zeroDataRetention: snapshot.zeroRetention))
         }
-        let key = await settings.modelAPIKey
-        let chat = await settings.modelBaseURL.map { OpenAIChatModel(baseURL: $0, model: name, apiKey: key) as any ChatModel }
+        let chat = snapshot.chatURL.map { OpenAIChatModel(baseURL: $0, model: snapshot.chatName, apiKey: snapshot.chatKey) as any ChatModel }
         return (chat, routing)
     }
 
     /// Puts the current settings into effect without a restart: models, month boundaries, endpoint, sources.
     public static func apply(_ service: BudgetService) async {
-        let (chat, routing) = await models(service.settings)
-        await service.api.reconfigure(chatModel: chat, decisions: routing)
+        await service.modelApplier.apply(await service.settings.modelSnapshot(), to: service.api)
         await service.api.setCalendar(await service.settings.calendar)
         await service.api.setEndpoint(await service.settings.publicURL ?? "budget-api")
         await service.api.setDashboardURL(await service.settings.dashboardURL)
@@ -83,7 +81,8 @@ public enum BudgetServerApp {
             // A bad saved certificate mustn't keep the ledger offline; the dashboard shows and fixes it.
             service.logger.error("provider settings didn't load: \(error)")
         }
-        do { try await service.settings.load() } catch { service.logger.error("server settings didn't load: \(error)") }
+        // Until they load, saving settings or models is refused rather than written over rows that weren't read.
+        do { try await service.settings.load() } catch { service.logger.error("server settings didn't load, so they can't be changed until a restart: \(error)") }
         if let state = try await service.store.loadLedger() {
             await service.api.load(state)
             service.logger.info("loaded ledger: \(state.transactions.count) rows, \(state.accounts.count) accounts")
@@ -122,6 +121,29 @@ public enum BudgetServerApp {
             Task { await service.pace.runScheduler() }
         }
         try await app.runService()
+    }
+}
+
+/// Puts model snapshots into effect one at a time and only ever forward: an apply that read the settings before another
+/// save and arrives after it is dropped, so two overlapping saves can't leave the older models live.
+actor ModelApplier {
+    private var applied = Int.min
+    private var busy = false
+    private var waiters: [CheckedContinuation<Void, Never>] = []
+
+    func apply(_ snapshot: ModelSnapshot, to api: LedgerBudgetAPI) async {
+        if busy {
+            await withCheckedContinuation { waiters.append($0) }
+        } else {
+            busy = true
+        }
+        defer {
+            if waiters.isEmpty { busy = false } else { waiters.removeFirst().resume() }  // handed over, still busy
+        }
+        guard snapshot.generation >= applied else { return }
+        applied = snapshot.generation
+        let (chat, routing) = BudgetServerApp.models(snapshot)
+        await api.reconfigure(chatModel: chat, decisions: routing)
     }
 }
 

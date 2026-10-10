@@ -173,7 +173,7 @@ function institutionCard(g, view) {
 
 async function openDrawer() {
   const { body } = drawer("Connect a bank", { onClose: () => {
-    if (/[?&]connect=1/.test(location.hash)) history.replaceState(null, "", location.pathname + location.search + "#/accounts");
+    if (/[?&]connect=1/.test(location.hash)) history.replaceState(history.state, "", location.pathname + location.search + "#/accounts");
   } });
   const flash = h("div", { class: "flash" });
   fill(body, flash, framedNote(), h("div", { class: "skeleton-slot" }, h("div", { class: "skeleton" }, h("span"), h("span"), h("span"))));

@@ -61,6 +61,8 @@ button, input, select, textarea { font: inherit; color: inherit; }
 .btn.armed::before { content: "!"; display: inline-grid; place-items: center; width: 16px; height: 16px; border-radius: 50%; box-shadow: inset 0 0 0 1.5px currentColor;
   font: 700 .6875rem/1 var(--font-sans); }
 .btn.armed:active:not(:disabled) { background-color: var(--caution-fill-pressed); }
+.btn.primary.armed, .btn.primary.armed:hover:not(:disabled) { background: var(--caution-fill); }
+.btn.primary.armed:active:not(:disabled) { background: var(--caution-fill-pressed); }
 .btn.quiet.armed { border: 0; background: none; color: var(--caution); }
 .btn.quiet.armed::before { content: none; }
 .btn:is(.secondary, .tinted, .ai, .caution, .armed):hover:not(:disabled):not(:active) { background-image: linear-gradient(var(--state-hover), var(--state-hover)); }
@@ -379,6 +381,9 @@ dialog.drawer::backdrop { background: var(--scrim); }
   .rail-foot { display: none; }
   /* The rail's offline note is hidden here, so the same news shows as a banner under the chip bar (app.js). */
   .main { padding: var(--s-lg) var(--gutter) var(--s-xxl); }
+  /* The chip bar stays at the top, so whatever the page scrolls to (a link's section, the keyboard's focus) lands below it,
+     not under it. app.js measures the bar (--bar-h). */
+  html { scroll-padding-top: calc(var(--bar-h, 110px) + var(--s-sm)); }
 }
 @supports not ((backdrop-filter: blur(1px)) or (-webkit-backdrop-filter: blur(1px))) {
   @media (max-width: 1023px) { .rail { background: var(--surface-raised); } }
@@ -453,11 +458,17 @@ dialog.drawer::backdrop { background: var(--scrim); }
 .recheck-result:empty { display: none; }
 .dupes-table .cell-title { overflow-wrap: anywhere; }
 
-/* ---------- Settings: one column and one save bar ---------- */
-.settings { max-width: 720px; }
-.settings .card { display: grid; gap: var(--s-lg); }
-.settings .card + .section-head { margin-top: var(--s-xl); }
-.settings .section-head:first-of-type { margin-top: 0; }
+/* ---------- Settings: the page's width, two short sections to a row where they fit, and one save bar ---------- */
+/* One real column: a long child (a 60-character server name) wraps inside the card instead of widening it. */
+.settings .card { display: grid; grid-template-columns: minmax(0, 1fr); gap: var(--s-md); }
+/* "Runs on …" names the categorizing pick, so it wraps, left-aligned, and stays a 44px target */
+.btn.quiet.runs-on { white-space: normal; justify-content: flex-start; text-align: left; padding-block: var(--s-xxs); }
+.settings > .section-head:first-child { margin-top: 0; }
+.settings .card > .card-foot { margin-top: 0; }
+/* Each column is its heads and cards, and each head keeps its 32px above. One column at a 1024px window (728px beside the
+   rail) and, as .grid-2 everywhere, at 900px and below; two from 901px until the rail shows, and from about 1150px with it. */
+.settings .grid-2 { margin-top: 0; row-gap: 0; grid-template-columns: repeat(auto-fit, minmax(min(100%, 26rem), 1fr)); }
+@media (max-width: 900px) { .settings .grid-2 { grid-template-columns: minmax(0, 1fr); } }
 .fold { border-top: 1px solid var(--divider); padding-top: var(--s-xs); }
 .fold:first-child { border-top: 0; padding-top: 0; }
 .fold > summary { width: 100%; min-height: var(--control-h); color: var(--ink); font-weight: 500; }
@@ -476,7 +487,35 @@ dialog.drawer::backdrop { background: var(--scrim); }
 .danger-zone { background: var(--fill-surface) padding-box,
   linear-gradient(180deg, color-mix(in srgb, var(--caution) 40%, transparent), color-mix(in srgb, var(--caution) 20%, transparent)) border-box; }
 .danger-zone h2 { color: var(--caution); }
-.role-list .row .sub { font-family: var(--font-mono); letter-spacing: .2px; }
+.danger-zone .field { max-width: 30rem; }
+/* Models: a block per job, a radio row per choice. The picked row wears the selected state (white 10% and the 2px accent
+   bar) out to the card's edges; tags and test answers sit in the text column, so a narrow row never squeezes the name. */
+.model-jobs { display: grid; gap: var(--s-lg); }
+.job-head { display: flex; flex-wrap: wrap; align-items: center; justify-content: space-between; gap: var(--s-xs) var(--s-sm); }
+.job-head .card-title { margin: 0; }
+.job-line { margin-top: var(--s-xs); }
+.model-list { margin-top: var(--s-xs); }
+.choice-row { margin: 0 calc(-1 * var(--s-lg)); padding-inline: var(--s-lg); align-items: flex-start; }
+.choice-row:has(input:checked) { background: var(--state-selected); box-shadow: inset 2px 0 0 var(--accent); }
+/* On that white wash a tag's see-through tint drops orchid and cyan below 4.5:1; there it's the tint on the card's own
+   surface instead, opaque, as on any other row. */
+.choice-row:has(input:checked) .tag { background: color-mix(in srgb, var(--tone) 12%, var(--surface)); }
+.choice-row .check { padding: 0; min-height: 0; align-items: flex-start; }
+.choice-row :is(.title, .sub) { display: block; }
+.choice-row .check.disabled .title { color: var(--ink-secondary); }
+.choice-row .sub:empty, .choice-row .tags:empty { display: none; }
+.model-list .sub { font-family: var(--font-mono); overflow-wrap: anywhere; }
+.model-list .sub:is(.plain, .note) { font-family: var(--font-sans); }
+/* A failed test's answer can list a dozen model names: two lines on the row (its title and the drawer's Test have it all) */
+.choice-row .sub.clamp-2:not(:empty) { display: -webkit-box; -webkit-box-orient: vertical; -webkit-line-clamp: 2; line-clamp: 2; overflow: hidden; }
+.model-list .row-actions { min-width: 4.5rem; justify-content: flex-end; }
+.models-foot { padding-top: var(--s-md); border-top: 1px solid var(--divider); }
+.model-problem { flex-basis: 100%; }
+.model-problem:empty { display: none; }
+.model-outcome { display: flex; flex-wrap: wrap; align-items: baseline; gap: var(--s-xs); }
+.model-outcome:empty { display: none; }
+/* Save asking twice (Ask moving with categorizing) says why on the button, so it may wrap */
+.savebar .btn.armed { white-space: normal; text-align: center; padding-block: var(--s-xxs); }
 
 /* ---------- Phone ---------- */
 @media (max-width: 900px) {
@@ -657,6 +696,7 @@ input.input.above { width: 120px; }
   .group { margin: 0 calc(-1 * var(--s-md)); padding: var(--s-md); }
   .group-picks .btn.quiet { margin-left: 0; }
   .rules-head { flex-direction: column; }
+  .choice-row { margin: 0 calc(-1 * var(--s-md)); padding-inline: var(--s-md); }
   .cov-row { grid-template-columns: minmax(0, 1fr) auto; grid-template-areas: "name act" "strip strip"; gap: 6px var(--s-sm); }
   .cov-row + .cov-row { padding-top: var(--s-xs); border-top: 1px solid var(--divider); }
   .cov-name { grid-area: name; } .cov-strip { grid-area: strip; gap: 2px; } .cov-act { grid-area: act; }

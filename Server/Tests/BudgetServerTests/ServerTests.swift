@@ -616,7 +616,7 @@ struct ServerTests {
         #expect(teller.environment == "sandbox" && !teller.hasCertificate)
     }
 
-    @Test("Server settings: dashboard over environment over default, validated, reset, and applied live")
+    @Test("Server settings: dashboard over environment over default, validated, applied live; the models have their own calls")
     func serverSettings() async throws {
         var config = TestServer.config()
         config.modelBaseURL = URL(string: "https://qwen.example")
@@ -629,7 +629,8 @@ struct ServerTests {
         try await dash.test(.router) { client in
             try await client.execute(uri: "/dash/settings", method: .get) { response in
                 let fields = try JSONDecoder().decode([SettingField].self, from: Data(response.body.readableBytesView))
-                #expect(field(fields, "modelBaseURL")?.origin == .environment)
+                for key in ServerSettings.chatKeys + ServerSettings.decisionKeys { #expect(field(fields, key) == nil, "\(key)") }
+                #expect(field(fields, "openRouterKey") != nil && field(fields, "openRouterZeroRetention") != nil)
                 #expect(field(fields, "syncIntervalHours")?.origin == .default)
             }
             try await client.execute(uri: "/dash/settings", method: .patch, headers: write,
@@ -640,8 +641,15 @@ struct ServerTests {
             }
             try await client.execute(uri: "/dash/settings", method: .patch, headers: write,
                                      body: TestServer.body(#"{"changes":{"timeZone":"Mars/Olympus"}}"#)) { #expect($0.status == .unprocessableContent) }
+            // The flat model keys are the models' now (and only a rollback mirror in the row).
             try await client.execute(uri: "/dash/settings", method: .patch, headers: write,
-                                     body: TestServer.body(#"{"changes":{"modelBaseURL":""}}"#)) { #expect($0.status == .ok) }
+                                     body: TestServer.body(#"{"changes":{"modelBaseURL":""}}"#)) { response in
+                #expect(response.status == .unprocessableContent)
+                #expect(String(buffer: response.body).contains("Unknown setting"))
+            }
+            try await client.execute(uri: "/dash/models/use", method: .post, headers: write, body: TestServer.body(#"{"chat":"off"}"#)) {
+                #expect($0.status == .ok)
+            }
         }
         #expect(await service.settings.syncIntervalHours == 2)
         #expect(await service.settings.timeZone.identifier == "America/New_York")
@@ -649,13 +657,35 @@ struct ServerTests {
         #expect(try await service.api.serverStatus().roles.first { $0.role == .chat }?.model == nil) // turned off, live
         let stored = try #require(try await service.store.serverSettings())
         #expect(stored.values["openRouterKey"] != "sk-or-test") // sealed
-        try await service.settings.update(["modelBaseURL": String?.none])
+        try await service.settings.use(chat: "environment", decision: nil)
         await BudgetServerApp.apply(service)
         #expect(await service.settings.modelBaseURL?.absoluteString == "https://qwen.example") // back to the environment
         #expect(try await service.api.serverStatus().roles.first { $0.role == .chat }?.model != nil)
+
+        // Jev's key can't go while Jev categorizes, or while it's asked when the local model is unsure.
+        try await dash.test(.router) { client in
+            try await client.execute(uri: "/v1/actions", method: .post, headers: write,
+                                     body: TestServer.body(#"{"type":"updateDecisionPolicy","provider":"jev","rerunPending":false}"#)) { #expect($0.status == .ok) }
+            for change in [#"{"changes":{"openRouterKey":""}}"#, #"{"changes":{"openRouterKey":null}}"#] {
+                try await client.execute(uri: "/dash/settings", method: .patch, headers: write, body: TestServer.body(change)) { response in
+                    #expect(response.status == .unprocessableContent)
+                    #expect(String(buffer: response.body).contains("Jev is categorizing now. Pick another one and save first."))
+                }
+            }
+            try await client.execute(uri: "/v1/actions", method: .post, headers: write,
+                                     body: TestServer.body(#"{"type":"updateDecisionPolicy","provider":"localDecide","escalateToJev":true,"rerunPending":false}"#)) { #expect($0.status == .ok) }
+            try await client.execute(uri: "/dash/settings", method: .patch, headers: write, body: TestServer.body(#"{"changes":{"openRouterKey":""}}"#)) { response in
+                #expect(response.status == .unprocessableContent)
+                #expect(String(buffer: response.body).contains("Jev is asked when the local model is unsure. Turn that off and save first."))
+            }
+            // A new key is fine, and so is anything else.
+            try await client.execute(uri: "/dash/settings", method: .patch, headers: write,
+                                     body: TestServer.body(#"{"changes":{"openRouterKey":"sk-or-new","syncIntervalHours":"3"}}"#)) { #expect($0.status == .ok) }
+        }
+        #expect(await service.settings.openRouterKey == "sk-or-new")
     }
 
-    @Test("Models: addresses are saved as the server's base; keys stay sealed; the decision endpoint borrows the chat key; Test says what's wrong")
+    @Test("Models: addresses are saved as the server's base; keys stay sealed; categorizing on the chat model's server borrows its key; Test says what's wrong")
     func modelSettingsAndTest() async throws {
         let (service, _) = try await BudgetServerApp.makeService(config: TestServer.config(), store: MemoryStore(), logger: Logger(label: "test"))
         try await BudgetServerApp.prepare(service)
@@ -669,29 +699,41 @@ struct ServerTests {
         #expect(chat("https://generativelanguage.googleapis.com/v1beta/openai/") == "https://generativelanguage.googleapis.com/v1beta/openai/chat/completions")
         #expect(chat("https://openrouter.ai/api/v1") == "https://openrouter.ai/api/v1/chat/completions")
         #expect(chat("https://api.openai.com/v1") == "https://api.openai.com/v1/chat/completions")
-        try await service.settings.update(["modelBaseURL": "https://switchboard.example/v1", "modelAPIKey": "sk-switch"])
-        #expect(await service.settings.modelBaseURL?.absoluteString == "https://switchboard.example")
-        let (chatKey, decisionKey) = (await service.settings.modelAPIKey, await service.settings.decisionAPIKey)
+        let settings = service.settings
+        let (chatID, picked) = try await settings.saveModel(ModelDraft(kind: "chat", address: "https://switchboard.example/v1", apiKey: "sk-switch", model: "smart"),
+                                                            policy: .off)
+        #expect(picked) // the first chat model on a server with none
+        #expect(await settings.modelBaseURL?.absoluteString == "https://switchboard.example")
+        let (chatKey, decisionKey) = (await settings.modelAPIKey, await settings.decisionAPIKey)
         #expect(chatKey == "sk-switch" && decisionKey == "sk-switch")
-        #expect(try #require(try await service.store.serverSettings()).values["modelAPIKey"] != "sk-switch") // sealed
-        try await service.settings.update(["decisionBaseURL": "https://decide.example"])
-        #expect(await service.settings.decisionAPIKey == nil) // its own server: its own key, or none
-        let fields = await service.settings.fields()
-        #expect(fields.first { $0.key == "modelAPIKey" }.map { $0.isSet && $0.value == nil } == true)
+        let saved = try #require(try await service.store.modelSettings()?.models.first { $0.id == chatID })
+        #expect(saved.name == "smart" && saved.sealedKey != nil && saved.sealedKey != "sk-switch") // sealed
+        let (clefID, _) = try await settings.saveModel(ModelDraft(kind: "decision", address: "https://decide.example/v1/systemone"), policy: .off)
+        try await settings.use(chat: nil, decision: clefID)
+        #expect(await settings.decisionBaseURL?.absoluteString == "https://decide.example")
+        #expect(await settings.decisionAPIKey == nil) // its own server: its own key, or none
+        let list = await settings.modelList()
+        #expect(list.chat.first { $0.id == chatID }.map { $0.hasKey && !$0.keyUnreadable && $0.name == "smart" } == true)
+        #expect(list.decision.first?.name == "decide.example")
 
         let dash = Application(router: buildRouter(service, surface: .dashboard))
         let write: HTTPFields = [HTTPField.Name("X-Budget-Dashboard")!: "1", .contentType: "application/json"]
         try await dash.test(.router) { client in
-            // Nothing listens on port 9: can't reach it. Categorizing off is reported as off, not as broken.
+            // Nothing listens on port 9: can't reach it.
             try await client.execute(uri: "/dash/models/test", method: .post, headers: write,
-                                     body: TestServer.body(#"{"modelBaseURL":"http://127.0.0.1:9/v1","modelName":"smart","categorizing":"off"}"#)) { response in
+                                     body: TestServer.body(#"{"draft":{"kind":"chat","address":"http://127.0.0.1:9/v1","model":"smart"}}"#)) { response in
                 #expect(response.status == .ok)
                 let report = try JSONSerialization.jsonObject(with: Data(response.body.readableBytesView)) as? [String: Any]
-                let chat = report?["chat"] as? [String: Any], categorize = report?["categorize"] as? [String: Any]
-                #expect(chat?["ok"] as? Bool == false && chat?["address"] as? String == "http://127.0.0.1:9")
-                #expect((chat?["detail"] as? String)?.contains("Can't reach") == true)
-                #expect(categorize?["off"] as? Bool == true)
+                let draft = report?["draft"] as? [String: Any]
+                #expect(draft?["ok"] as? Bool == false && draft?["address"] as? String == "http://127.0.0.1:9")
+                #expect((draft?["detail"] as? String)?.contains("Can't reach") == true)
+                #expect((report?["chat"] as? [String: Any])?.isEmpty == true && (report?["decision"] as? [String: Any])?.isEmpty == true)
                 #expect(!String(buffer: response.body).contains("sk-switch"))
+            }
+            try await client.execute(uri: "/dash/models", method: .get) { response in
+                let text = String(buffer: response.body)
+                #expect(text.contains(#""chatInUse":"\#(chatID)""#) && text.contains(#""decisionInUse":"\#(clefID)""#))
+                #expect(!text.contains("sk-switch") && !text.contains(saved.sealedKey!))
             }
         }
     }

@@ -1,6 +1,6 @@
 // The shell: boots the data, routes #/overview · #/accounts · #/imports · #/review · #/transactions · #/categories · #/assistant · #/settings, keeps the rail
 // current, and refreshes lightly every 30 s without ever redrawing something the person is working in.
-import { fill, $, h, store, loadCore, heavy, cached, callout, button, busy, dot, tag, ago, duration, nextSyncIn, institutionGroups, plural, ApiError } from "./core.js";
+import { fill, $, h, store, loadCore, heavy, cached, callout, button, busy, dot, tag, toast, ago, duration, nextSyncIn, institutionGroups, plural, ApiError } from "./core.js";
 import { attentionItems } from "./overview.js";
 import { linkPlaid } from "./providers.js";
 import overview from "./overview.js";
@@ -16,29 +16,57 @@ import { needsLook } from "./rules.js";
 const VIEWS = { overview, accounts, imports, review, transactions, categories, assistant, settings };
 let current = null, currentName = null, booted = false, firstRoute = true;
 
-function parseHash() {
-  const raw = location.hash.replace(/^#\/?/, "");
+function parseHash(hash = location.hash) {
+  const raw = hash.replace(/^#\/?/, "");
   const [path, query] = raw.split("?");
   const [name, sub] = (path || "").split("/");
   return { name: VIEWS[name] ? name : "overview", sub: sub || "", params: new URLSearchParams(query || "") };
 }
 
-/// The hash the current view was opened on, to go back to when leaving it is cancelled.
-let currentHash = "";
-
-/// Unsaved changes on the view (Settings' save bar): leaving asks first.
+/// Unsaved changes on the view (Settings' save bar): leaving waits for a second try.
 const unsaved = () => (current && current.dirty ? current.dirty() : 0);
+
+/// When leaving with unsaved changes was last turned back. The browser's confirm() can't ask instead: the Olares desktop
+/// window blocks it and it silently answers "no", which kept people on the page with no way off.
+let leaveTried = 0;
+
+/// Whether the view may be left now. With unsaved changes the first try stays and says so; another within 5 s leaves
+/// without them. A double click (two within 0.4 s) is still the first. `again`: how to try again, in the toast's words.
+function mayLeave(again) {
+  if (!unsaved()) return true;
+  const since = Date.now() - leaveTried;
+  if (since > 400 && since < 5000) return true;
+  if (since >= 5000) {
+    leaveTried = Date.now();
+    if (current.showUnsaved) current.showUnsaved();
+    toast(`Save or discard your changes first. ${again} to leave without saving.`);
+  }
+  return false;
+}
+
+/// Where the current entry sits in this tab's history. Each entry the dashboard lands on is stamped with its place
+/// (history.state.position), so a Back or Forward that's turned back can be undone by going the other way, which adds and
+/// loses no entry: the next Back reaches the same page. (Answering it with pushState would add an entry the browser may
+/// then skip, and replaceState overwrote the page Back was going to.)
+let position = 0, undoing = false;
+const stampOf = () => (history.state && Number.isInteger(history.state.position) ? history.state.position : null);
 
 function route() {
   if (!booted) return;
+  const at = stampOf();
+  // The way back from a refused Back or Forward: this is the entry the view is still showing.
+  if (undoing) { undoing = false; if (at === position) return; }
   const { name, sub, params } = parseHash();
-  if (current && currentName === name && current.navigate) { current.navigate({ sub, params }); currentHash = location.hash; renderShell(); return; }
-  const n = unsaved();
-  if (n && !window.confirm(`Leave ${current.title}? ${n === 1 ? "1 unsaved change is" : `${n} unsaved changes are`} lost if you do.`)) {
-    history.replaceState(null, "", currentHash || "#/overview");
+  const land = () => { if (at === null) history.replaceState({ ...(history.state || {}), position: ++position }, ""); else position = at; };
+  if (current && currentName === name && current.navigate) { land(); current.navigate({ sub, params }); renderShell(); return; }
+  // A link checks before it goes (see the click handler below), so this is Back, Forward, a typed address or a script.
+  if (!mayLeave(at === null ? "Try again" : at < position ? "Go back again" : "Go forward again")) {
+    undoing = true;
+    history.go(position - (at ?? position + 1));
     return;
   }
-  currentHash = location.hash;
+  leaveTried = 0;
+  land();
   if (current && current.unmount) current.unmount();
   current = VIEWS[name]; currentName = name;
   const root = $("view");
@@ -65,11 +93,20 @@ function setCount(id, value, tone) {
   el.parentElement.setAttribute("aria-label", value ? `${label}, ${value} ${tone === "act" ? "need you" : "to look at"}` : label);
 }
 
+// Scrolls only the chip bar, sideways. scrollIntoView would also move the page: the bar is sticky inside the page's
+// scroll padding, so the chip never counts as in view and every refresh would push the page up.
+function revealChip(a) {
+  const bar = $("nav"), pad = parseFloat(getComputedStyle(bar).scrollPaddingLeft) || 0;
+  const chip = a.getBoundingClientRect(), box = bar.getBoundingClientRect();
+  if (chip.left < box.left + pad) bar.scrollLeft -= box.left + pad - chip.left;
+  else if (chip.right > box.right - pad) bar.scrollLeft += chip.right - (box.right - pad);
+}
+
 function renderShell() {
   for (const a of $("nav").querySelectorAll("a")) {
     const on = a.dataset.view === currentName;
     if (on) a.setAttribute("aria-current", "page"); else a.removeAttribute("aria-current");
-    if (on && window.matchMedia("(max-width: 1023px)").matches) a.scrollIntoView({ block: "nearest", inline: "nearest" });
+    if (on && window.matchMedia("(max-width: 1023px)").matches) revealChip(a);
   }
   if (!store.summary) return;
   const problems = institutionGroups().filter((g) => g.state.tone === "act").length;
@@ -165,6 +202,14 @@ if (new URLSearchParams(location.search).has("oauth_state_id") && !location.hash
   history.replaceState(null, "", location.pathname + location.search + "#/accounts");
 }
 window.addEventListener("hashchange", route);
+// A link to another view, with unsaved changes: the first click stays (nothing goes into the history) and the second within
+// 5 s goes ahead. A link within the view, or one opened in a new tab, just goes.
+document.addEventListener("click", (e) => {
+  const link = e.target.closest && e.target.closest('a[href^="#/"]');
+  if (!link || e.defaultPrevented || e.button !== 0 || e.metaKey || e.ctrlKey || e.shiftKey || e.altKey || link.target) return;
+  if (current && current.navigate && parseHash(link.getAttribute("href")).name === currentName) return;
+  if (!mayLeave("Click the link again")) e.preventDefault();
+});
 // ⋯ menus close on a click elsewhere or Escape (they're <details>, which only close on their own summary).
 document.addEventListener("click", (e) => {
   for (const menu of document.querySelectorAll(".menu[open]")) if (!menu.contains(e.target)) menu.open = false;
@@ -174,6 +219,9 @@ document.addEventListener("keydown", (e) => {
   for (const menu of document.querySelectorAll(".menu[open]")) { menu.open = false; menu.querySelector("summary").focus(); }
 });
 document.addEventListener("budget:write", () => refresh({ after: true }));
+// Below 1024 px the rail is a bar stuck to the top: its height (--bar-h) keeps what the page scrolls to below it (app.css).
+const rail = document.querySelector(".rail");
+if (rail && window.ResizeObserver) new ResizeObserver(() => document.documentElement.style.setProperty("--bar-h", `${rail.offsetHeight}px`)).observe(rail);
 // Closing or reloading the tab with unsaved changes asks too (the browser words it).
 window.addEventListener("beforeunload", (e) => { if (unsaved()) { e.preventDefault(); e.returnValue = ""; } });
 document.addEventListener("visibilitychange", () => { if (document.visibilityState === "visible" && booted && Date.now() - store.loadedAt > 30000) tick(); });

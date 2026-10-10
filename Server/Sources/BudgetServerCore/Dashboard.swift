@@ -44,6 +44,36 @@ struct DashboardSummary: Encodable {
     var categories: [DashboardCategory]
 }
 
+/// What `/dash/models/test` checks; every part is optional, and `{}` means everything listed.
+struct ModelTestBody: Decodable {
+    /// A model as typed in its drawer, saved or not. `apiKey` is plaintext, so it never prints.
+    struct Draft: Decodable, CustomStringConvertible {
+        enum Kind: String, Decodable { case chat, decision, jev }
+        var id: String?
+        var kind: Kind
+        var address: String?
+        var apiKey: String?
+        var removeKey: Bool?
+        var model: String?
+        var zeroRetention: Bool?
+        var description: String { "Draft(\(id ?? "new"), \(kind.rawValue))" }
+    }
+    var chat: [String]?
+    var decision: [String]?
+    var jev: Bool?
+    var draft: Draft?
+}
+
+/// `/dash/models/test`'s answer: an outcome per model id tested, per job.
+struct ModelTestReport: Encodable {
+    var chat: [String: ModelCheck.Outcome] = [:]
+    var decision: [String: ModelCheck.Outcome] = [:]
+    var jev: ModelCheck.Outcome?
+    var draft: ModelCheck.Outcome?
+    /// The names a chat draft's server lists; nil when it doesn't say.
+    var models: [String]?
+}
+
 func addDashboardRoutes(_ router: Router<BasicRequestContext>, _ service: BudgetService) {
     router.get("/") { request, _ in
         DashboardAssets.response(for: DashboardAssets.page, request: request, extraHeaders: [
@@ -129,77 +159,159 @@ func addDashboardRoutes(_ router: Router<BasicRequestContext>, _ service: Budget
     }
 
     /// Every server setting with its value in force and where it comes from (dashboard / environment /
-    /// default). Secrets report only whether they're set.
+    /// default). Secrets report only whether they're set. The models have their own calls (`/dash/models…`).
     router.get("/dash/settings") { _, _ in try HTTP.json(await service.settings.fields()) }
 
     /// `{"changes": {"key": "value" | null}}` — a value sets it here, null resets it to the environment or
-    /// default, "" turns it off. Applied immediately.
+    /// default, "" turns it off. Applied immediately. Jev's key can't go while the saved policy uses Jev.
     router.patch("/dash/settings") { request, _ in
         struct Body: Decodable { var changes: [String: String?] }
         let body = try await HTTP.body(Body.self, request)
-        try await service.settings.update(body.changes)
+        try await service.settings.update(body.changes, policy: await service.api.state.decisionPolicy)
         await BudgetServerApp.apply(service)
         return try HTTP.json(await service.settings.fields())
     }
 
-    /// The model names the chat server lists (`GET /v1/models`), for the Model field's list: `{modelBaseURL?, modelAPIKey?}`
-    /// as typed, else saved. `{models: [String]?}`; nil when the server doesn't say.
-    router.post("/dash/models/names") { request, _ in
-        struct Body: Decodable { var modelBaseURL: String?, modelAPIKey: String? }
-        struct Names: Encodable { var models: [String]? }
-        let body = (try? await HTTP.body(Body.self, request)) ?? Body()
-        var address = await service.settings.modelBaseURL
-        if let text = body.modelBaseURL?.trimmingCharacters(in: .whitespacesAndNewlines) { address = text.isEmpty ? nil : URL(string: text) }
-        var key = await service.settings.modelAPIKey
-        if let text = body.modelAPIKey?.trimmingCharacters(in: .whitespacesAndNewlines), !text.isEmpty { key = text }
-        guard let address else { return try HTTP.json(Names(models: nil)) }
-        return try HTTP.json(Names(models: await ModelCheck.listModels(at: ModelCheck.base(address), key: key)))
+    // The models: exact paths, never "/dash/models/:id" (the router takes a matching static segment and doesn't fall back).
+
+    /// Every model per job and which one each uses (`ModelList`). Never a key, sealed or opened.
+    router.get("/dash/models") { _, _ in try HTTP.json(await service.settings.modelList()) }
+
+    /// Adds or edits a model (`ModelDraft`): `{id, autoSelected, list}`. Saved and applied right away.
+    router.post("/dash/models/save") { request, _ in
+        struct Saved: Encodable { var id: String; var autoSelected: Bool; var list: ModelList }
+        let draft = try await HTTP.body(ModelDraft.self, request, limit: 64 * 1024)
+        let (id, autoSelected) = try await service.settings.saveModel(draft, policy: await service.api.state.decisionPolicy.provider)
+        await BudgetServerApp.apply(service)
+        return try HTTP.json(Saved(id: id, autoSelected: autoSelected, list: await service.settings.modelList()))
     }
 
-    /// The Models section's Test, on what's in its fields (saved or not): `{modelBaseURL, modelName, modelAPIKey,
-    /// categorizing: off|chat|own|jev, decisionBaseURL, decisionAPIKey, openRouterKey, openRouterZeroRetention}`. A field
-    /// left out uses the saved setting; an empty key uses the saved key; an empty chat address is off. Sends a one-word
-    /// question and a made-up coffee charge, nothing from the ledger. `ModelCheck.Report`.
+    /// `{id}`: removes a saved model, unless a job uses it. `ModelList`.
+    router.post("/dash/models/remove") { request, _ in
+        struct Body: Decodable { var id: String }
+        let body = try await HTTP.body(Body.self, request, limit: 64 * 1024)
+        try await service.settings.removeModel(id: body.id, policy: await service.api.state.decisionPolicy.provider)
+        await BudgetServerApp.apply(service)
+        return try HTTP.json(await service.settings.modelList())
+    }
+
+    /// `{chat?, decision?}`: the model each given job uses from now on. `ModelList`.
+    router.post("/dash/models/use") { request, _ in
+        struct Body: Decodable { var chat: String?; var decision: String? }
+        let body = try await HTTP.body(Body.self, request, limit: 64 * 1024)
+        try await service.settings.use(chat: body.chat, decision: body.decision)
+        await BudgetServerApp.apply(service)
+        return try HTTP.json(await service.settings.modelList())
+    }
+
+    /// The model names a chat server lists (`GET /v1/models`), for the Model field's list: `{id?, address?, apiKey?}`.
+    /// `id` is a chat model's. The address is the typed one, else the model's; the key is the typed one, else the
+    /// model's only on its own server. `{models?: [String]}`, left out when the server doesn't say.
+    router.post("/dash/models/names") { request, _ in
+        struct Body: Decodable { var id: String?, address: String?, apiKey: String? }
+        struct Names: Encodable { var models: [String]? }
+        let body = (try? await HTTP.body(Body.self, request, limit: 64 * 1024)) ?? Body()
+        var entry: ModelConnection?
+        if let id = body.id { entry = await service.settings.connection(.chat, id: id) }
+        let typed = body.address?.trimmingCharacters(in: .whitespacesAndNewlines) ?? ""
+        guard let address = typed.isEmpty ? entry?.address : try? ModelCheck.address(typed) else { return try HTTP.json(Names(models: nil)) }
+        let key = ModelCheck.key(typed: body.apiKey, removeKey: false, for: address, entry: entry)
+        return try HTTP.json(Names(models: await ModelCheck.listModels(at: address, key: key)))
+    }
+
+    /// The Models card's Test. `{chat?: [id], decision?: [id], jev?: Bool, draft?: {id?, kind: chat|decision|jev, address?,
+    /// apiKey?, removeKey?, model?, zeroRetention?}}`; `{}` tests everything listed, six at a time. A draft's blank key
+    /// is its saved model's only on that model's own server. Sends a one-word question and a made-up coffee charge,
+    /// nothing from the ledger. `{chat: {id: Outcome}, decision: {id: Outcome}, jev?, draft?, models?}`.
     router.post("/dash/models/test") { request, _ in
-        struct Body: Decodable {
-            var modelBaseURL: String?, modelName: String?, modelAPIKey: String?
-            var categorizing: ModelCheck.Categorizing?, decisionBaseURL: String?, decisionAPIKey: String?
-            var openRouterKey: String?, openRouterZeroRetention: Bool?
-        }
-        let body = try await HTTP.body(Body.self, request)
+        let body = try await HTTP.body(ModelTestBody.self, request, limit: 64 * 1024)
         let settings = service.settings
-        func typed(_ text: String?) -> String? { text.map { $0.trimmingCharacters(in: .whitespacesAndNewlines) } }
-        func key(_ text: String?, saved: String?) -> String? { typed(text).flatMap { $0.isEmpty ? nil : $0 } ?? saved }
-        var chat = await settings.modelBaseURL
-        if let text = typed(body.modelBaseURL) { chat = text.isEmpty ? nil : URL(string: text) }
-        let savedChatKey = await settings.modelAPIKey
-        let chatKey = key(body.modelAPIKey, saved: savedChatKey)
-        let policy = try await service.api.serverStatus().decisionPolicy
-        let savedDecision = await settings.value("decisionBaseURL")
-        var categorizing = ModelCheck.Categorizing.off
-        if let chosen = body.categorizing {
-            categorizing = chosen
-        } else {
-            switch policy.provider {
-            case .off: categorizing = .off
-            case .localDecide: categorizing = savedDecision == nil ? .chat : .own
-            case .laya: categorizing = .laya
-            case .jev: categorizing = .jev
+        let list = await settings.modelList()
+        let everything = body.chat == nil && body.decision == nil && body.jev == nil && body.draft == nil
+        func once(_ ids: [String]) -> [String] {
+            var seen = Set<String>()
+            return ids.filter { seen.insert($0).inserted }
+        }
+        let chatIDs = once(body.chat ?? (everything ? list.chat.map(\.id) : []))
+        let decisionIDs = once(body.decision ?? (everything ? list.decision.map(\.id) + (list.chatServer.address == nil ? [] : ["chat"]) : []))
+        let fallbackName = await settings.modelName
+
+        var work: [@Sendable () async -> (ModelCheck.Outcome, [String]?)] = []
+        for id in chatIDs {
+            let entry = await settings.connection(.chat, id: id)
+            work.append {
+                guard let entry else { return (ModelCheck.Outcome(ok: false, detail: "No such model."), nil) }
+                if id == "off" { return (ModelCheck.Outcome(ok: false, off: true, detail: "Off: Ask gives simple built-in answers."), nil) }
+                guard let address = entry.address else { return (ModelCheck.Outcome(ok: false, detail: "The Olares app doesn't set its address now."), nil) }
+                return (await ModelCheck.chat(base: address, key: entry.key, model: entry.model ?? fallbackName), nil)
             }
         }
-        var decision = savedDecision.flatMap(URL.init(string:))
-        if let text = typed(body.decisionBaseURL), !text.isEmpty { decision = URL(string: text) }
-        let savedDecisionKey = await settings.value("decisionAPIKey")
-        let decisionKey = categorizing == .chat ? key(body.decisionAPIKey, saved: nil) ?? chatKey : key(body.decisionAPIKey, saved: savedDecisionKey)
-        var model = await settings.modelName
-        if let text = typed(body.modelName), !text.isEmpty { model = text }
-        let savedOpenRouter = await settings.openRouterKey
-        var zeroRetention = await settings.openRouterZeroRetention
-        if let chosen = body.openRouterZeroRetention { zeroRetention = chosen }
-        let setup = ModelCheck.Setup(chat: chat, chatKey: chatKey, model: model, categorizing: categorizing, decision: decision,
-                                     decisionKey: decisionKey, openRouterKey: key(body.openRouterKey, saved: savedOpenRouter),
-                                     zeroRetention: zeroRetention)
-        return try HTTP.json(await ModelCheck.run(setup))
+        for id in decisionIDs {
+            let entry = await settings.connection(.decision, id: id)
+            work.append {
+                guard let entry else { return (ModelCheck.Outcome(ok: false, detail: "No such model."), nil) }
+                guard let address = entry.address else {
+                    return (ModelCheck.Outcome(ok: false, detail: id == "chat" ? "It uses the chat model's server, and no chat model is in use."
+                                                                            : "The Olares app doesn't set its address now."), nil)
+                }
+                return (await ModelCheck.decision(base: address, key: entry.key), nil)
+            }
+        }
+        let jevKey = await settings.openRouterKey, zeroRetention = await settings.openRouterZeroRetention
+        let testJev = body.jev ?? (everything && jevKey != nil)
+        if testJev { work.append { (await ModelCheck.jev(key: jevKey, zeroRetention: zeroRetention), nil) } }
+        if let draft = body.draft {
+            switch draft.kind {
+            case .jev:
+                // Jev's address is always OpenRouter's, so a blank key can only mean the saved one.
+                let typedKey = draft.apiKey?.trimmingCharacters(in: .whitespacesAndNewlines) ?? ""
+                let key = !typedKey.isEmpty ? typedKey : draft.removeKey == true ? nil : jevKey
+                let zdr = draft.zeroRetention ?? zeroRetention
+                work.append { (await ModelCheck.jev(key: key, zeroRetention: zdr), nil) }
+            case .chat, .decision:
+                let job: ServerSettings.Job = draft.kind == .chat ? .chat : .decision
+                var found: ModelConnection?
+                if let id = draft.id { found = await settings.connection(job, id: id) }
+                let entry = found, missing = draft.id != nil && entry == nil
+                let typed = draft.address?.trimmingCharacters(in: .whitespacesAndNewlines) ?? ""
+                let address: Result<URL?, any Error> = typed.isEmpty ? .success(entry?.address) : Result { try ModelCheck.address(typed) }
+                work.append {
+                    if missing { return (ModelCheck.Outcome(ok: false, detail: "No such model."), nil) }
+                    let base: URL
+                    switch address {
+                    case let .failure(error): return (ModelCheck.Outcome(ok: false, detail: error.localizedDescription), nil)
+                    case .success(nil): return (ModelCheck.Outcome(ok: false, detail: "Add the server's address."), nil)
+                    case let .success(url?): base = url
+                    }
+                    let key = ModelCheck.key(typed: draft.apiKey, removeKey: draft.removeKey == true, for: base, entry: entry)
+                    // The saved key stayed behind because this is another server: say so when that's why it was turned away.
+                    func withKeyNote(_ outcome: ModelCheck.Outcome) -> ModelCheck.Outcome {
+                        guard key == nil, draft.removeKey != true, entry?.key != nil, outcome.detail.hasPrefix("It wants an API key") else { return outcome }
+                        var noted = outcome
+                        noted.detail = outcome.detail.replacingOccurrences(of: "Add one in its Edit.", with: "The saved key only goes to its own server: type this one's key to try it.")
+                        return noted
+                    }
+                    guard job == .chat else { return (withKeyNote(await ModelCheck.decision(base: base, key: key)), nil) }
+                    async let names = ModelCheck.listModels(at: base, key: key)
+                    let typedModel = draft.model?.trimmingCharacters(in: .whitespacesAndNewlines) ?? ""
+                    guard let model = typedModel.isEmpty ? entry?.model : typedModel else {
+                        let offered = await names
+                        let detail = "Add the model's name, as the server knows it." + (offered.map { $0.isEmpty ? "" : " It offers: \($0.prefix(12).joined(separator: ", "))." } ?? "")
+                        return (ModelCheck.Outcome(ok: false, address: base.absoluteString, detail: detail), offered)
+                    }
+                    let outcome = withKeyNote(await ModelCheck.chat(base: base, key: key, model: model))
+                    return (outcome, await names)
+                }
+            }
+        }
+
+        var results = await ModelCheck.bounded(work)
+        var report = ModelTestReport()
+        for id in chatIDs { report.chat[id] = results.removeFirst().0 }
+        for id in decisionIDs { report.decision[id] = results.removeFirst().0 }
+        if testJev { report.jev = results.removeFirst().0 }
+        if body.draft != nil { (report.draft, report.models) = results.removeFirst() }
+        return try HTTP.json(report)
     }
 
     /// `{"apply": false}` previews which merchants the model would move under the current categories;

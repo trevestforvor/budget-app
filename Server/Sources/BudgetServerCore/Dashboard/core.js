@@ -308,6 +308,10 @@ export const dot = (tone) => h("span", { class: `dot ${tone || ""}`, "aria-hidde
 /// DSTag: 6 px radius, its tone's 12% wash, mono uppercase.
 export const tag = (label, tone) => h("span", { class: `tag ${tone || ""}` }, label);
 export const srOnly = (t) => h("span", { class: "sr-only" }, t);
+/// For a field that holds a key or a token: no spelling help, and password managers keep out of it (one filled in the
+/// Olares login's password once). An API key field adds `autocomplete: "new-password"`, which stops browsers offering a
+/// saved password there.
+export const secretAttrs = { autocomplete: "off", spellcheck: "false", "data-1p-ignore": "", "data-lpignore": "true", "data-bwignore": "" };
 export function button(label, { kind = "secondary", compact = false, onclick, disabled, type = "button", ...rest } = {}) {
   return h("button", { class: `btn ${kind}${compact ? " compact" : ""}`, type, onclick, disabled, ...rest }, label);
 }
@@ -407,6 +411,7 @@ const HEAVY = {
   dupes: () => api("/v1/imports/duplicates", { method: "POST", body: { apply: false } }),
   providers: () => api("/dash/providers"),
   fields: () => api("/dash/settings"),
+  models: () => api("/dash/models"),
   history: () => api("/v1/imports"),
   coverage: () => api("/dash/coverage"),
   groups: () => api("/dash/review/groups"),

@@ -129,10 +129,12 @@ After that, linked accounts sync every 6 hours (`BUDGET_SYNC_INTERVAL_HOURS`), a
 
 ## 9. AI (optional)
 
-With no model set, Ask gives built-in answers computed from the ledger, and anything rules and merchant memory can't file waits in Review. To add models, go to the dashboard → Settings → Models (each has a **Test** button):
+With no model set, Ask gives built-in answers computed from the ledger, and anything rules and merchant memory can't file waits in Review. Models are on the dashboard → Settings → Models, and each job can keep several. **Add** one (it's saved right away), pick the one to use, then **Save** at the bottom of the page. **Test** at the bottom of the card checks every model listed with a one-word question or a made-up coffee charge, nothing from the ledger; each model's **Edit** has a Test of its own.
 
-- **Ask (chat):** any OpenAI-compatible endpoint, model id and key. That can be OpenAI, a router like OpenRouter or LiteLLM, or a model you host.
-- **Categorizing:** off by default. It can be Jev through their own OpenRouter key (it sees only the merchant name and the category list), or a self-hosted decision server (Cloudflare Clef on your Olares) that serves `/v1/systemone`. An address saved as `.../v1/decision` or `.../v1` still works.
+- **Ask (chat):** Add a chat model with any OpenAI-compatible address, its key and the model id. That can be OpenAI, a router like OpenRouter or LiteLLM, or a model you host. The morning summary is written with it too.
+- **Categorizing:** off by default. It can be Jev through their own OpenRouter key (it sees only the merchant name and the category list), or a self-hosted decision server (Cloudflare Clef on your Olares) that serves `/v1/systemone`: Add a categorizing server, or pick "The chat model's server" when that one serves it too. An address saved as `.../v1/decision` or `.../v1` still works.
+
+A model set in `budget.env` (`MODEL_BASE_URL`, `MODEL_API_KEY`, `MODEL_NAME`) is listed as "From the Olares app", the dashboard's name for the server's own settings. It's used until another is picked, and it changes only in `budget.env`.
 
 Bank data goes to a model only if one is configured. In the app, Settings → Decision model → "What the decision model sees" shows the exact request.
 

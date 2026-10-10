@@ -29,7 +29,7 @@ function filterFromParams(params) {
 /// The hash keeps the filter, so a reload or a shared link opens the same rows.
 function remember(f) {
   const q = query(f);
-  history.replaceState(null, "", `#/transactions${q ? "?" + q : ""}`);
+  history.replaceState(history.state, "", `#/transactions${q ? "?" + q : ""}`);  // keeps the entry's place (app.js)
 }
 
 function draw(v) {

@@ -95,6 +95,21 @@ struct PostgresStoreTests {
         }
     }
 
+    @Test("Saved models load from their own row, and a 0.5.0 server row imports into it once")
+    func modelSettings() async throws {
+        try await withStore { store in
+            #expect(try await store.modelSettings() == nil)
+            try await store.saveServerSettings(StoredServerSettings(values: ["modelBaseURL": "https://switchboard.example", "modelAPIKey": "", "modelName": "smart"]))
+            let settings = ServerSettings(config: TestServer.config(), store: store, sealer: try TokenSealer(base64Key: TestServer.key))
+            try await settings.load()
+            let saved = try #require(try await store.modelSettings())
+            #expect(saved.models.map(\.id) == ["migrated-chat"] && saved.inUse == ["chat": "migrated-chat"])
+            _ = try await settings.saveModel(ModelDraft(kind: "decision", address: "http://clef.local"), policy: .off)
+            try await settings.load()
+            #expect(try await store.modelSettings()?.models.count == 2)
+        }
+    }
+
     @Test("Links and imports upsert, list and delete")
     func records() async throws {
         try await withStore { store in

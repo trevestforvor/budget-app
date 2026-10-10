@@ -107,6 +107,13 @@ extension ServerStore {
     public func saveServerSettings(_ settings: StoredServerSettings) async throws {
         try await saveSetting("server", JSONEncoder().encode(settings))
     }
+    /// The saved models and picks: a row of their own, which a 0.5.0 server never rewrites.
+    public func modelSettings() async throws -> StoredModelSettings? {
+        try await setting("models").map { try JSONDecoder().decode(StoredModelSettings.self, from: $0) }
+    }
+    public func saveModelSettings(_ settings: StoredModelSettings) async throws {
+        try await saveSetting("models", JSONEncoder().encode(settings))
+    }
 }
 
 /// In-memory store for local runs and tests.

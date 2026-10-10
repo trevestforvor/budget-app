@@ -132,7 +132,7 @@ function renderRecheck(panel) {
   const preview = h("div", { class: "recheck-result" });
   fill(panel, 
     off ? h("div", { class: "banners" }, callout({ tone: "info", title: "The decision model is off", body: "Turn one on in Settings to file transactions for you and to re-check them here.",
-      actions: [h("a", { class: "btn secondary compact", href: "#/settings" }, "Open Settings")] })) : null,
+      actions: [h("a", { class: "btn secondary compact", href: "#/settings/categorizing" }, "Open Settings")] })) : null,
     h("section", { class: "card stack", "aria-labelledby": "recheck-filed" },
       h("h2", { class: "t-headline", id: "recheck-filed" }, "What the model already filed"),
       h("p", { class: "t-callout muted" }, "The decision model looks again at the merchants it filed, against your current categories, and shows what it would move. Your own confirmations and rules are never touched."),

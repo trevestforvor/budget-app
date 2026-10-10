@@ -1,6 +1,6 @@
 // Bank providers: Plaid, Teller and SimpleFIN. The key forms here are shared by the Connect-a-bank drawer
 // (Accounts) and Settings → Bank providers, and the Link flows run only in this dashboard.
-import { fill, h, api, store, heavy, cached, forget, afterWrite, toast, callout, button, busy, armed, tag, plural, reportError } from "./core.js";
+import { fill, h, api, store, heavy, cached, forget, afterWrite, toast, callout, button, busy, armed, tag, plural, reportError, secretAttrs } from "./core.js";
 
 const PLAID_JS = "https://cdn.plaid.com/link/v2/stable/link-initialize.js";
 const TELLER_JS = "https://cdn.teller.io/connect/connect.js";
@@ -47,7 +47,6 @@ const noSealing = () => callout({ tone: "watch", title: "The server can't protec
   detail: "Set BUDGET_TOKEN_KEY to the output of: openssl rand -base64 32" });
 
 const field = (label, input, help, wide) => h("label", { class: `field${wide ? " wide" : ""}` }, h("span", { class: "field-head" }, label), input, help ? h("span", { class: "help" }, help) : null);
-const secretAttrs = { autocomplete: "off", spellcheck: "false", "data-1p-ignore": "", "data-lpignore": "true", "data-bwignore": "" };
 
 /// Plaid's keys. `onChange` is told whenever a value changes (Settings counts unsaved changes with it).
 export function plaidForm({ onChange } = {}) {
@@ -182,7 +181,7 @@ export async function linkPlaid({ resume = false, update = null, grant = false, 
     sessionStorage.removeItem("plaidLinkToken");
     sessionStorage.removeItem("plaidUpdateLink");
     sessionStorage.removeItem("plaidGrant");
-    if (resume) history.replaceState(null, "", location.pathname + "#/accounts");
+    if (resume) history.replaceState(history.state, "", location.pathname + "#/accounts");
   };
   if (!token) { clean(); reportError({ message: "The bank sign-in expired before it finished. Start again from Accounts." }, where); return; }
   sessionStorage.setItem("plaidLinkToken", token);

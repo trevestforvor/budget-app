@@ -21,6 +21,8 @@ public struct BudgetService: Sendable {
     /// Models, sync, time zone, public URL — dashboard over environment over defaults.
     public let settings: ServerSettings
     public let logger: Logger
+    /// Swaps the models in as settings change, never an older snapshot over a newer one (`BudgetServerApp.apply`).
+    let modelApplier = ModelApplier()
 
     /// A new ledger (first boot or admin reset). With a local decision model configured it starts
     /// categorizing on it at the default threshold; the person can change or turn that off in Settings.
@@ -94,6 +96,8 @@ enum HTTP {
         case let e as SourceHTTPError: return self.error(.badGateway, providerMessage(e))
         case is DecodingError: return self.error(.badRequest, "Malformed request body: \(error)")
         case let e as HTTPError: return self.error(e.status, e.body ?? "\(e.status)")
+        // A body past the route's limit (`body(_:_:limit:)`).
+        case is NIOTooManyBytesError: return self.error(.contentTooLarge, "That's too much to send at once.")
         // Anything else says what it is in its own words (the assistant running out of tokens, a model's error) rather
         // than as a Swift case name.
         default: return self.error(.internalServerError, (error as? LocalizedError)?.errorDescription ?? String(describing: error))

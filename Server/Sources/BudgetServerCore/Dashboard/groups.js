@@ -55,7 +55,7 @@ function draw(v, { keepFocus = false } = {}) {
     off ? callout({ tone: "info", role: "note", title: suggested ? "The decision model is off; these suggestions are from before" : "No suggestions while the decision model is off",
       body: suggested ? "Pick one, or another category, for each group. Turn a model on in Settings to have most of them filed for you."
         : "Pick a category for each group yourself, or turn a model on in Settings to have most of them filed for you.",
-      actions: [h("a", { class: "btn secondary compact", href: "#/settings/categorization" }, "Open Settings")] }) : null,
+      actions: [h("a", { class: "btn secondary compact", href: "#/settings/categorizing" }, "Open Settings")] }) : null,
     h("div", { class: "group-bar" }, search,
       h("p", { class: "t-caption muted" }, `${plural(v.groups.length, "group")} · ${plural(rows, "transaction")} waiting`,
         h("span", { class: "keys hide-phone" }, " · ", kbd("j"), " ", kbd("k"), " move · ", kbd("1"), "–", kbd("3"), " file · ", kbd("u"), " undo"))),
