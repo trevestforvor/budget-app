@@ -159,9 +159,10 @@ enum ModelCheck {
         } catch {
             var outcome = Outcome(ok: false, address: base.absoluteString, model: model, milliseconds: ms(since: started),
                                   detail: explain(error, path: OpenAIChatModel(baseURL: base, model: model).endpoint.path, key: key, decision: false))
-            // The server answered but doesn't know the name: say which names it does know.
+            // A name the server doesn't list: said beside what it answered, never instead of it. Some names work unlisted
+            // (OpenRouter's stealth models), so the refusal can be for another reason, and that's the one to read.
             if let models = await listModels(at: base, key: key, toolsOnly: false), !models.isEmpty, !models.contains(model) {
-                outcome.detail = "The server answered, but has no model named “\(model)”. It offers: \(models.prefix(12).joined(separator: ", "))."
+                outcome.detail += " Its model list doesn't include “\(model)”" + (models.count <= 20 ? "; it offers: \(models.joined(separator: ", "))." : ".")
             }
             return outcome
         }
@@ -272,7 +273,7 @@ enum ModelCheck {
     static func explain(_ error: any Error, path: String, key: String?, decision: Bool) -> String {
         if error is TimedOut { return "No answer in \(Int(timeout)) seconds. It may still be loading the model; try again in a minute." }
         if let error = error as? DecisionError, case let .http(status, body) = error {
-            let said = body.trimmingCharacters(in: .whitespacesAndNewlines).prefix(160)
+            let said = body.trimmingCharacters(in: .whitespacesAndNewlines).prefix(300)
             switch status {
             case 401, 403:
                 return key == nil ? "It wants an API key (\(status)). Add one in its Edit." : "It turned the API key down (\(status)). Check the key."
@@ -280,8 +281,10 @@ enum ModelCheck {
                 return "OpenRouter has no provider for this model that keeps nothing. Pick another model, or turn off “Only providers that keep nothing” on Jev."
             case 404 where decision:
                 return "This server has no /v1/systemone (404). Categorizing needs the decision server (the Clef one on your Olares): add it under Categorizing → Add a categorizing server, and pick it."
+            case 404 where said.isEmpty:
+                return "Nothing at \(path) on this server (404). Check the address."
             case 404:
-                return "Nothing at \(path) on this server (404). Check the address." + (said.isEmpty ? "" : " It said: \(said)")
+                return "The server answered 404 at \(path). It said: \(said)"
             default:
                 return "The server answered \(status)." + (said.isEmpty ? "" : " It said: \(said)")
             }

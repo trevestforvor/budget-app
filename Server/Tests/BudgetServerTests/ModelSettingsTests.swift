@@ -53,7 +53,13 @@ final class FakeModelServer: @unchecked Sendable {
             let router = Router()
             router.get("/v1/models") { request, _ in server.answer(request, #"{"data":[{"id":"smart"},{"id":"other"}]}"#) }
             router.post("/v1/chat/completions") { request, _ in
-                server.answer(request, #"{"choices":[{"message":{"role":"assistant","content":"OK"},"finish_reason":"stop"}]}"#)
+                // "unlisted" stands for a model the list leaves out that the server then refuses, saying why (as OpenRouter does).
+                let sent = String(buffer: try await request.body.collect(upTo: 1 << 20))
+                guard !sent.contains(#""model":"unlisted""#) else {
+                    return Response(status: .notFound, headers: [.contentType: "application/json"],
+                                    body: ResponseBody(byteBuffer: ByteBuffer(string: #"{"error":{"message":"No endpoints found for unlisted.","code":404}}"#)))
+                }
+                return server.answer(request, #"{"choices":[{"message":{"role":"assistant","content":"OK"},"finish_reason":"stop"}]}"#)
             }
             router.post("/v1/systemone") { request, _ in
                 server.answer(request, #"{"model":"clef","answers":{"category":{"type":"choice","choice":"dining","probabilities":{"dining":0.9}}}}"#)
@@ -350,7 +356,7 @@ struct ModelSettingsTests {
             try await client.execute(uri: "/v1/status", method: .get) { response in
                 let status = try RemoteBudgetAPI.decoder.decode(ServerStatus.self, from: Data(response.body.readableBytesView))
                 #expect(status.roles.first { $0.role == .chat }?.model == "anthropic/claude")
-                #expect(status.version == "0.5.2")
+                #expect(status.version == "0.5.3")
             }
             try await client.execute(uri: "/dash/models/use", method: .post, headers: ModelFixtures.write, body: TestServer.body(#"{"chat":"nope"}"#)) { response in
                 #expect(response.status == .unprocessableContent)
@@ -542,6 +548,15 @@ struct ModelSettingsTests {
             }
             #expect(other.server.authorizations("/v1/models").allSatisfy { $0 == nil })
             #expect(other.server.authorizations("/v1/chat/completions") == [nil])
+        }
+    }
+
+    @Test("A refused model the server doesn't list: Test shows what the server said, with the list's note beside it, never instead")
+    func refusalKept() async throws {
+        try await FakeModelServer.with(1) { servers in
+            let outcome = await ModelCheck.chat(base: servers[0].url, key: nil, model: "unlisted")
+            #expect(!outcome.ok)
+            #expect(outcome.detail == #"The server answered 404 at /v1/chat/completions. It said: {"error":{"message":"No endpoints found for unlisted.","code":404}} Its model list doesn't include “unlisted”; it offers: other, smart."#)
         }
     }
 
