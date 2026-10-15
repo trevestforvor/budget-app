@@ -1,6 +1,6 @@
 # Budget
 
-A personal budget and planning app for iOS whose AI runs on hardware you own. **To build and run your own copy, start with [docs/SETUP.md](docs/SETUP.md).** The visual language (modeled on Origin) is in [docs/DESIGN.md](docs/DESIGN.md), the server contract in [docs/API.md](docs/API.md), running and deploying the server in [docs/SERVER.md](docs/SERVER.md), the assistant (tools, system prompt, grounding, decision model) in [docs/ASSISTANT.md](docs/ASSISTANT.md), and the budgeting method in [docs/BUDGETING.md](docs/BUDGETING.md).
+A personal budget and planning app for iOS whose AI runs on hardware you own. **To build and run your own copy, run `./setup.sh` and follow [docs/SETUP.md](docs/SETUP.md)**, which leads to the [server](docs/INSTALL-SERVER.md) and [app](docs/INSTALL-APP.md) guides. The visual language (modeled on Origin) is in [docs/DESIGN.md](docs/DESIGN.md), the server contract in [docs/API.md](docs/API.md), running and deploying the server in [docs/SERVER.md](docs/SERVER.md), the assistant (tools, system prompt, grounding, decision model) in [docs/ASSISTANT.md](docs/ASSISTANT.md), and the budgeting method in [docs/BUDGETING.md](docs/BUDGETING.md).
 
 ## Layout
 
@@ -17,6 +17,7 @@ Packages/BudgetCore/
   Tests/                     Swift Testing: ledger math, review loop, ask routing, ingest, cache, contrast
 Server/                      Budget API: Swift + Hummingbird 2 + Postgres (macOS, Linux, or an Olares box)
 Config/                      Budget.xcconfig; your signing goes in Local.xcconfig (not checked in)
+setup.sh                     one-step setup: tools, server, the phone's HTTPS address, the app (./setup.sh check)
 deploy/macos/                install.sh: the server as a launchd service on a Mac that stays on
 deploy/olares/               deploy script for a self-hosted Olares box
 project.yml                  XcodeGen spec (the .xcodeproj is generated)

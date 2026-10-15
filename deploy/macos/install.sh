@@ -5,12 +5,15 @@
 #   deploy/macos/install.sh --no-launchd build and install only; start it yourself with "$BUDGET_HOME/run.sh"
 #   deploy/macos/install.sh --uninstall  stop it and remove the launchd jobs (keeps the data, settings and backups)
 #
+# Replacing an installed server backs up its database first, and stops if that backup fails.
+#
 # Everything lives in $BUDGET_HOME (default ~/Library/Application Support/BudgetServer):
 #   budget.env (mode 600, secrets; created once, never overwritten), bin/budget-server, run.sh, backup.sh,
 #   logs/server.log, backups/.
 # Two LaunchAgents: local.budget.server (always on, restarted if it exits) and local.budget.backup (pg_dump nightly).
 # LaunchAgents run while you're logged in: on a headless Mac, turn on automatic login and turn off sleep.
-# Needs Xcode 26 (Swift 6.2) on macOS 26, and Postgres 16 on 127.0.0.1 (see docs/SETUP.md).
+# Needs Xcode 26 (Swift 6.2) on macOS 26, and Postgres 16 on 127.0.0.1 (see docs/INSTALL-SERVER.md).
+# ./setup.sh at the repo root runs this, with the tools, Postgres and the phone's address around it.
 set -euo pipefail
 
 REPO=$(cd "$(dirname "$0")/../.." && pwd)
@@ -45,6 +48,10 @@ command -v swift >/dev/null || { echo "No swift: install Xcode 26 and run xcode-
 
 echo "==> building the server (release)"
 (cd "$REPO/Server" && swift build -c release --product BudgetServer)
+if [[ -x $BUDGET_HOME/bin/budget-server && -x $BUDGET_HOME/backup.sh ]] && grep -q '^POSTGRES_HOST=.' "$BUDGET_HOME/budget.env" 2>/dev/null; then
+  echo "==> backing up the ledger before replacing the server"
+  "$BUDGET_HOME/backup.sh" || { echo "The backup failed, so the server wasn't replaced. Is Postgres running?" >&2; exit 1; }
+fi
 mkdir -p "$BUDGET_HOME/bin" "$BUDGET_HOME/logs" "$BUDGET_HOME/backups"
 chmod 700 "$BUDGET_HOME"
 cp "$REPO/Server/.build/release/BudgetServer" "$BUDGET_HOME/bin/budget-server.new"

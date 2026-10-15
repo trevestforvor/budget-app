@@ -1,6 +1,6 @@
 # Budget: notes for coding agents
 
-An iOS budgeting app (SwiftUI, iOS 26) with a self-hosted Swift server (Hummingbird 2 + Postgres) and a web dashboard. Layout and run commands: [README.md](README.md). Setting up a copy for someone, from a fresh clone to a phone with their banks linked: [docs/SETUP.md](docs/SETUP.md). It starts with a checklist for an agent.
+An iOS budgeting app (SwiftUI, iOS 26) with a self-hosted Swift server (Hummingbird 2 + Postgres) and a web dashboard. Layout and run commands: [README.md](README.md). Setting up a copy for someone, from a fresh clone to a phone with their banks linked: [docs/SETUP.md](docs/SETUP.md), driven by `./setup.sh` (`./setup.sh check` shows where a machine stands). It has a checklist for an agent; the details are in docs/INSTALL-SERVER.md and docs/INSTALL-APP.md.
 
 ## Build and test
 
