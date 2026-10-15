@@ -200,8 +200,8 @@ final class AppModel {
         if serverVersion == nil { serverVersion = try await api.serverStatus().version }
         guard let serverVersion, ServerStatus.version(serverVersion, isAtLeast: minimum) else {
             throw BudgetAPIError.rejected(action.hasRuleConditions
-                ? "The Budget server on your Olares is older than this app and would save a broader rule than this one. Update the server, then try again."
-                : "The Budget server on your Olares is older than this app and can't keep this yet. Update the server, then try again.")
+                ? "Your Budget server is older than this app and would save a broader rule than this one. Update the server, then try again."
+                : "Your Budget server is older than this app and can't keep this yet. Update the server, then try again.")
         }
     }
 

@@ -82,14 +82,14 @@ struct SettingsView: View {
                         .settingsCardRow()
                 }
                 if !app.isDemo, app.freshness == .unreachable {
-                    DSNoticeCard("Can't reach your Olares",
-                                 message: "Nothing has loaded, and the phone has no saved copy to show yet. Check the server address and that your Olares is on.",
+                    DSNoticeCard("Can't reach your server",
+                                 message: "Nothing has loaded, and the phone has no saved copy to show yet. Check the server address, and that the server is on.",
                                  systemImage: "wifi.slash", tint: Color.ds.amber,
                                  actionTitle: "Check the connection") { path.append(.advanced) }
                         .settingsCardRow()
                 } else if !app.isDemo, app.freshness == .cached {
                     DSNoticeCard("Showing the offline copy",
-                                 message: "Your Olares didn't answer, so this is what the phone saved last. Changes wait until it's back.",
+                                 message: "Your server didn't answer, so this is what the phone saved last. Changes wait until it's back.",
                                  systemImage: "icloud.slash", tint: Color.ds.amber,
                                  actionTitle: "Check the connection") { path.append(.advanced) }
                         .settingsCardRow()

@@ -80,7 +80,7 @@ public enum BudgetAPIError: LocalizedError, Equatable {
 
     public var errorDescription: String? {
         switch self {
-        case .unreachable: "Can't reach your Budget server. Check that your Olares is on, and the server address in Settings → Advanced."
+        case .unreachable: "Can't reach your Budget server. Check that it's on, and the server address in Settings → Advanced."
         case .offline: "You're offline."
         case .timedOut: "Your Budget server took too long to answer. Try again in a moment."
         case let .server(status, message): message ?? "The server returned \(status)."

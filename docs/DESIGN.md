@@ -129,7 +129,7 @@ System faces only — no bundled fonts — so Dynamic Type and optical sizes wor
 | `DSConfidenceBadge` | Auto / Likely / Decided / Review, for provenance views. Rows don't carry it: review is the orchid dot, and how a row was filed (tier, model, how sure) is in its details |
 | `DSInsightCard` | "Found for you" card that blooms in its tone, with a provenance footer |
 | `DSToolTrace` | `ƒ(x) sumByCategory(range: "2026-Q3")` |
-| `DSPrivacyBadge` | On your Olares / Aggregates only / Offline copy / Demo |
+| `DSPrivacyBadge` | On your server / Aggregates only / Offline copy / Demo |
 | `DSAskField`, `DSUserBubble`, `DSThinkingLine` | Conversation surface. The ask field is a raised lit panel, rings in iris when focused and breathes the AI edge while working |
 | `DSField` (`.boxed` / `.inline` / `.search`, `isCode`) | Label above, an engraved well with an opaque border, helper or error below; cyan ring and halo on focus, caution ring and glyph on error, `inkDisabled` when disabled, a lock when read-only. `.inline` is a list row with a cyan leading bar on focus. Wraps any input, so `SecureField`, paste buttons and formatted amounts keep their own modifiers |
 | `DSAmountField` | A big amount entry: serif, superior "$", an underline that turns cyan on focus |

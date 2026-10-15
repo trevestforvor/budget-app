@@ -356,7 +356,7 @@ struct ActivityView: View {
             }
             if hasMore, !app.isDemo, app.freshness.isOffline {
                 // Offline, only the newest page is saved on the phone; there's no next page to wait for.
-                Text("Showing the offline copy: the newest \(rows.count.formatted()) transactions. The rest load when your Olares answers.")
+                Text("Showing the offline copy: the newest \(rows.count.formatted()) transactions. The rest load when your server answers.")
                     .dsFont(.caption)
                     .foregroundStyle(Color.ds.inkSecondary)
                     .frame(maxWidth: .infinity)

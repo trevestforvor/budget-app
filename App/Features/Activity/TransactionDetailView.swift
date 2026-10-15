@@ -550,7 +550,7 @@ struct TransactionDetailView: View {
             .buttonStyle(.ds(.quiet))
             .frame(minHeight: DSSize.hitTarget)
             Text(app.isDemo ? "This is the demo ledger. Nothing here leaves the phone."
-                            : "This transaction lives on your Olares. The phone keeps a copy for offline viewing only.")
+                            : "This transaction lives on your server. The phone keeps a copy for offline viewing only.")
                 .dsFont(.caption)
                 .foregroundStyle(Color.ds.inkTertiary)
         }

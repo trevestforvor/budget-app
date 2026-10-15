@@ -233,7 +233,7 @@ public enum ToolCatalog {
                                  required: ["fact"])),
         ToolSpec(name: "updateDecisionPolicy", description: "Propose changing the decision model: which provider categorizes uncertain transactions, and the confidence percent at or above which its decisions are accepted without review.", kind: .write,
                  schema: .object(nil, [
-                     "provider": .string("off, localDecide (Qwen Decide on the Olares), laya (on the Olares), or jev (TypeSafe; receives merchant, cleaned descriptor and amount band).", enum: DecisionProvider.allCases.map(\.rawValue)),
+                     "provider": .string("off, localDecide (Qwen Decide on the user's server), laya (on the user's server), or jev (TypeSafe; receives merchant, cleaned descriptor and amount band).", enum: DecisionProvider.allCases.map(\.rawValue)),
                      "escalateToJev": .boolean("With a local provider, re-ask Jev about decisions below the threshold."),
                      "autoAcceptPercent": .integer("Auto-accept decisions at or above this confidence, as a whole percent the user stated, e.g. 80.", minimum: DecisionPolicy.allowedPercents.lowerBound, maximum: DecisionPolicy.allowedPercents.upperBound),
                      "rerunPending": .boolean("Re-run the model on transactions waiting for review. Defaults to true when the provider, threshold or escalation changes."),

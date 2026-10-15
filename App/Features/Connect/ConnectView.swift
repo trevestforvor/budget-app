@@ -25,7 +25,7 @@ struct ConnectView: View {
                     Text("Connect to your server")
                         .dsFont(.headline)
                         .foregroundStyle(Color.ds.ink)
-                    Text("Your ledger lives on your Olares. Open the Budget tile there, go to Settings → Connect your phone, and copy the server URL and API token.")
+                    Text("Your ledger lives on your server. Open its dashboard, go to Settings → Connect your phone, and copy the server URL and API token.")
                         .dsFont(.callout)
                         .foregroundStyle(Color.ds.inkSecondary)
                         .fixedSize(horizontal: false, vertical: true)
@@ -34,7 +34,7 @@ struct ConnectView: View {
                 DSCard {
                     VStack(alignment: .leading, spacing: DSSpace.md) {
                         DSField("Server URL", isCode: true, isEmpty: serverURL.isEmpty, onClear: { serverURL = "" }) {
-                            TextField("Server URL", text: $serverURL, prompt: Text("https://…olares.com"))
+                            TextField("Server URL", text: $serverURL, prompt: Text("https://budget.example.com"))
                                 .keyboardType(.URL)
                                 .textContentType(.URL)
                                 .accessibilityIdentifier("connectURL")
@@ -88,7 +88,7 @@ struct ConnectView: View {
             switch error {
             case .unreachable: problem = "Couldn't reach that server. Check the address."
             case .offline, .timedOut: problem = error.localizedDescription
-            case let .server(status, _) where status == 401: problem = "The server refused the token. Copy it again from Budget on your Olares → Settings → Connect your phone."
+            case let .server(status, _) where status == 401: problem = "The server refused the token. Copy it again from the dashboard: Settings → Connect your phone."
             case let .server(status, _) where status == 421 || status == 404: problem = "That address isn't the Budget API. Check the URL."
             default: problem = error.localizedDescription
             }

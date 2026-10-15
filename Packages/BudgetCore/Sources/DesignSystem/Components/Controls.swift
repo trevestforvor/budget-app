@@ -523,13 +523,13 @@ public struct DSPrivacyBadge: View {
 
     public var body: some View {
         switch state {
-        case .local: DSTag("On your Olares", systemImage: "lock.fill", tint: Color.ds.accent)
+        case .local: DSTag("On your server", systemImage: "lock.fill", tint: Color.ds.accent)
         case .aggregatesOnly: DSTag("Aggregates only", systemImage: "lock.shield", tint: Color.ds.azure)
         case .cached: DSTag("Offline copy", systemImage: "icloud.slash", tint: Color.ds.inkSecondary)
         // The copy saved on the phone, on screen while the fresh numbers load.
         case .updating: DSTag("Updating", systemImage: "arrow.triangle.2.circlepath", tint: Color.ds.inkSecondary)
-        // Nothing loaded and nothing saved: never the reassuring "On your Olares" above "Can't reach your ledger".
-        case .unreachable: DSTag("Olares offline", systemImage: "wifi.slash", tint: Color.ds.amber)
+        // Nothing loaded and nothing saved: never the reassuring "On your server" above "Can't reach your ledger".
+        case .unreachable: DSTag("Server offline", systemImage: "wifi.slash", tint: Color.ds.amber)
         case .demo: DSTag("Demo ledger", systemImage: "testtube.2", tint: Color.ds.iris)
         }
     }

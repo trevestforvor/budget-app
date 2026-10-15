@@ -27,7 +27,7 @@ struct AssistantMemoryView: View {
         Group {
             if unavailable {
                 DSStateView(systemImage: "sparkles", title: "Not on this server yet",
-                            message: "Update the Budget server on your Olares to give Ask a memory.")
+                            message: "Update your Budget server to give Ask a memory.")
                     .frame(maxHeight: .infinity)
             } else {
                 switch state {

@@ -331,7 +331,7 @@ final class SettingsUITests: XCTestCase {
     func testPrivacyAndTargets() {
         launch()
         open("settingsPrivacy")
-        XCTAssertTrue(text(containing: "Your transactions stay on your Olares").waitForExistence(timeout: 10))
+        XCTAssertTrue(text(containing: "Your transactions stay on your server").waitForExistence(timeout: 10))
         snapshot("privacy")
         app.navigationBars.buttons.element(boundBy: 0).tap()
         open("settingsTargets")

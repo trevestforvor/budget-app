@@ -1331,7 +1331,7 @@
           "type" : "boolean"
         },
         "provider" : {
-          "description" : "off, localDecide (Qwen Decide on the Olares), laya (on the Olares), or jev (TypeSafe; receives merchant, cleaned descriptor and amount band).",
+          "description" : "off, localDecide (Qwen Decide on the user's server), laya (on the user's server), or jev (TypeSafe; receives merchant, cleaned descriptor and amount band).",
           "enum" : [
             "off",
             "localDecide",

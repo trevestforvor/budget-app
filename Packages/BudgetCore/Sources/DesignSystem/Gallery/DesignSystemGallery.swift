@@ -102,7 +102,7 @@ public struct DesignSystemGallery: View {
                     Text("Label — field and segment labels").dsFont(.label).foregroundStyle(Color.ds.inkSecondary)
                     Text("Eyebrow · mono label").dsFont(.eyebrow).foregroundStyle(Color.ds.inkSecondary)
                     Text("sumByCategory(2026-Q3)").dsFont(.mono).foregroundStyle(Color.ds.inkTertiary)
-                    Text("https://budget.you.olares.com").dsFont(.code).foregroundStyle(Color.ds.inkSoft)
+                    Text("https://budget.example.com").dsFont(.code).foregroundStyle(Color.ds.inkSoft)
                     Text("JAN  FEB  MAR  $1.2K").dsFont(.axis).foregroundStyle(Color.ds.inkTertiary)
                 }
                 .foregroundStyle(Color.ds.ink)
@@ -349,9 +349,9 @@ public struct DesignSystemGallery: View {
 
             section("Notices") {
                 DSNoticeCard("2 connections need you to sign in again",
-                             message: "Your bank expired the connection. Reconnect on your Olares dashboard — it keeps your history and accounts.",
+                             message: "Your bank expired the connection. Reconnect on your server's dashboard — it keeps your history and accounts.",
                              actionTitle: "Open dashboard") {}
-                DSNoticeCard("Showing the offline copy", message: "From 2 hours ago. Changes wait until your Olares is back.",
+                DSNoticeCard("Showing the offline copy", message: "From 2 hours ago. Changes wait until your server is back.",
                              systemImage: "icloud.slash", tint: Color.ds.amber)
                 DSAttentionPill("2 accounts need attention") {}
             }
@@ -453,7 +453,7 @@ public struct DesignSystemGallery: View {
 
             section("Empty and error") {
                 DSCard {
-                    DSStateView(systemImage: "wifi.slash", title: "Can't reach your Olares", message: "Showing the copy saved on this phone.", actionTitle: "Retry") {}
+                    DSStateView(systemImage: "wifi.slash", title: "Can't reach your server", message: "Showing the copy saved on this phone.", actionTitle: "Retry") {}
                 }
             }
         }

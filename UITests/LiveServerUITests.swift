@@ -45,7 +45,7 @@ final class LiveServerUITests: XCTestCase {
         XCTAssertTrue(app.staticTexts["Safe to spend"].waitForExistence(timeout: 20))
         for tab in ["Spending", "Plan", "Activity"] {
             app.tabBars.buttons[tab].tap()
-            XCTAssertTrue(app.descendants(matching: .any).matching(NSPredicate(format: "label CONTAINS[c] 'On your Olares'")).firstMatch
+            XCTAssertTrue(app.descendants(matching: .any).matching(NSPredicate(format: "label CONTAINS[c] 'On your server'")).firstMatch
                 .waitForExistence(timeout: 20), "\(tab) didn't load live")
         }
     }

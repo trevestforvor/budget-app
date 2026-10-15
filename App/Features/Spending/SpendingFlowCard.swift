@@ -38,7 +38,7 @@ struct SpendingFlowCard: View {
     @ViewBuilder
     private var content: some View {
         if unavailable {
-            Text("The flow view needs a newer Budget server. Update the server on your Olares to see it.")
+            Text("The flow view needs a newer Budget server. Update your server to see it.")
                 .dsFont(.callout).foregroundStyle(Color.ds.inkSecondary)
                 .fixedSize(horizontal: false, vertical: true)
         } else {

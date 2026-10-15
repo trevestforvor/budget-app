@@ -3,7 +3,7 @@ import DesignSystem
 import SwiftUI
 
 enum MerchantSupport {
-    static let unavailable = "Merchant pages need a newer Budget server. Update the server on your Olares, then try again."
+    static let unavailable = "Merchant pages need a newer Budget server. Update your server, then try again."
 }
 
 extension AppModel {

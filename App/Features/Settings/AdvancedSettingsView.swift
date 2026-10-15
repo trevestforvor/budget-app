@@ -50,7 +50,7 @@ struct AdvancedSettingsView: View {
             }
             #endif
             if canDisconnect {
-                DSListSection("This phone", footer: "Removes the server address and token from this phone and deletes the offline copy. Your ledger on the Olares isn't touched.") {
+                DSListSection("This phone", footer: "Removes the server address and token from this phone and deletes the offline copy. Your ledger on the server isn't touched.") {
                     SettingsDestructiveRow(title: "Disconnect this phone") { confirmsDisconnect = true }
                 }
             }
@@ -71,7 +71,7 @@ struct AdvancedSettingsView: View {
                 }
             }
         } message: {
-            Text("You'll need the server address and token again to reconnect. Nothing on your Olares changes.")
+            Text("You'll need the server address and token again to reconnect. Nothing on your server changes.")
         }
     }
 
@@ -96,9 +96,9 @@ struct AdvancedSettingsView: View {
             }
         }
         if !draft.demoOn {
-            DSListSection("Your server", footer: "Both come from your Olares: open Budget, then Settings → Connect your phone. The phone only talks to your own server, and the token stays in this phone's Keychain.") {
+            DSListSection("Your server", footer: "Both come from your server's dashboard: Settings → Connect your phone. The phone only talks to your own server, and the token stays in this phone's Keychain.") {
                 DSField("Server address", style: .inline, isCode: true) {
-                    TextField("Server address", text: $draft.serverURL, prompt: Text("https://budget.you.olares.com"))
+                    TextField("Server address", text: $draft.serverURL, prompt: Text("https://budget.example.com"))
                         .keyboardType(.URL)
                         .textContentType(.URL)
                         .onChange(of: draft.serverURL) { check = .idle }
@@ -106,7 +106,7 @@ struct AdvancedSettingsView: View {
                 }
                 DSField("API token", style: .inline) {
                     HStack(spacing: DSSpace.sm) {
-                        SecureField("API token", text: $draft.token, prompt: Text("Paste it from your Olares"))
+                        SecureField("API token", text: $draft.token, prompt: Text("Paste it from the dashboard"))
                             .textInputAutocapitalization(.never)
                             .autocorrectionDisabled()
                             .textContentType(.password)
@@ -127,11 +127,11 @@ struct AdvancedSettingsView: View {
     }
 
     private var liveModelSection: some View {
-        DSListSection("Live model", footer: "Ask and the categorization model run on Qwen on your Olares, with the demo ledger's numbers. Only in the simulator.") {
-            DSToggleRow("Use the model on your Olares", systemImage: "cpu", tone: .iris, isOn: $draft.useLiveModel)
+        DSListSection("Live model", footer: "Ask and the categorization model run on your own model server, with the demo ledger's numbers. Only in the simulator.") {
+            DSToggleRow("Use your own model", systemImage: "cpu", tone: .iris, isOn: $draft.useLiveModel)
             if draft.useLiveModel {
                 DSField("Model address", style: .inline, isCode: true) {
-                    TextField("Model address", text: $draft.liveModelURL, prompt: Text("https://qwen.you.olares.com"))
+                    TextField("Model address", text: $draft.liveModelURL, prompt: Text("https://model.example.com"))
                         .keyboardType(.URL)
                 }
             }
@@ -203,7 +203,7 @@ struct AdvancedSettingsView: View {
     /// Checks what's typed — not what's saved — straight against the server, past the offline copy.
     private func testConnection() async {
         guard let url = URL(string: draft.trimmedURL), let scheme = url.scheme, scheme.hasPrefix("http"), url.host() != nil else {
-            check = .failed("That isn't a server address. It looks like https://budget.you.olares.com.")
+            check = .failed("That isn't a server address. It looks like https://budget.example.com.")
             return
         }
         check = .checking
@@ -218,11 +218,11 @@ struct AdvancedSettingsView: View {
         } catch let error as BudgetAPIError {
             switch error {
             case .server(status: 401, message: _):
-                check = .failed("The server didn't accept the token. Copy it again from Budget on your Olares → Settings → Connect your phone.")
+                check = .failed("The server didn't accept the token. Copy it again from the dashboard: Settings → Connect your phone.")
             case .server(status: 421, message: _), .notFound:
                 check = .failed("Something answered, but it isn't Budget. Check the address.")
             case .unreachable:
-                check = .failed("Can't reach your server. Check the address, and that your Olares is on.")
+                check = .failed("Can't reach your server. Check the address, and that the server is on.")
             case .offline:
                 check = .failed("This phone is offline.")
             case .timedOut:
@@ -231,7 +231,7 @@ struct AdvancedSettingsView: View {
                 check = .failed("Your server answered with a problem. Try again in a moment.")
             }
         } catch {
-            check = .failed("Can't reach your server. Check the address, and that your Olares is on.")
+            check = .failed("Can't reach your server. Check the address, and that the server is on.")
         }
     }
 }
@@ -322,7 +322,7 @@ private struct ConnectionCard: View {
     private var subtitle: String {
         switch mode {
         case .demo: liveModel.map { "Seeded household data on this phone · Ask runs on \($0)" } ?? "Seeded household data on this phone"
-        case .server: host ?? "Your Olares"
+        case .server: host ?? "Your server"
         case .notConnected: "Add your server's address below"
         }
     }
@@ -449,8 +449,8 @@ private struct DecisionModelSection: View {
             "Jev (TypeSafe) gets only what's shown above for each uncertain transaction: no names, accounts, dates or exact amounts. How sure it must be is set in Review."
         case .localDecide, .laya:
             escalate
-                ? "Runs on your Olares first. Anything it isn't sure of goes to Jev, which gets only what's shown above; if Jev isn't sure either, it comes to you."
-                : "Runs on your Olares. Anything it isn't sure of comes to you in Review, and anything it filed can be changed later."
+                ? "Runs on your server first. Anything it isn't sure of goes to Jev, which gets only what's shown above; if Jev isn't sure either, it comes to you."
+                : "Runs on your server. Anything it isn't sure of comes to you in Review, and anything it filed can be changed later."
         }
     }
 

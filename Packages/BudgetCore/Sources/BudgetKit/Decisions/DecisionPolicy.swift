@@ -12,8 +12,8 @@ public enum DecisionProvider: String, Hashable, Sendable, Codable, CaseIterable 
     public var displayName: String {
         switch self {
         case .off: "Off"
-        case .localDecide: "Qwen Decide · on your Olares"
-        case .laya: "Laya · on your Olares"
+        case .localDecide: "Qwen Decide · on your server"
+        case .laya: "Laya · on your server"
         case .jev: "Jev · TypeSafe"
         }
     }

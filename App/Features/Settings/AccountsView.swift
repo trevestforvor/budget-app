@@ -204,14 +204,14 @@ private struct AddAccountSheet: View {
                     DSGlyph(systemImage: "building.columns", tone: .iris, size: 56)
                     VStack(alignment: .leading, spacing: DSSpace.xs) {
                         Text("Add accounts on your dashboard").dsFont(.title).foregroundStyle(Color.ds.ink)
-                        Text("Banks are linked from Budget on your Olares, so your bank logins never pass through this phone.")
+                        Text("Banks are linked on your server's dashboard, so your bank logins never pass through this phone.")
                             .dsFont(.callout)
                             .foregroundStyle(Color.ds.inkSecondary)
                             .fixedSize(horizontal: false, vertical: true)
                     }
                     DSCard(padding: DSSpace.md) {
                         VStack(alignment: .leading, spacing: DSSpace.md) {
-                            step(1, "Open the Budget dashboard on your Olares.")
+                            step(1, "Open the Budget dashboard on your server.")
                             step(2, "Go to Accounts, then Connect a bank — or import a statement file.")
                             step(3, "Come back here. New accounts show up after the first sync.")
                         }
@@ -223,7 +223,7 @@ private struct AddAccountSheet: View {
                         }
                         .buttonStyle(.ds(.primary, fullWidth: true))
                     } else {
-                        Text("Open Budget from your Olares home screen to get there.")
+                        Text("Open the dashboard on your server to get there.")
                             .dsFont(.caption)
                             .foregroundStyle(Color.ds.inkTertiary)
                     }

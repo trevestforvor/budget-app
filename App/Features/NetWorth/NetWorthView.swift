@@ -20,7 +20,7 @@ struct NetWorthView: View {
             VStack(alignment: .leading, spacing: DSSpace.xl) {
                 if unavailable {
                     DSStateView(systemImage: "chart.line.uptrend.xyaxis", title: "Not on your server yet",
-                                message: "Net worth history needs a newer Budget server. Update it on your Olares, then come back.")
+                                message: "Net worth history needs a newer Budget server. Update your server, then come back.")
                 } else {
                     switch state {
                     case .loading:

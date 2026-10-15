@@ -346,7 +346,7 @@ struct ServerTests {
                 let text = String(buffer: response.body)
                 #expect(rows > 0 && text.contains("\"rows\":\(rows)"))
                 #expect(!text.contains(TestServer.token))
-                #expect(text.contains(#""localDecide":"Qwen Decide · on your Olares""#))  // names come from BudgetKit
+                #expect(text.contains(#""localDecide":"Qwen Decide · on your server""#))  // names come from BudgetKit
                 #expect(text.contains(#""inMemory":true"#))
             }
             try await client.execute(uri: "/dash/connect", method: .get) { #expect(String(buffer: $0.body).contains(TestServer.token)) }

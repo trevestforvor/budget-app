@@ -383,7 +383,7 @@ struct CategoryEditorSheet: View {
                         .fixedSize(horizontal: false, vertical: true)
                 }
             } else if usageFailed {
-                Text("Couldn't count what's filed under it, so merging waits until your Olares answers.")
+                Text("Couldn't count what's filed under it, so merging waits until your server answers.")
                     .dsFont(.caption).foregroundStyle(Color.ds.inkSecondary)
                     .fixedSize(horizontal: false, vertical: true)
                 Button("Try again") { Task { await loadUsage() } }
