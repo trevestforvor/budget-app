@@ -59,6 +59,11 @@ final class FakeModelServer: @unchecked Sendable {
                     return Response(status: .notFound, headers: [.contentType: "application/json"],
                                     body: ResponseBody(byteBuffer: ByteBuffer(string: #"{"error":{"message":"No endpoints found for unlisted.","code":404}}"#)))
                 }
+                // "stopped" stands for an Olares app that isn't running: its gateway answers its own HTML 502 page.
+                guard !sent.contains(#""model":"stopped""#) else {
+                    return Response(status: .badGateway, headers: [.contentType: "text/html"], body: ResponseBody(byteBuffer: ByteBuffer(string:
+                        "<html>\r\n<head><title>502 Bad Gateway</title></head>\r\n<body>\r\n<center><h1>502 Bad Gateway</h1></center>\r\n</body>\r\n</html>\r\n")))
+                }
                 return server.answer(request, #"{"choices":[{"message":{"role":"assistant","content":"OK"},"finish_reason":"stop"}]}"#)
             }
             router.post("/v1/systemone") { request, _ in
@@ -356,7 +361,7 @@ struct ModelSettingsTests {
             try await client.execute(uri: "/v1/status", method: .get) { response in
                 let status = try RemoteBudgetAPI.decoder.decode(ServerStatus.self, from: Data(response.body.readableBytesView))
                 #expect(status.roles.first { $0.role == .chat }?.model == "anthropic/claude")
-                #expect(status.version == "0.5.3")
+                #expect(status.version == "0.5.4")
             }
             try await client.execute(uri: "/dash/models/use", method: .post, headers: ModelFixtures.write, body: TestServer.body(#"{"chat":"nope"}"#)) { response in
                 #expect(response.status == .unprocessableContent)
@@ -558,6 +563,33 @@ struct ModelSettingsTests {
             #expect(!outcome.ok)
             #expect(outcome.detail == #"The server answered 404 at /v1/chat/completions. It said: {"error":{"message":"No endpoints found for unlisted.","code":404}} Its model list doesn't include “unlisted”; it offers: other, smart."#)
         }
+    }
+
+    @Test("Ask with its model down answers 502 naming the model and the gateway page's title, not a 500 of raw HTML")
+    func askModelDown() async throws {
+        try await FakeModelServer.with(1) { servers in
+            var config = TestServer.config()
+            config.modelBaseURL = servers[0].url
+            config.modelName = "stopped"
+            let store = MemoryStore(ledger: LedgerBudgetAPI.demoState(now: Date(), calendar: config.calendar))
+            let (service, _) = try await BudgetServerApp.makeService(config: config, store: store, logger: Logger(label: "test"))
+            try await BudgetServerApp.prepare(service)
+            try await Application(router: buildRouter(service)).test(.router) { client in
+                let response = try await client.execute(uri: "/v1/ask", method: .post, headers: TestServer.auth,
+                                                        body: ByteBuffer(string: #"{"question":"What did I spend on dining?"}"#))
+                #expect(response.status == .badGateway)
+                let message = try #require(try ModelFixtures.json(response)["error"] as? String)
+                #expect(message == "Ask's model, stopped at 127.0.0.1, isn't answering. Its server answered 502. It said: 502 Bad Gateway. "
+                    + "If it's an app on your Olares, check that it's running; or pick another model on the dashboard, under Settings → Models.")
+            }
+        }
+    }
+
+    @Test("A gateway's HTML error page is said by its title; any other body as it came")
+    func saidBriefly() {
+        #expect(ModelCheck.said("<html>\r\n<head><title>502 Bad Gateway</title><meta name=\"x\"/></head><body>…</body></html>") == "502 Bad Gateway")
+        #expect(ModelCheck.said("<HTML><body>no title</body></HTML>") == "an HTML page")
+        #expect(ModelCheck.said("  {\"error\":\"no\"}\n") == #"{"error":"no"}"#)
     }
 
     @Test("The Model list keeps the models that take tools when the server says which do; a test's \"no such model\" sees them all")

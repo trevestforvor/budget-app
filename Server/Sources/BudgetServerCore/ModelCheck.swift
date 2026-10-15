@@ -269,11 +269,25 @@ enum ModelCheck {
 
     private static func ms(since start: Date) -> Int { Int(Date().timeIntervalSince(start) * 1000) }
 
+    /// A server's error body, short: an HTML error page (a gateway's "502 Bad Gateway" for an app that's stopped) by its
+    /// title, anything else as it came, trimmed.
+    static func said(_ body: String) -> Substring {
+        let text = body.trimmingCharacters(in: .whitespacesAndNewlines)
+        if text.range(of: "<html", options: .caseInsensitive) != nil {
+            if let open = text.range(of: "<title>", options: .caseInsensitive),
+               let close = text.range(of: "</title>", options: .caseInsensitive, range: open.upperBound..<text.endIndex) {
+                return text[open.upperBound..<close.lowerBound].trimmingCharacters(in: .whitespacesAndNewlines).prefix(300)
+            }
+            return "an HTML page"
+        }
+        return text.prefix(300)
+    }
+
     /// What went wrong, and what to change, in plain words.
     static func explain(_ error: any Error, path: String, key: String?, decision: Bool) -> String {
         if error is TimedOut { return "No answer in \(Int(timeout)) seconds. It may still be loading the model; try again in a minute." }
         if let error = error as? DecisionError, case let .http(status, body) = error {
-            let said = body.trimmingCharacters(in: .whitespacesAndNewlines).prefix(300)
+            let said = said(body)
             switch status {
             case 401, 403:
                 return key == nil ? "It wants an API key (\(status)). Add one in its Edit." : "It turned the API key down (\(status)). Check the key."

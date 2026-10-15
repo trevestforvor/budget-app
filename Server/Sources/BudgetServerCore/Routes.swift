@@ -79,6 +79,19 @@ enum HTTP {
         return "The provider answered \(e.status): \(e.body.prefix(200))"
     }
 
+    /// Ask's model failing, said as that and by name: a stopped Olares app answers its gateway's HTML 502 page, which
+    /// used to reach the phone as raw HTML in a 500 — read as this server failing, not the model.
+    static func chatModelDown(_ error: any Error, _ models: ModelSnapshot) -> BudgetAPIError {
+        let model = models.chatURL.map { "\(models.chatName) at \($0.host() ?? $0.absoluteString)" } ?? models.chatName
+        let path = models.chatURL.map { OpenAIChatModel(baseURL: $0, model: models.chatName).endpoint.path } ?? "/v1/chat/completions"
+        var why = ModelCheck.explain(error, path: path, key: models.chatKey, decision: false)
+        // On the phone "the server" reads as the Budget server; here it's the model's.
+        if why.hasPrefix("The server ") { why = "Its server " + why.dropFirst("The server ".count) }
+        if !why.hasSuffix("."), !why.hasSuffix("?") { why += "." }
+        return .server(status: 502, message: "Ask's model, \(model), isn't answering. \(why) If it's an app on your Olares, check that it's "
+            + "running; or pick another model on the dashboard, under Settings → Models.")
+    }
+
     static func respond(to error: any Error) -> Response {
         switch error {
         case let e as BudgetAPIError:
@@ -262,8 +275,12 @@ public func buildRouter(_ service: BudgetService, surface: Surface = .api) -> Ro
     }
     router.post("/v1/ask") { request, _ in
         let body = try await HTTP.body(AskBody.self, request)
-        return try HTTP.json(try await api.ask(body.question, conversationID: body.conversationID ?? body.sessionID,
-                                               capabilities: AskCapabilities(names: body.capabilities)))
+        do {
+            return try HTTP.json(try await api.ask(body.question, conversationID: body.conversationID ?? body.sessionID,
+                                                   capabilities: AskCapabilities(names: body.capabilities)))
+        } catch let error where error is DecisionError || error is URLError {
+            throw HTTP.chatModelDown(error, await service.settings.modelSnapshot())
+        }
     }
     router.post("/v1/projection") { request, _ in
         let body = try await HTTP.body(ProjectionBody.self, request)
