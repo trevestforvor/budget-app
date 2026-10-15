@@ -39,11 +39,11 @@ export function providerStates() {
 /// Where a provider's keys come from, said only when it isn't the default.
 function originNote(origin) {
   if (origin === "dashboard") return "Saved here.";
-  if (origin === "environment") return "From the Budget app's settings on the Olares. Saving keys here takes over from those.";
+  if (origin === "environment") return "From the server's install settings. Saving keys here takes over from those.";
   return null;
 }
 const noSealing = () => callout({ tone: "watch", title: "The server can't protect saved keys yet",
-  body: "It needs an encryption key before it can store bank keys or sign-ins. Add one in the Budget app's settings on the Olares, then restart it.",
+  body: "It needs an encryption key before it can store bank keys or sign-ins. Add BUDGET_TOKEN_KEY to the server's install settings (budget.env on a Mac, the app's settings on an Olares), then restart it.",
   detail: "Set BUDGET_TOKEN_KEY to the output of: openssl rand -base64 32" });
 
 const field = (label, input, help, wide) => h("label", { class: `field${wide ? " wide" : ""}` }, h("span", { class: "field-head" }, label), input, help ? h("span", { class: "help" }, help) : null);
@@ -352,11 +352,11 @@ export function arrowKeys(event, list, select) {
   select(items[next].dataset.id, true);
 }
 
-/// Inside the Olares desktop window the bank's sign-in pages misbehave; say so and offer a real tab.
+/// Inside a framed window (the Olares desktop's) the bank's sign-in pages misbehave; say so and offer a real tab.
 export function framedNote() {
   if (window.top === window.self) return null;
   return callout({ tone: "watch", role: "note", title: "Open this in its own tab to link a bank",
-    body: "Bank sign-in pages don't run well inside the Olares window.",
+    body: "Bank sign-in pages don't run well inside an embedded window.",
     actions: [h("a", { class: "btn secondary compact", href: location.href, target: "_blank", rel: "noopener" }, "Open in a new tab")] });
 }
 

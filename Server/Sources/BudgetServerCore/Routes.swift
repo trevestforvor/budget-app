@@ -88,7 +88,7 @@ enum HTTP {
         // On the phone "the server" reads as the Budget server; here it's the model's.
         if why.hasPrefix("The server ") { why = "Its server " + why.dropFirst("The server ".count) }
         if !why.hasSuffix("."), !why.hasSuffix("?") { why += "." }
-        return .server(status: 502, message: "Ask's model, \(model), isn't answering. \(why) If it's an app on your Olares, check that it's "
+        return .server(status: 502, message: "Ask's model, \(model), isn't answering. \(why) If it's a model you host, check that it's "
             + "running; or pick another model on the dashboard, under Settings → Models.")
     }
 

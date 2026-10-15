@@ -13,7 +13,7 @@ const LABELS = {
   openRouterZeroRetention: ["Only providers that keep nothing", "Asks OpenRouter to route only to providers with zero data retention: for Jev, and for a chat model on OpenRouter."],
   syncIntervalHours: ["Sync linked banks", "How often the server pulls new transactions from every linked bank."],
   timeZone: ["Time zone", "Where months begin and end."],
-  publicURL: ["Server URL", "What the phone connects to. The Olares app fills this in; change it only if you reach the server another way."],
+  publicURL: ["Server URL", "What the phone connects to. The install settings fill this in (BUDGET_PUBLIC_URL); change it only if you reach the server another way."],
   dashboardURL: ["Dashboard address for the phone", "Where Open dashboard in the phone's Settings goes. Usually this page's own address."],
   apnsKey: ["APNs key", "The .p8 file's text, from developer.apple.com → Certificates, IDs & Profiles → Keys, with Apple Push Notifications service on. Pasting it all on one line is fine. It's saved encrypted."],
   apnsKeyID: ["Key ID", "The 10-character ID shown beside that key."],
@@ -25,7 +25,7 @@ const GROUP_SECTION = { Models: "models", Jev: "models", Sync: "sync", Phone: "p
 /// Jev's settings live in its drawer (Models → Jev): the page takes them without showing them, and they never ride the save bar.
 const JEV_KEYS = ["openRouterKey", "openRouterZeroRetention"];
 const INTERVALS = [["0.25", "Every 15 minutes"], ["1", "Every hour"], ["3", "Every 3 hours"], ["6", "Every 6 hours"], ["12", "Every 12 hours"], ["24", "Once a day"]];
-const ORIGIN_TAG = { environment: ["From the Olares app", ""], dashboard: ["Set here", "info"] };
+const ORIGIN_TAG = { environment: ["From install settings", ""], dashboard: ["Set here", "info"] };
 
 let uid = 0;
 const nextID = (key) => `set-${key}-${++uid}`;
@@ -61,7 +61,7 @@ function settingControl(f, onChange, { locked = null, disabled = false } = {}) {
   const [originLabel, originTone] = ORIGIN_TAG[f.origin] || [];
   const head = h("div", { class: "field-head" }, f.kind === "bool" ? null : h("label", { for: id }, label), h("span", { class: "grow" }),
     originLabel ? tag(originLabel, originTone) : null,
-    !locked && f.origin === "dashboard" ? button("Reset", { kind: "quiet", "aria-label": `Reset ${label}`, onclick: (e) => hold(null, "Goes back to the Olares app's setting or the default when you save.", e.currentTarget) }) : null,
+    !locked && f.origin === "dashboard" ? button("Reset", { kind: "quiet", "aria-label": `Reset ${label}`, onclick: (e) => hold(null, "Goes back to the install setting or the default when you save.", e.currentTarget) }) : null,
     !locked && (f.kind === "secret" || f.kind === "url") && f.isSet ? button("Turn off", { kind: "quiet", "aria-label": `Turn off ${label}`, onclick: (e) => hold("", "Turns off when you save.", e.currentTarget) }) : null,
     f.key === "dashboardURL" && !f.isSet && !f.value ? button("Use this page's address", { kind: "quiet", onclick: () => { input.value = location.origin + "/"; onChange(); } }) : null);
   input.addEventListener(f.kind === "bool" || input.tagName === "SELECT" ? "change" : "input", onChange);
@@ -158,7 +158,7 @@ function policyControl(onChange, { picks, hasJevKey }) {
     jevLabel.classList.toggle("disabled", jev.disabled);
     jevName.textContent = `Ask Jev when ${local ? pickName(pick) : "the local model"} is unsure`;
     jevHelp.textContent = !hasJevKey() ? "Needs an OpenRouter key: Jev → Add a key, above."
-      : "Only merchant names leave the Olares, and only for what it's unsure about.";
+      : "Only merchant names leave your server, and only for what it's unsure about.";
     runsOn.textContent = off ? "Off: everything waits for you. Turn it on in Models, above." : `Runs on ${pickName(pick)}. Change it in Models, above.`;
     pct.disabled = off;
     out.textContent = `${pct.value}%`;
@@ -217,7 +217,7 @@ function policyControl(onChange, { picks, hasJevKey }) {
 // MARK: Models
 
 const TEST_LINE = "Each gets a one-word question or a made-up coffee charge, nothing from your ledger.";
-const NO_ADDRESS = "No address now: the Olares app stopped setting one";
+const NO_ADDRESS = "No address now: the install settings stopped setting one";
 /// What the last test found, by what was tested: the job, the entry, its address and model, and whether it had a key. It
 /// outlasts a redraw and a refresh, and an entry that has changed since shows no answer rather than an old one.
 const results = new Map();
@@ -225,7 +225,7 @@ const resultKey = (job, id, address, model, hasKey) => [job, id, address || "", 
 const statusTag = (o) => (!o ? null : o.testing ? tag("Testing…") : o.off ? tag("Off")
   : o.ok ? tag(o.milliseconds != null ? `Working · ${(o.milliseconds / 1000).toFixed(1)} s` : "Working", "ok") : tag("Not working", "act"));
 const showOutcome = (el, o) => fill(el, statusTag(o), o && o.detail ? h("span", { class: "help" }, o.detail) : null);
-const sealingHelp = () => [h("span", { class: "help" }, "Add an encryption key in the Budget app's settings on the Olares, then restart it."),
+const sealingHelp = () => [h("span", { class: "help" }, "Add an encryption key (BUDGET_TOKEN_KEY) to the server's install settings (budget.env on a Mac, the app's settings on an Olares), then restart it."),
   details("Details", "Set BUDGET_TOKEN_KEY to the output of: openssl rand -base64 32")];
 
 /// Models: a block per job, each a list of what it can run on with a radio for the one it uses (`picks`). A pick waits
@@ -263,7 +263,7 @@ function modelsCard({ picks, policy, onChange, otherChanges, rerender, current }
   const chatTitle = "models-chat-title", catTitle = "models-categorizing-title";
   const chatGroup = h("div", { class: "rows model-list", role: "radiogroup", "aria-labelledby": chatTitle });
   const catGroup = h("div", { class: "rows model-list", role: "radiogroup", "aria-labelledby": catTitle });
-  const chatEmpty = h("p", { class: "help job-line" }, "Any OpenAI-compatible server: your switchboard, llama.cpp on the Olares, or a cloud API like OpenRouter.");
+  const chatEmpty = h("p", { class: "help job-line" }, "Any OpenAI-compatible server: your switchboard, llama.cpp on your own hardware, or a cloud API like OpenRouter.");
   const caption = h("span", { class: "t-caption muted grow", role: "status" }, TEST_LINE);
   const problem = h("div", { class: "model-problem" });
   const testButton = button("Test", { compact: true, onclick: () => test() });
@@ -296,7 +296,7 @@ function modelsCard({ picks, policy, onChange, otherChanges, rerender, current }
       detailEl.textContent = o && !o.testing && !o.ok && !o.off ? o.detail || "" : "";
       if (detailEl.textContent) detailEl.title = detailEl.textContent; else detailEl.removeAttribute("title");
       fill(tagsEl, picks.saved[job] === id ? tag("In use") : null, flags.map(([label, tone]) => tag(label, tone)), cloud() ? tag("In the cloud", "watch") : null,
-        olares ? tag("From the Olares app") : null, statusTag(o), unreadable ? tag("Key unreadable", "act") : null);
+        olares ? tag("From install settings") : null, statusTag(o), unreadable ? tag("Key unreadable", "act") : null);
     };
     return { job, id, el, update };
   };
@@ -324,7 +324,7 @@ function modelsCard({ picks, policy, onChange, otherChanges, rerender, current }
       action: l.jev.hasKey ? button("Edit", { compact: true, "aria-label": "Edit Jev", "data-model": "jev", onclick: () => openJev() })
         : button("Add a key", { compact: true, "aria-label": "Add a key for Jev (OpenRouter)", "data-model": "jev", onclick: () => openJev() }) }),
     // Laya only while the policy already names it (the phone can pick it); the server can't run it.
-    picks.saved.categorizing === "laya" ? choice("categorizing", "laya", { title: "Laya, on your Olares",
+    picks.saved.categorizing === "laya" ? choice("categorizing", "laya", { title: "Laya, on your server",
       sub: plain("Not set up on this server: new transactions wait for you"), flags: [["Not set up", "watch"]] }) : null,
     choice("categorizing", "off", { title: "Off", sub: plain("Everything waits for you") }),
   ].filter(Boolean);
@@ -349,9 +349,9 @@ function modelsCard({ picks, policy, onChange, otherChanges, rerender, current }
   const savedProblems = () => {
     const l = list(), out = [];
     const chat = entry("chat", picks.saved.chat), cat = picks.saved.categorizing, decision = isServerPick(cat) && cat !== "chat" ? entry("decision", cat) : null;
-    if (chat && !chat.address) out.push(`${chat.name} has no address now: the Olares app stopped setting it, so Ask gives simple built-in answers. Pick another, or type one in its Edit.`);
+    if (chat && !chat.address) out.push(`${chat.name} has no address now: the install settings stopped setting it, so Ask gives simple built-in answers. Pick another, or type one in its Edit.`);
     if (cat === "chat" && !l.chatServer.address) out.push("Categorizing uses the chat model's server, and no chat model is in use, so new transactions wait for you. Pick a chat model, or another place for categorizing.");
-    if (decision && !decision.address) out.push(`${decision.name} has no address now: the Olares app stopped setting it, so new transactions wait for you.`);
+    if (decision && !decision.address) out.push(`${decision.name} has no address now: the install settings stopped setting it, so new transactions wait for you.`);
     if (cat === "jev" && !l.jev.hasKey) out.push("Jev is categorizing but has no OpenRouter key, so new transactions wait for you. Add a key on Jev, or pick another.");
     for (const e of [chat, decision]) {
       if (e && e.keyUnreadable) out.push(`${e.name}'s saved API key can't be read: the server's encryption key changed. Type the key again in its Edit.`);
@@ -462,10 +462,10 @@ function modelsCard({ picks, policy, onChange, otherChanges, rerender, current }
     const name = h("input", { class: "input", id: fid("name"), value: named ? e.name : "", maxlength: "60", autocomplete: "off", spellcheck: "false" });
     // A value that follows the Olares app shows as a placeholder (never a key); typing one replaces it.
     const address = h("input", { class: "input", id: fid("address"), inputmode: "url", autocomplete: "off", spellcheck: "false",
-      value: e && !inherits("address") ? e.address || "" : "", placeholder: inherits("address") ? `From the Olares app: ${e.address || "not set now"}` : "https://…" });
+      value: e && !inherits("address") ? e.address || "" : "", placeholder: inherits("address") ? `From install settings: ${e.address || "not set now"}` : "https://…" });
     const key = h("input", { class: "input", type: "password", id: fid("key"), ...secretAttrs, autocomplete: "new-password", disabled: !sealing });
     const model = chat ? h("input", { class: "input", id: fid("model"), autocomplete: "off", spellcheck: "false",
-      value: e && !inherits("model") ? e.model || "" : "", placeholder: inherits("model") ? `From the Olares app: ${e.model || ""}` : "" }) : null;
+      value: e && !inherits("model") ? e.model || "" : "", placeholder: inherits("model") ? `From install settings: ${e.model || ""}` : "" }) : null;
 
     // "Remove the key" holds until Save (sent as removeKey), like a setting's Turn off.
     let removeKey = false;
@@ -519,7 +519,7 @@ function modelsCard({ picks, policy, onChange, otherChanges, rerender, current }
       key.placeholder = removeKey ? "None"
         : usingJev() ? "Jev's OpenRouter key"
         : movedNote ? "Type this server's key"
-        : inherits("key") ? "From the Olares app"
+        : inherits("key") ? "From install settings"
         : e && e.hasKey ? "Saved — type a new one to replace it"
         : e && e.keyUnreadable ? "Saved, but unreadable: type it again"
         : "None";
@@ -532,7 +532,7 @@ function modelsCard({ picks, policy, onChange, otherChanges, rerender, current }
     fill(body, flash,
       h("div", { class: "form" },
         field("Name", name, { help: chat ? "Leave it blank to use the model's name." : "Leave it blank to use the server's host name." }),
-        field("Address", address, { extra: toOpenRouter, help: chat ? "Just the address: Budget adds /v1/… itself." : "The server with /v1/systemone, like Clef on your Olares." }),
+        field("Address", address, { extra: toOpenRouter, help: chat ? "Just the address: Budget adds /v1/… itself." : "The server with /v1/systemone, like a self-hosted Clef." }),
         field("API key", key, { extra: removeKeyButton, more: [useJevRow, keyNote, keyMoved, !sealing ? sealingHelp() : keyUnreadable] }),
         chat ? field("Model", model) : null),
       chat ? h("p", { class: "help" }, "Ask and the morning summary send this server what they read from your ledger. ", routing) : null,
@@ -863,7 +863,7 @@ function aboutCard() {
   const lastSync = s.links.map((l) => l.lastSync).filter(Boolean).sort().pop();
   return [
     c.inMemory ? callout({ tone: "act", title: "Nothing here survives a restart",
-      body: "The server is keeping your ledger in memory. Give it a database in the Budget app's settings on the Olares so your accounts, imports and settings are kept.",
+      body: "The server is keeping your ledger in memory. Give it a database in the server's install settings (budget.env on a Mac, the app's settings on an Olares) so your accounts, imports and settings are kept.",
       detail: "No POSTGRES_HOST is set, so the server runs on its in-memory store." }) : null,
     h("dl", { class: "kv" },
       h("dt", {}, "Version"), h("dd", {}, s.version),
@@ -882,7 +882,7 @@ function removeDataSection() {
     ["ledger", "All transactions and accounts", "The ledger starts empty. Categories, rules and targets go with it."],
     ["links", "Linked banks", "Each is signed out at the bank, so syncing stops."],
     ["imports", "Import and sync history", "Undo stops working for past imports."],
-    ["keys", "Saved Plaid and Teller keys", "Keys from the Olares app's settings stay."],
+    ["keys", "Saved Plaid and Teller keys", "Keys from the install settings stay."],
   ].map(([id, label, help]) => ({ id, input: h("input", { type: "checkbox", id: `rm-${id}` }), label, help }));
   const confirm = h("input", { class: "input", id: "rm-confirm", autocomplete: "off", spellcheck: "false", placeholder: phrase, "aria-describedby": "rm-help" });
   const result = h("div");
@@ -988,14 +988,14 @@ export default {
     const columns = (...cols) => h("div", { class: "grid-2" }, cols.map((c) => h("div", {}, c)));
 
     fill(this.root,
-      pageHead({ eyebrow: "This server", title: "Settings", sub: "What you set here wins over the Budget app's settings on the Olares. The phone edits the same categorization settings." }),
+      pageHead({ eyebrow: "This server", title: "Settings", sub: "What you set here wins over the server's install settings (budget.env on a Mac, the app's settings on an Olares). The phone edits the same categorization settings." }),
       h("div", { class: "settings" },
         section("models", "Models", models.el, ...rest("models"), models.foot),
         columns(section("categorization", "Categorization", policy.el),
           [section("sync", "Sync and time", ...take("syncIntervalHours", "timeZone"), ...rest("sync"), tz),
             sectionHead("About this server", null, "sec-about"), this.about]),
         section("banks", "Bank providers",
-          !sealing ? callout({ tone: "watch", title: "The server can't protect saved keys yet", body: "Add an encryption key in the Budget app's settings on the Olares, then restart it.",
+          !sealing ? callout({ tone: "watch", title: "The server can't protect saved keys yet", body: "Add an encryption key (BUDGET_TOKEN_KEY) to the server's install settings (budget.env on a Mac, the app's settings on an Olares), then restart it.",
             detail: "Set BUDGET_TOKEN_KEY to the output of: openssl rand -base64 32" }) : null,
           h("div", {},
             fold("plaid", "Plaid", states.plaid, plaid.el, removeKeysButton("plaid", () => this.render())),

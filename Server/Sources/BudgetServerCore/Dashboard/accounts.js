@@ -219,7 +219,7 @@ export default {
       body: g.state.lastSync ? `Nothing new has come in since ${dateShort(g.state.lastSync)}. Your history is safe.` : "Your history is safe.",
       actions: [button(reconnectLabel(g.state.problem), { compact: true, onclick: (e) => reconnect(g.state.problem, e.currentTarget) })] }));
     if (!store.summary.settings.linkingEnabled) banners.push(callout({ tone: "watch", title: "Bank linking is off",
-      body: "The server has no key to protect bank sign-ins, so it can't link or sync banks. Add one in the Budget app's settings on the Olares, then restart it.",
+      body: "The server has no key to protect bank sign-ins, so it can't link or sync banks. Add BUDGET_TOKEN_KEY to the server's install settings (budget.env on a Mac, the app's settings on an Olares), then restart it.",
       detail: "Set BUDGET_TOKEN_KEY to the output of: openssl rand -base64 32" }));
     const institutions = new Set(groups.map((g) => g.name)).size;
     fill(this.root, 

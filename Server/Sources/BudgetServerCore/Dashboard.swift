@@ -248,7 +248,7 @@ func addDashboardRoutes(_ router: Router<BasicRequestContext>, _ service: Budget
             work.append {
                 guard let entry else { return (ModelCheck.Outcome(ok: false, detail: "No such model."), nil) }
                 if id == "off" { return (ModelCheck.Outcome(ok: false, off: true, detail: "Off: Ask gives simple built-in answers."), nil) }
-                guard let address = entry.address else { return (ModelCheck.Outcome(ok: false, detail: "The Olares app doesn't set its address now."), nil) }
+                guard let address = entry.address else { return (ModelCheck.Outcome(ok: false, detail: "The install settings don't set its address now."), nil) }
                 return (await ModelCheck.chat(base: address, key: entry.key, model: entry.model ?? fallbackName, zeroRetention: zeroRetention), nil)
             }
         }
@@ -258,7 +258,7 @@ func addDashboardRoutes(_ router: Router<BasicRequestContext>, _ service: Budget
                 guard let entry else { return (ModelCheck.Outcome(ok: false, detail: "No such model."), nil) }
                 guard let address = entry.address else {
                     return (ModelCheck.Outcome(ok: false, detail: id == "chat" ? "It uses the chat model's server, and no chat model is in use."
-                                                                            : "The Olares app doesn't set its address now."), nil)
+                                                                            : "The install settings don't set its address now."), nil)
                 }
                 return (await ModelCheck.decision(base: address, key: entry.key), nil)
             }

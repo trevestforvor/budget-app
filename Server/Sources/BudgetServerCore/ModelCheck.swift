@@ -294,7 +294,7 @@ enum ModelCheck {
             case 404 where body.localizedCaseInsensitiveContains("data policy"):
                 return "OpenRouter has no provider for this model that keeps nothing. Pick another model, or turn off “Only providers that keep nothing” on Jev."
             case 404 where decision:
-                return "This server has no /v1/systemone (404). Categorizing needs the decision server (the Clef one on your Olares): add it under Categorizing → Add a categorizing server, and pick it."
+                return "This server has no /v1/systemone (404). Categorizing needs a decision server (a self-hosted Clef): add it under Categorizing → Add a categorizing server, and pick it."
             case 404 where said.isEmpty:
                 return "Nothing at \(path) on this server (404). Check the address."
             case 404:

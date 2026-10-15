@@ -175,8 +175,8 @@ function bootError(error) {
       h("span", { class: "t-eyebrow page-eyebrow" }, "Budget dashboard"),
       h("h1", { class: "t-display page-title" }, network ? "Can't reach the server." : "The server couldn't load."))),
     callout({ tone: "act", title: error.message,
-      body: network ? "Check that the Budget app is running on your Olares, then try again."
-        : "Try again in a moment. If it keeps happening, restart the Budget app on your Olares.",
+      body: network ? "Check that the Budget server is running, then try again."
+        : "Try again in a moment. If it keeps happening, restart the Budget server.",
       detail: error.detail && error.detail !== error.message ? error.detail : null,
       actions: [button("Try again", { kind: "secondary", onclick: (e) => busy(e.currentTarget, "Connecting…", start, { errorTarget: document.createElement("div") }) })] })));
   fill($("railFoot"), h("span", { class: "t-eyebrow status-eyebrow act" }, dot("act"), network ? "Can't reach the server" : "Server problem"));

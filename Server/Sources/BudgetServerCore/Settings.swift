@@ -277,7 +277,7 @@ public actor ServerSettings {
         .init(key: "timeZone", group: "Sync", label: "Time zone", kind: .timeZone, environmentVariable: "BUDGET_TIMEZONE",
               help: "Where months begin and end (e.g. America/Los_Angeles).", configValue: { $0.timeZone.identifier }, builtInDefault: "America/Los_Angeles"),
         .init(key: "publicURL", group: "Phone", label: "Server URL for the phone", kind: .url, environmentVariable: "BUDGET_PUBLIC_URL",
-              help: "What \"Connect your phone\" shows. The Olares chart fills it in.", configValue: { $0.publicURL }, builtInDefault: nil),
+              help: "What \"Connect your phone\" shows. Usually set at install (BUDGET_PUBLIC_URL).", configValue: { $0.publicURL }, builtInDefault: nil),
         .init(key: "dashboardURL", group: "Phone", label: "Dashboard URL for the phone", kind: .url, environmentVariable: "BUDGET_DASHBOARD_URL",
               help: "Where the phone's \"Open dashboard\" buttons go, to reconnect a bank or import a statement: this dashboard's address.",
               configValue: { $0.dashboardURL }, builtInDefault: nil),
@@ -504,7 +504,7 @@ public actor ServerSettings {
 
     private func seal(_ key: String) throws -> String {
         guard let sealer else {
-            throw BudgetAPIError.rejected("Add an encryption key in the Budget app's settings on the Olares (BUDGET_TOKEN_KEY), then restart it, before saving keys.")
+            throw BudgetAPIError.rejected("Add an encryption key (BUDGET_TOKEN_KEY) to the server's install settings (budget.env on a Mac, the app's settings on an Olares), then restart it, before saving keys.")
         }
         return try sealer.seal(key)
     }
@@ -655,7 +655,7 @@ public actor ServerSettings {
     }
 
     private static func notSaved(_ id: String) -> BudgetAPIError {
-        .rejected(id == "environment" ? "That one comes from the Olares app's settings; change it there." : "No such model.")
+        .rejected(id == "environment" ? "That one comes from the server's install settings; change it there." : "No such model.")
     }
 
     /// Writes the mirror into the "server" row (only when it changed), then the models row: a crash between the two is

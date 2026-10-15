@@ -42,12 +42,12 @@ export function attentionItems() {
   }
   if (s.settings.inMemory) {
     items.push({ tone: "act", title: "Nothing here survives a restart",
-      sub: "The server is keeping your ledger in memory. Give it a database in the Budget app's settings on the Olares so it's kept.",
+      sub: "The server is keeping your ledger in memory. Give it a database in the server's install settings (budget.env on a Mac, the app's settings on an Olares) so it's kept.",
       action: { label: "Details", href: "#/settings/about" } });
   }
   if (!s.settings.linkingEnabled) {
     items.push({ tone: "watch", title: "Bank linking is off",
-      sub: "The server has no key to protect bank sign-ins, so it can't link or sync banks. Add one in the Budget app's settings on the Olares.",
+      sub: "The server has no key to protect bank sign-ins, so it can't link or sync banks. Add BUDGET_TOKEN_KEY to the server's install settings (budget.env on a Mac, the app's settings on an Olares).",
       technical: "Set BUDGET_TOKEN_KEY to the output of: openssl rand -base64 32 — then restart the Budget app." });
   }
   if (o.reviewCount) {

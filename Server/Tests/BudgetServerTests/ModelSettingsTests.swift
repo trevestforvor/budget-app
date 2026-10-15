@@ -432,7 +432,7 @@ struct ModelSettingsTests {
                 #expect(String(buffer: response.body).contains("In use. Pick another one and save first."))
             }
             try await client.execute(uri: "/dash/models/remove", method: .post, headers: ModelFixtures.write, body: TestServer.body(#"{"id":"environment"}"#)) { response in
-                #expect(String(buffer: response.body).contains("That one comes from the Olares app's settings; change it there."))
+                #expect(String(buffer: response.body).contains("That one comes from the server's install settings; change it there."))
             }
             // Categorizing runs on Clef: it stays.
             try await client.execute(uri: "/v1/actions", method: .post, headers: ModelFixtures.write,
@@ -580,7 +580,7 @@ struct ModelSettingsTests {
                 #expect(response.status == .badGateway)
                 let message = try #require(try ModelFixtures.json(response)["error"] as? String)
                 #expect(message == "Ask's model, stopped at 127.0.0.1, isn't answering. Its server answered 502. It said: 502 Bad Gateway. "
-                    + "If it's an app on your Olares, check that it's running; or pick another model on the dashboard, under Settings → Models.")
+                    + "If it's a model you host, check that it's running; or pick another model on the dashboard, under Settings → Models.")
             }
         }
     }
