@@ -1,6 +1,6 @@
 # Installing the server
 
-The server holds the ledger, syncs the banks, runs the assistant and serves the dashboard. This guide installs it on a Mac that stays on (a Mac mini, say), as a service that starts at login and restarts if it exits. For Linux or an Olares box, see [SERVER.md](SERVER.md).
+The server holds the ledger, syncs the banks, runs the assistant and serves the dashboard. It runs on a Mac that stays on (a Mac mini, say), in Docker on any machine (a Linux box, a NAS, or a Mac with Docker), or as an app on an Olares box. The numbered steps below are the Mac way; [Where it runs](#where-it-runs) covers the other two.
 
 When you're done you'll have:
 - the **API** on `127.0.0.1:8080`, which the phone reaches over HTTPS with a bearer token;
@@ -10,13 +10,37 @@ When you're done you'll have:
 ## The short way
 
 ```sh
-./setup.sh tools      # Homebrew tools: xcodegen, postgresql@16
-./setup.sh server     # Postgres, build, install, start, check /health
-./setup.sh address    # save and check the phone's HTTPS address (step 5)
+./setup.sh tools      # what the server and the app need (on a Mac: Homebrew, xcodegen, postgresql@16)
+./setup.sh server     # asks where it runs (mac, docker or olares), then builds, installs, starts, checks /health
+./setup.sh address    # asks how the phone reaches it (tailscale, caddy, cloudflare or url), sets it up, checks it (step 5)
 ./setup.sh check      # what's installed and answering, at any time
 ```
 
-Each step checks first and skips what's done, so you can run it again. Then [link your banks](#6-link-banks) in the dashboard. The sections below are what those steps do, in case you'd rather do it by hand or something goes wrong.
+Both questions can be answered up front: `./setup.sh server docker`, `./setup.sh address caddy`. Each step checks first and skips what's done, so you can run it again. Then [link your banks](#6-link-banks) in the dashboard. The sections below are what those steps do, in case you'd rather do it by hand or something goes wrong.
+
+## Where it runs
+
+| | `./setup.sh server …` | Good for | Backups |
+|---|---|---|---|
+| **This Mac** | `mac` | A Mac that stays on. Steps 1–4 below | Nightly, in `~/Library/Application Support/BudgetServer/backups` |
+| **Docker** | `docker` | A Linux box, a NAS, or a Mac with Docker Desktop or OrbStack. No Xcode or macOS 26 needed for the server | Daily, in `deploy/docker/backups` |
+| **Olares** | `olares` | An Olares box that already has the `budgetapi` app | Before every deploy, on the box |
+
+**Docker** (`deploy/docker/`) runs three containers with Compose: the server, built from this checkout, Postgres 16 (data in the `budget_db` volume, on a network with no way out), and a backup that dumps the ledger daily and keeps 14. `./setup.sh server docker`:
+1. writes `deploy/docker/budget.env` (mode 600, never committed) with a new `BUDGET_API_TOKEN`, `BUDGET_TOKEN_KEY` and Postgres password, and this machine's time zone;
+2. builds and starts it (`docker compose up -d --build`; the first build takes several minutes), and waits until `/health` answers.
+
+It publishes the API on `127.0.0.1:8080` and the dashboard on `127.0.0.1:8081`, on this machine only, like the Mac install. Running it again rebuilds from the checkout, after backing up. **Save `BUDGET_TOKEN_KEY`** from `budget.env`, as in [step 3](#3-install).
+
+| | |
+|---|---|
+| Logs | `docker compose -f deploy/docker/compose.yaml logs -f server` |
+| Change a setting | Edit `deploy/docker/budget.env`, then `docker compose -f deploy/docker/compose.yaml up -d` |
+| Back up now | `docker compose -f deploy/docker/compose.yaml run --rm backup once` |
+| Restore | `docker compose -f deploy/docker/compose.yaml stop server`, then `docker compose -f deploy/docker/compose.yaml exec -T db pg_restore --clean --if-exists -U budget -d budget < deploy/docker/backups/budget-<date>.dump`, then `start server` |
+| Stop | `docker compose -f deploy/docker/compose.yaml down`. The data stays in the volume; `down -v` deletes it |
+
+**Olares**: the `budgetapi` app is installed from your own Market repo; the chart isn't in this repo ([SERVER.md → Deploy](SERVER.md#deploy)). `./setup.sh server olares` runs `deploy/olares/budgetapi/deploy.sh`, which builds this checkout on the box, backs up the ledger, installs it and restarts the app. It needs `OLARES_SSH` and `APP_NS` in `deploy/olares/budgetapi/deploy.env`. The app's API entrance is the phone's address, so step 5 is already done; its settings are in the Olares app.
 
 ## 1. Prerequisites
 
@@ -69,20 +93,21 @@ Never forward port 8081 any other way.
 
 ## 5. Give the phone an HTTPS address
 
-The server listens only on this Mac (`127.0.0.1`), and the app talks to it over HTTPS. So the phone needs an address that terminates HTTPS and forwards to `127.0.0.1:8080`, and to nothing else. The dashboard on 8081 has no login. Use whatever you already have, or one of these:
+The server listens only on this machine (`127.0.0.1`), and the app talks to it over HTTPS. So the phone needs an address that terminates HTTPS and forwards to `127.0.0.1:8080`, and to nothing else. The dashboard on 8081 has no login. `./setup.sh address` asks which way, sets it up, saves the address as `BUDGET_PUBLIC_URL` (the dashboard shows it under "Connect your phone") and checks it:
 
-- **Private: a mesh VPN on the Mac and the phone.** This is the smallest exposure: nothing is reachable from the internet. With [Tailscale](https://tailscale.com), for example, run `tailscale serve --bg 8080` on the Mac. That gives you `https://<mac-name>.<tailnet>.ts.net`, reachable only from your own devices. The phone needs the VPN connected to sync. The morning push still arrives without it, because it comes from Apple.
-- **Public: a tunnel or a reverse proxy.**
-  - A [Cloudflare Tunnel](https://developers.cloudflare.com/cloudflare-one/connections/connect-networks/) needs a domain on Cloudflare, and no open ports.
-  - Caddy needs a port forward on your router and a domain.
-  - Either way, the API token is the only lock, so keep it secret.
-- **On an Olares box** the API's public entrance already is this address ([SERVER.md](SERVER.md)).
+| `./setup.sh address …` | Who can reach it | You need | What the script does |
+|---|---|---|---|
+| `tailscale` | Only your own devices: nothing is open to the internet | [Tailscale](https://tailscale.com/download) on this machine and the phone, signed in to one account, with HTTPS certificates on ([DNS settings](https://login.tailscale.com/admin/dns)) | `tailscale serve --bg 8080`, which gives `https://<machine>.<tailnet>.ts.net` and stays on. It never installs Tailscale |
+| `caddy` | Anyone with the address; the token is the lock | A domain, a DNS record pointing at your home's public IP, and your router forwarding ports 80 and 443 to this machine | Writes a Caddyfile that forwards only to the API; runs Caddy as the launchd job `local.budget.caddy` (Mac) or the `caddy` container (Docker). Caddy gets the certificate from Let's Encrypt |
+| `cloudflare` | Anyone with the address; the token is the lock | A domain on Cloudflare (the free plan works). No open ports | On a Mac: signs `cloudflared` in (once, in the browser), creates the tunnel `budget`, adds the DNS record, and runs it as the launchd job `local.budget.tunnel`, with one ingress rule to the API |
+| `url` | Up to you | An address you already run (another proxy, VPN or tunnel) | Saves it and checks it |
 
-Then save it, so the dashboard shows it under "Connect your phone" and `./setup.sh check` keeps testing it:
+Which one:
+- **Tailscale** is the smallest exposure. The phone needs the VPN connected to sync. The morning push still arrives without it, because it comes from Apple.
+- **Caddy** needs a public IP at home. Some internet providers, and most cellular ones, put customers behind a shared address (CGNAT), and then no port forward works.
+- **Cloudflare** works behind CGNAT, but Cloudflare sees the traffic, because it terminates HTTPS.
 
-```sh
-./setup.sh address      # or: BUDGET_PUBLIC_URL=https://… ./setup.sh address
-```
+For an agent: `BUDGET_ADDRESS=caddy BUDGET_DOMAIN=budget.example.com ./setup.sh address`, or `BUDGET_PUBLIC_URL=https://… ./setup.sh address`. Caddy also takes `BUDGET_ACME_EMAIL`, for Let's Encrypt's expiry notices.
 
 **Check from outside:** with Wi-Fi off, open `https://<address>/health` in the phone's Safari. It should say `"status":"ok"`.
 
@@ -136,7 +161,7 @@ A daily push with yesterday's spending. It needs a paid Apple Developer membersh
 | Change a setting | Most are on the dashboard, and apply without a restart. For `budget.env`: edit it, then `launchctl kickstart -k gui/$(id -u)/local.budget.server`. Every variable: [SERVER.md → Configuration](SERVER.md#configuration) |
 | Update | `git pull`, then `./setup.sh server` (it backs up first) |
 | Back up now | `~/Library/Application\ Support/BudgetServer/backup.sh` |
-| Remove | `deploy/macos/install.sh --uninstall` stops the server and the nightly backups. Your data, `budget.env` and the backups stay |
+| Remove | `deploy/macos/install.sh --uninstall` stops the server, the nightly backups, and Caddy or the tunnel if `./setup.sh address` set one up. Your data, `budget.env` and the backups stay |
 
 **Restoring a backup.** Keep the `BUDGET_TOKEN_KEY` that was in use when the dump was taken.
 
@@ -160,6 +185,8 @@ Try it once on a scratch database before you need it:
 | "The backup failed, so the server wasn't replaced" | Postgres is down, or the disk is full. Fix that and run it again. The old server is still running |
 | `/health` doesn't answer after install | The end of `logs/server.log` says why. Usually it's Postgres, or another program on port 8080 (`lsof -i :8080`). To use other ports, change `PORT` or `DASHBOARD_PORT` in `budget.env` |
 | The phone says it can't reach the server | Open `https://<address>/health` in the phone's Safari. If that fails, check whatever provides the address (VPN, tunnel or proxy). If it works, check the token in the app |
+| Caddy's address never answers | Caddy couldn't get a certificate: the end of `logs/caddy.log` (or `docker compose … logs caddy`) says why. Usually the DNS record or the port forward. From outside your network, `http://<domain>` should reach this machine |
+| The tunnel's address never answers | The end of `logs/tunnel.log`. `cloudflared tunnel info budget` shows whether it's connected |
 | The phone's requests are turned away (401) | The token doesn't match. Copy it again from the dashboard → Settings → Connect your phone → Show |
 | Linking a bank says it's disabled | `BUDGET_TOKEN_KEY` is empty in `budget.env` |
 | It stops overnight | The Mac slept or logged out. See [step 3](#3-install) |

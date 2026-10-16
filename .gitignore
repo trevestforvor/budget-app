@@ -11,3 +11,6 @@ TemporaryDirectory.*
 # Your own signing and deploy target (see Config/Local.xcconfig.example and docs/SETUP.md)
 Config/Local.xcconfig
 deploy/olares/budgetapi/deploy.env
+deploy/docker/budget.env
+deploy/docker/Caddyfile
+deploy/docker/backups/

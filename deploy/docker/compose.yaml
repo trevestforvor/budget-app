@@ -1,0 +1,69 @@
+# Budget in Docker: the server, its Postgres and a daily backup, plus Caddy for HTTPS when the caddy profile is on.
+# ./setup.sh server docker writes budget.env beside this file (secrets, mode 600, never committed) and starts it;
+# ./setup.sh address caddy writes the Caddyfile and turns the profile on. By hand, from the repo root:
+#   docker compose -f deploy/docker/compose.yaml up -d --build
+# Both ports are published on the host's 127.0.0.1 only: the dashboard has no login. Data is in the "db" volume.
+name: budget
+
+services:
+  server:
+    build:
+      context: ../..
+      dockerfile: deploy/docker/Dockerfile
+    image: budget-server
+    env_file: budget.env
+    environment:          # these win over budget.env
+      HOST: 0.0.0.0
+      PORT: "8080"
+      DASHBOARD_PORT: "8081"
+      POSTGRES_HOST: db
+      POSTGRES_PORT: "5432"
+    ports:
+      - 127.0.0.1:8080:8080   # the API: the phone reaches it through HTTPS (docs/INSTALL-SERVER.md, step 5)
+      - 127.0.0.1:8081:8081   # the dashboard: this machine only, or an SSH tunnel
+    depends_on:
+      db: { condition: service_healthy }
+    restart: unless-stopped
+    networks: [front, back]
+
+  db:
+    image: postgres:16-alpine
+    env_file: budget.env    # POSTGRES_USER, POSTGRES_DB, POSTGRES_PASSWORD
+    volumes: [db:/var/lib/postgresql/data]
+    healthcheck:
+      test: ["CMD-SHELL", "pg_isready -U \"$${POSTGRES_USER:-budget}\""]
+      interval: 5s
+      retries: 20
+    restart: unless-stopped
+    networks: [back]
+
+  backup:
+    image: postgres:16-alpine
+    env_file: budget.env
+    entrypoint: ["sh", "/backup.sh"]
+    volumes:
+      - ./backup.sh:/backup.sh:ro
+      - ./backups:/backups
+    depends_on:
+      db: { condition: service_healthy }
+    restart: unless-stopped
+    networks: [back]
+
+  caddy:
+    image: caddy:2
+    profiles: [caddy]
+    ports: ["80:80", "443:443", "443:443/udp"]
+    volumes:
+      - ./Caddyfile:/etc/caddy/Caddyfile:ro
+      - caddy:/data
+    depends_on: [server]
+    restart: unless-stopped
+    networks: [front]
+
+networks:
+  front: {}
+  back: { internal: true }   # Postgres has no way out and nothing but the server and the backup reach it
+
+volumes:
+  db: {}
+  caddy: {}

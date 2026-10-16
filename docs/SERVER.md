@@ -2,7 +2,7 @@
 
 The always-on half of the app: a Swift server (Hummingbird 2) on the Olares that owns the ledger, syncs accounts, runs the agent loop on the local model, and answers the iPhone app. It links `BudgetKit` directly, so the server and the demo run the same tested engine (`LedgerBudgetAPI` over `Ledger`). Routes: [API.md](API.md).
 
-**Where it runs:** anywhere Swift runs (macOS 26+ or Linux), with Postgres. On a Mac that stays on, `deploy/macos/install.sh` installs it as a launchd service ([INSTALL-SERVER.md](INSTALL-SERVER.md), or `./setup.sh server`). On an Olares box it's the `budgetapi` app, with two entrances:
+**Where it runs:** anywhere Swift runs (macOS 26+ or Linux), with Postgres. On a Mac that stays on, `deploy/macos/install.sh` installs it as a launchd service; anywhere with Docker, `deploy/docker/compose.yaml` runs it with Postgres and daily backups ([INSTALL-SERVER.md](INSTALL-SERVER.md), or `./setup.sh server`). On an Olares box it's the `budgetapi` app, with two entrances:
 - **API** (the phone): `https://<appid>0.<you>.olares.com`, `public` (reachable from anywhere, no VPN and no Olares login; the bearer token on `/v1` is the lock). No launcher tile.
 - **Dashboard** (the launcher tile "Budget"): `https://<appid>1.<you>.olares.com`, `internal` (Olares login). Ledger summary, CSV/OFX import with undo, SimpleFIN linking, linked accounts and sync, categorization and models, server settings, and the URL + token to set up the phone.
 
@@ -26,6 +26,8 @@ Server/
   Tests/BudgetServerTests/          routes (HummingbirdTesting), RemoteBudgetAPI parity over a real
                                     socket, Plaid exchange + sync, Postgres store (when a DB is given)
 deploy/olares/budgetapi/deploy.sh   build on the Olares + install + restart (--check: Linux tests + build only)
+deploy/macos/install.sh             a launchd service on a Mac, with nightly pg_dump backups
+deploy/docker/compose.yaml          server + Postgres + daily backup in Compose (+ Caddy with the caddy profile)
 ```
 
 ## Run it locally

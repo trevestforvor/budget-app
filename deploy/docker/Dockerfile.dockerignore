@@ -1,0 +1,11 @@
+# The build only needs Packages/ and Server/; keep host build products and anything private out of the context.
+**/.build
+**/.swiftpm
+**/DerivedData
+*.xcodeproj
+.git
+owner
+Config/Local.xcconfig
+deploy/**/budget.env
+deploy/**/deploy.env
+deploy/docker/backups

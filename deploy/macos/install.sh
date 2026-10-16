@@ -3,7 +3,8 @@
 #
 #   deploy/macos/install.sh              build, install, (re)start, check /health
 #   deploy/macos/install.sh --no-launchd build and install only; start it yourself with "$BUDGET_HOME/run.sh"
-#   deploy/macos/install.sh --uninstall  stop it and remove the launchd jobs (keeps the data, settings and backups)
+#   deploy/macos/install.sh --uninstall  stop it and remove the launchd jobs, Caddy's and the tunnel's too
+#                                        (keeps the data, settings and backups)
 #
 # Replacing an installed server backs up its database first, and stops if that backup fails.
 #
@@ -25,15 +26,15 @@ DOMAIN="gui/$(id -u)"
 export PATH="/opt/homebrew/bin:/opt/homebrew/opt/postgresql@16/bin:/usr/local/bin:$PATH"
 
 unload() {
-  for label in "$SERVER_LABEL" "$BACKUP_LABEL"; do
+  for label in "$SERVER_LABEL" "$BACKUP_LABEL" "$@"; do
     launchctl bootout "$DOMAIN/$label" 2>/dev/null || true
   done
 }
 
 case ${1:-} in
   --uninstall)
-    unload
-    rm -f "$AGENTS/$SERVER_LABEL.plist" "$AGENTS/$BACKUP_LABEL.plist"
+    unload local.budget.caddy local.budget.tunnel   # the HTTPS address, when ./setup.sh address set one up
+    rm -f "$AGENTS/$SERVER_LABEL.plist" "$AGENTS/$BACKUP_LABEL.plist" "$AGENTS/local.budget.caddy.plist" "$AGENTS/local.budget.tunnel.plist"
     echo "Stopped and removed the launchd jobs. Data, settings and backups are still in $BUDGET_HOME."
     exit 0 ;;
   --no-launchd) LAUNCHD=0 ;;
