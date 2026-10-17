@@ -291,7 +291,7 @@ struct ServerTests {
                        {"transaction_id": "t2", "account_id": "chk", "amount": -3850, "iso_currency_code": "USD", "date": "2026-09-15", "name": "ACME CORP PAYROLL", "pending": false}],
              "modified": [], "removed": [], "next_cursor": "cursor-1", "has_more": false}
             """#],
-            "/accounts/balance/get": [#"{"accounts": [{"account_id": "chk", "balances": {"current": 5000, "available": 5000, "iso_currency_code": "USD"}, "name": "Checking", "subtype": "checking", "type": "depository"}]}"#],
+            "/accounts/get": [#"{"accounts": [{"account_id": "chk", "balances": {"current": 5000, "available": 5000, "iso_currency_code": "USD"}, "name": "Checking", "subtype": "checking", "type": "depository"}]}"#], "/accounts/balance/get": [#"{"accounts": [{"account_id": "chk", "balances": {"current": 5000, "available": 5000, "iso_currency_code": "USD"}, "name": "Checking", "subtype": "checking", "type": "depository"}]}"#],
         ])
         let (app, service) = try await TestServer.app(seedDemo: false, plaid: plaid)
         try await app.test(.router) { client in
@@ -743,7 +743,7 @@ struct ServerTests {
         let plaid = FakeProvider([
             "/item/public_token/exchange": [#"{"access_token": "access-sandbox-9", "item_id": "item-1"}"#],
             "/transactions/sync": [#"{"added": [{"transaction_id": "t1", "account_id": "chk", "amount": 12.5, "date": "2026-09-20", "name": "BLUE BOTTLE", "pending": false}], "modified": [], "removed": [], "next_cursor": "c1", "has_more": false}"#],
-            "/accounts/balance/get": [#"{"accounts": [{"account_id": "chk", "balances": {"current": 50}, "name": "Checking", "type": "depository", "subtype": "checking"}]}"#],
+            "/accounts/get": [#"{"accounts": [{"account_id": "chk", "balances": {"current": 50}, "name": "Checking", "type": "depository", "subtype": "checking"}]}"#], "/accounts/balance/get": [#"{"accounts": [{"account_id": "chk", "balances": {"current": 50}, "name": "Checking", "type": "depository", "subtype": "checking"}]}"#],
             "/item/remove": [#"{"request_id": "r"}"#],
         ])
         let (dash, service) = try await TestServer.app(seedDemo: false, plaid: plaid, surface: .dashboard)

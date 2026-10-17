@@ -70,7 +70,7 @@ struct SyncRouteTests {
         let plaid = ScriptedProvider([
             "/item/public_token/exchange": [PlaidScript.exchange],
             "/transactions/sync": [PlaidScript.page("cursor-1", PlaidScript.row), PlaidScript.loginRequired, PlaidScript.page("cursor-2")],
-            "/accounts/balance/get": [PlaidScript.balances],
+            "/accounts/get": [PlaidScript.balances], "/accounts/balance/get": [PlaidScript.balances],
             "/link/token/create": [(200, #"{"link_token": "link-update-1"}"#)],
         ])
         let (dash, service) = try await TestServer.app(seedDemo: false, plaid: plaid, surface: .dashboard)
@@ -138,7 +138,7 @@ struct SyncRouteTests {
             "/item/public_token/exchange": [PlaidScript.exchange],
             "/transactions/sync": [PlaidScript.page("cursor-1"), PlaidScript.loginRequired, (500, #"{"error_code": "INTERNAL_SERVER_ERROR", "error_message": "try again"}"#),
                                    PlaidScript.page("cursor-2")],
-            "/accounts/balance/get": [PlaidScript.balances],
+            "/accounts/get": [PlaidScript.balances], "/accounts/balance/get": [PlaidScript.balances],
         ])
         let (app, service) = try await TestServer.app(seedDemo: false, plaid: plaid)
         try await app.test(.router) { client in
@@ -162,7 +162,7 @@ struct SyncRouteTests {
             "/accounts": [(401, #"{"error": {"code": "enrollment.disconnected", "message": "The enrollment is disconnected"}}"#), (200, "[]")],
             "/item/public_token/exchange": [PlaidScript.exchange],
             "/transactions/sync": [PlaidScript.page("cursor-1")],
-            "/accounts/balance/get": [PlaidScript.balances],
+            "/accounts/get": [PlaidScript.balances], "/accounts/balance/get": [PlaidScript.balances],
         ])
         let (dash, service) = try await TestServer.app(seedDemo: false, plaid: teller, surface: .dashboard)
         try await service.providers.saveTeller(applicationID: "app_test", environment: "sandbox", certificatePEM: nil, keyPEM: nil)
@@ -212,7 +212,7 @@ struct SyncRouteTests {
         let plaid = ScriptedProvider([
             "/item/public_token/exchange": [PlaidScript.exchange],
             "/transactions/sync": [PlaidScript.page("cursor-1")],
-            "/accounts/balance/get": [PlaidScript.balances],
+            "/accounts/get": [PlaidScript.balances], "/accounts/balance/get": [PlaidScript.balances],
         ], delay: .milliseconds(150))
         let (app, service) = try await TestServer.app(seedDemo: false, plaid: plaid)
         try await app.test(.router) { client in

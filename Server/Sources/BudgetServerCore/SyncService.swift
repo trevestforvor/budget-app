@@ -80,7 +80,9 @@ public actor SyncService {
 
     /// Syncs every link, one at a time. A link waiting for the person to sign in again is left out — it would only be
     /// refused again — until a reconnect or a sync of that link marks it connected. A call while a run is under way
-    /// waits for that run and returns its results.
+    /// waits for that run and returns its results. So the person's "Sync now" that lands during a scheduled run gets that
+    /// run's results, read with Plaid's cached balances, and no live balance read of its own: accepted, as it's rare and
+    /// the next tap reads live.
     public func syncAll(trigger: SyncTrigger = .schedule) async -> [LinkSyncResult] {
         if let allRun { return await allRun.value }
         let run = Task { (try? await serialized { await self.runAll(trigger: trigger) }) ?? [] }
@@ -242,7 +244,7 @@ public actor SyncService {
 
     // MARK: - [lane P] Plaid
 
-    /// Plaid: incrementally by cursor, then card bills (best effort).
+    /// Plaid: incrementally by cursor, with balances read as `balanceRead` says, then card bills (best effort).
     ///
     /// The rows and the cursor are separate writes (the ledger, then the link), so they're replay-safe rather than
     /// atomic: the cursor is stored only after the rows are in and the removed ones dropped, and a crash in between
@@ -253,9 +255,17 @@ public actor SyncService {
         }
         let source = PlaidSource(environment: plaid.environment, credentials: .init(clientID: plaid.clientID, secret: plaid.secret),
                                  accessToken: token, institution: link.institution, transport: providers.transport)
-        let snapshot: SourceSnapshot, next: String, deleted: [String]
+        let now = Date()
+        let read = Self.balanceRead(link, trigger: trigger, now: now)
+        if read == .live {
+            // Counted when asked, not when answered: a failed sync still spent the call (over-counting only waits longer).
+            var plaidState = link.plaid ?? PlaidLinkState()
+            plaidState.recordBalanceRead(now: now)
+            link.plaid = plaidState
+        }
+        let pull: PlaidSource.Pull
         do {
-            (snapshot, next, deleted) = try await source.snapshot(cursor: link.cursor)
+            pull = try await source.snapshot(cursor: link.cursor, balances: read, now: now)
         } catch where PlaidErrors.plaidError(error)?.errorCode == "ITEM_NOT_FOUND" {
             // Unrecoverable: the Item was removed at Plaid. Once /item/get agrees, drop the token (it opens nothing now)
             // and keep the link, its accounts and its rows. Never /item/remove it: there's nothing left to remove.
@@ -267,9 +277,15 @@ public actor SyncService {
             }
             throw error
         }
+        if pull.liveBalance {
+            link.plaid?.balanceAsOf = now
+        } else if let refused = pull.balanceFallback {
+            logger.warning("live balance for \(link.institution) refused (code \(refused.errorCode ?? "status \(refused.status)"), request_id \(refused.requestID ?? "none")); used Plaid's cached balances")
+        }
+        let snapshot = pull.snapshot
         let report = try await api.ingest(snapshot, batchID: batchID)
-        let removed = try await api.removeSourceRows(.plaid, externalIDs: deleted)
-        link.cursor = next
+        let removed = try await api.removeSourceRows(.plaid, externalIDs: pull.removed)
+        link.cursor = pull.nextCursor
         // Best effort, after the rows are in: never fails the sync (CardBills.swift). A card-bill check that wasn't ready or
         // consented is asked again on a retry, as in 0.5.x: one link's sync, a reconnect or a new link, never a sync of
         // everything. That is `retriesSignIn`, not `requestedByPerson` (which also covers "sync everything" and leaves
@@ -278,6 +294,15 @@ public actor SyncService {
                                                     previous: link.cardBills, requestedByPerson: trigger.retriesSignIn, api: api, now: Date(),
                                                     institution: link.institution, logger: logger)
         return ProviderSyncOutcome(report: report, removed: removed)
+    }
+
+    /// How this sync reads balances. Routinely Plaid's cached ones (`/accounts/get`). A live read (`/accounts/balance/get`)
+    /// only when the person asked (`SyncTrigger.requestedByPerson`: never the schedule, the morning catch-up, a webhook,
+    /// a reconnect or a new link's first sync), and only within the per-Item cap; above it, the cached read again.
+    static func balanceRead(_ link: StoredLink, trigger: SyncTrigger, now: Date) -> PlaidSource.BalanceRead {
+        let state = link.plaid ?? PlaidLinkState()
+        if trigger.requestedByPerson, state.mayReadLiveBalance(now: now) { return .live }
+        return .cached(asOf: state.cachedBalanceAsOf(now: now))
     }
 
     /// Whether `/item/get` also says the Item is gone. Any other answer (healthy, another error, no answer) keeps the token.

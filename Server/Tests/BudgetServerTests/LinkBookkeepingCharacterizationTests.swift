@@ -47,7 +47,7 @@ struct LinkBookkeepingCharacterizationTests {
                 (500, #"{"error_code": "INTERNAL_SERVER_ERROR", "error_message": "still down"}"#),// 9
                 PlaidScript.page("c3"),                                                          // 10
             ],
-            "/accounts/balance/get": [PlaidScript.balances],
+            "/accounts/get": [PlaidScript.balances], "/accounts/balance/get": [PlaidScript.balances],
         ])
         let (_, service) = try await TestServer.app(seedDemo: false, plaid: plaid)
         try await Self.link(service, id: "plaid-item-1", provider: .plaid, token: "access-sandbox-9")

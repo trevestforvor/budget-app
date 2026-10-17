@@ -38,6 +38,30 @@ public struct PlaidLinkState: Codable, Hashable, Sendable {
 
     /// Copies what the dashboard shows about this Item onto its summary.
     func summaryFields(into summary: inout LinkSummary) {}
+
+    // MARK: Balance only on request
+
+    /// The server's own cap on live balance reads per Item, well under Plaid's (5 a minute, 30 an hour).
+    static let balanceReadsPerHour = 1
+    static let balanceReadsPerDay = 6
+
+    /// Whether the person's refresh may read balances live now: under the hourly and daily caps.
+    func mayReadLiveBalance(now: Date) -> Bool {
+        let day = (balanceRequests ?? []).filter { now.timeIntervalSince($0) < 86_400 }
+        let hour = day.filter { now.timeIntervalSince($0) < 3_600 }
+        return day.count < Self.balanceReadsPerDay && hour.count < Self.balanceReadsPerHour
+    }
+
+    /// Counts a live read, keeping only the last day's.
+    mutating func recordBalanceRead(now: Date) {
+        balanceRequests = ((balanceRequests ?? []) + [now]).filter { now.timeIntervalSince($0) < 86_400 }
+    }
+
+    /// The newest time Plaid's cached balances are known to be from: the last live read (which refreshes them) or Plaid's
+    /// last transactions update (which a Transactions Item's balances follow). Nil when neither is known.
+    func cachedBalanceAsOf(now: Date) -> Date? {
+        [balanceAsOf, lastTransactionsUpdate].compactMap { $0 }.filter { $0 <= now }.max()
+    }
 }
 
 extension StoredLink {

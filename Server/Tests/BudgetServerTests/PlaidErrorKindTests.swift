@@ -139,7 +139,7 @@ struct PlaidErrorKindTests {
     func itemNotFound() async throws {
         let plaid = ScriptedProvider([
             "/transactions/sync": [PlaidScript.page("c1", PlaidScript.row), Self.plaidError("ITEM_NOT_FOUND", type: "INVALID_INPUT")],
-            "/accounts/balance/get": [PlaidScript.balances],
+            "/accounts/get": [PlaidScript.balances], "/accounts/balance/get": [PlaidScript.balances],
             "/item/get": [Self.plaidError("ITEM_NOT_FOUND", type: "INVALID_INPUT")],
             "/link/token/create": [(200, #"{"link_token": "link-should-not-happen"}"#)],
         ])
@@ -189,7 +189,7 @@ struct PlaidErrorKindTests {
     func unknownBacksOff() async throws {
         let plaid = ScriptedProvider([
             "/transactions/sync": [Self.plaidError("BRAND_NEW_CODE", type: "API_ERROR", status: 500), PlaidScript.page("c1")],
-            "/accounts/balance/get": [PlaidScript.balances],
+            "/accounts/get": [PlaidScript.balances], "/accounts/balance/get": [PlaidScript.balances],
         ])
         let (_, service) = try await Self.service(plaid)
         let before = Date()
@@ -298,7 +298,7 @@ struct PlaidErrorKindTests {
     func failedSyncHistory() async throws {
         let plaid = ScriptedProvider([
             "/transactions/sync": [PlaidScript.page("c1", PlaidScript.row), PlaidScript.page("c2"), Self.plaidError("INSTITUTION_DOWN", type: "INSTITUTION_ERROR")],
-            "/accounts/balance/get": [PlaidScript.balances],
+            "/accounts/get": [PlaidScript.balances], "/accounts/balance/get": [PlaidScript.balances],
         ])
         let (app, service) = try await Self.service(plaid)
         #expect(try await service.sync.sync(linkID: Self.id).ok)   // rows: recorded
@@ -424,7 +424,7 @@ struct PlaidErrorKindTests {
                 (200, #"{"added": [\#(PlaidScript.row)], "modified": [], "removed": [], "next_cursor": "p1b", "has_more": true}"#),
                 PlaidScript.page("final"),
             ],
-            "/accounts/balance/get": [PlaidScript.balances],
+            "/accounts/get": [PlaidScript.balances], "/accounts/balance/get": [PlaidScript.balances],
         ])
         let (_, service) = try await Self.service(plaid)
         let result = try await service.sync.sync(linkID: Self.id)
@@ -456,7 +456,7 @@ struct PlaidErrorKindTests {
         let removedRow = #"{"added": [], "modified": [], "removed": [{"transaction_id": "t1"}], "next_cursor": "c2", "has_more": false}"#
         let plaid = ScriptedProvider([
             "/transactions/sync": [PlaidScript.page("c1", PlaidScript.row), (200, removedRow)],
-            "/accounts/balance/get": [PlaidScript.balances],
+            "/accounts/get": [PlaidScript.balances], "/accounts/balance/get": [PlaidScript.balances],
         ])
         let (_, service) = try await Self.service(plaid, store: DroppingRowsFailStore())
         #expect(try await service.sync.sync(linkID: Self.id).ok)

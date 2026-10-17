@@ -158,36 +158,88 @@ public struct PlaidSource: TransactionSource {
         return all
     }
 
-    /// Incremental: everything since `cursor` (nil = full history), current balances and holdings.
+    /// Incremental: everything since `cursor` (nil = full history) and the accounts' balances, read as `balances` says.
+    /// Holdings aren't part of it: they're fetched once a day per Item (HoldingsSync), never on every sync.
     /// Persist `nextCursor` only after the snapshot is applied.
-    public func snapshot(cursor: String?) async throws -> (snapshot: SourceSnapshot, nextCursor: String, removed: [String]) {
+    public func snapshot(cursor: String?, balances read: BalanceRead = .cached(asOf: nil), now: Date = .now) async throws -> Pull {
         let page = try await sync(from: cursor)
-        let balances = try Self.parseAccounts(try await transport.json(
-            try Self.request(environment, "accounts/balance/get", ["access_token": .string(accessToken)], credentials)), institution: institution)
-        let holdings = (try? await self.holdings()) ?? [:]
+        let balances = try await accounts(read, now: now)
         let changed = page.added + page.modified
-        let accounts = balances.map { account -> SourceAccount in
+        let accounts = balances.accounts.map { account -> SourceAccount in
             var a = account
             a.transactions = changed.filter { $0.accountID == account.externalID }.map(\.transaction)
-            a.holdings = holdings[account.externalID] ?? []
             return a
         }
-        return (SourceSnapshot(source: .plaid, accounts: accounts, warnings: []), page.nextCursor, page.removed)
+        return Pull(snapshot: SourceSnapshot(source: .plaid, accounts: accounts, warnings: []), nextCursor: page.nextCursor,
+                    removed: page.removed, liveBalance: balances.live, balanceFallback: balances.fallback)
     }
 
     public func fetch(since: Date, includePending: Bool = true) async throws -> SourceSnapshot {
         let page = try await sync(from: nil)
-        let balances = try Self.parseAccounts(try await transport.json(
-            try Self.request(environment, "accounts/balance/get", ["access_token": .string(accessToken)], credentials)), institution: institution)
-        let holdings = (try? await self.holdings()) ?? [:]
-        let accounts = balances.map { account -> SourceAccount in
+        let balances = try await accounts(.cached(asOf: nil))
+        let accounts = balances.accounts.map { account -> SourceAccount in
             var a = account
             a.transactions = page.added.filter { $0.accountID == account.externalID && $0.transaction.posted >= since && (includePending || !$0.transaction.isPending) }
                 .map(\.transaction)
-            a.holdings = holdings[account.externalID] ?? []
             return a
         }
         return SourceSnapshot(source: .plaid, accounts: accounts, warnings: [])
+    }
+
+    /// What `snapshot` pulled.
+    public struct Pull: Sendable {
+        public var snapshot: SourceSnapshot
+        /// Store it only after the snapshot is applied.
+        public var nextCursor: String
+        /// Transaction ids Plaid removed.
+        public var removed: [String]
+        /// The balances came from a live read at the bank (false: Plaid's cached ones).
+        public var liveBalance: Bool
+        /// Why a live read that was asked for gave way to the cached balances: Plaid's code and request id when it said.
+        public var balanceFallback: PlaidAPIError?
+    }
+
+    // MARK: Balances
+
+    /// How a sync reads balances.
+    public enum BalanceRead: Sendable, Equatable {
+        /// `/accounts/get`: the balances Plaid keeps, free, and refreshed about once a day on a Transactions Item. They're
+        /// dated by Plaid's `last_updated_datetime` when it gives one, else by `asOf` (the newest time they're known to
+        /// be from), else by the time of the read.
+        case cached(asOf: Date?)
+        /// `/accounts/balance/get`: a live read at the bank. It's slow (seconds, sometimes half a minute) and Plaid limits
+        /// it per Item, so it's only for the person's own refresh, within the server's cap. When Plaid refuses it, the
+        /// cached balances are read instead.
+        case live
+    }
+
+    /// The Item's accounts and balances, read as `read` says. `live` says whether the live read is what came back.
+    public func accounts(_ read: BalanceRead, now: Date = .now) async throws -> (accounts: [SourceAccount], live: Bool, fallback: PlaidAPIError?) {
+        var asOf: Date?
+        var fallback: PlaidAPIError?
+        switch read {
+        case .live:
+            // Capital One (older connections) and Apple Card refuse a live read without a freshness floor; every other
+            // bank ignores it. Older data than that comes back as an error, and the cached balances are read instead.
+            let floor = now.addingTimeInterval(-86_400).formatted(.iso8601)
+            let body: [String: JSONValue] = ["access_token": .string(accessToken),
+                                             "options": .object(["min_last_updated_datetime": .string(floor)])]
+            do {
+                let json = try await transport.json(try Self.request(environment, "accounts/balance/get", body, credentials))
+                return (try Self.parseAccounts(json, institution: institution, readAt: now), true, nil)
+            } catch is CancellationError {
+                throw CancellationError()
+            } catch {
+                // Any refusal (a rate limit, a bank that can't answer live, a stale floor): the cached read below still
+                // answers, or fails for the Item's real reason (a sign-in, say) the way a sync would anyway.
+                let http = error as? SourceHTTPError
+                fallback = http.flatMap(PlaidAPIError.init) ?? PlaidAPIError(status: http?.status ?? 0)
+            }
+        case let .cached(date):
+            asOf = date
+        }
+        let json = try await transport.json(try Self.request(environment, "accounts/get", ["access_token": .string(accessToken)], credentials))
+        return (try Self.parseAccounts(json, institution: institution, readAt: asOf.map { min($0, now) } ?? now), false, fallback)
     }
 
     // MARK: Item
@@ -291,8 +343,9 @@ public struct PlaidSource: TransactionSource {
                         nextCursor: cursor, hasMore: hasMore)
     }
 
-    /// Credit and loan balances come back as amounts owed (positive); the ledger shows them negative.
-    static func parseAccounts(_ json: JSONValue, institution: String) throws -> [SourceAccount] {
+    /// Credit and loan balances come back as amounts owed (positive); the ledger shows them negative. A balance is dated
+    /// by Plaid's `last_updated_datetime` when it gives one, else by `readAt`.
+    static func parseAccounts(_ json: JSONValue, institution: String, readAt: Date = .now) throws -> [SourceAccount] {
         guard case let .object(o) = json, case let .array(accounts)? = o["accounts"] else { throw DecisionError.malformed("no accounts") }
         return accounts.compactMap { value in
             guard case let .object(a) = value, let id = string(a, "account_id"), case let .object(b)? = a["balances"] else { return nil }
@@ -306,11 +359,12 @@ public struct PlaidSource: TransactionSource {
             let currency = Self.currency(b)
             let sign: Double = kind == .credit ? -1 : 1
             let current = number(b, "current") ?? 0
+            let updated = string(b, "last_updated_datetime").flatMap(timestamp)
             return SourceAccount(externalID: id, institution: institution, institutionDomain: nil,
                                  name: displayName(a), kind: kind,
                                  balance: money(current * sign, currency),
                                  availableBalance: number(b, "available").map { money($0, currency) },
-                                 balanceDate: .now, transactions: [], holdings: [], mask: string(a, "mask"), providerType: type)
+                                 balanceDate: updated ?? readAt, transactions: [], holdings: [], mask: string(a, "mask"), providerType: type)
         }
     }
 
