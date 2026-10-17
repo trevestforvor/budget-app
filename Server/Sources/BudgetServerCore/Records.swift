@@ -108,6 +108,8 @@ public struct LinkSummary: Codable, Hashable, Sendable {
     public var failureCount: Int? = nil
     public var lastAttemptAt: Date? = nil
     public var nextAttemptAt: Date? = nil
+    /// Plaid's institution id (`ins_…`), so the dashboard can refuse a second Item at a bank already linked.
+    public var institutionID: String? = nil
     /// When the bank's consent runs out (Plaid).
     public var consentExpiresAt: Date? = nil
     /// The last daily Item check (Plaid `/item/get`).

@@ -34,8 +34,8 @@ enum ConnectionAlerts {
     static func expiryKey(linkID: String, expiresAt: Date, daysBefore: Int) -> String { "expiry|\(linkID)|\(day(expiresAt))|\(daysBefore)" }
     /// One bank behind an aggregator link: `bank|<linkID>|<connID>|<firstFailedAt epoch s>`.
     static func bankKey(linkID: String, connectionID: String, firstFailedAt: Date) -> String { "bank|\(linkID)|\(connectionID)|\(epoch(firstFailedAt))" }
-    /// An account gone quiet: `stale|<accountID>|<staleSince yyyy-MM-dd>`.
-    static func staleKey(accountID: String, staleSince: Date) -> String { "stale|\(accountID)|\(day(staleSince))" }
+    /// An account gone quiet: `stale|<accountID>|<lastGoodSync epoch s>`, so the next good sync starts a new episode.
+    static func staleKey(accountID: String, lastGoodSync: Date) -> String { "stale|\(accountID)|\(epoch(lastGoodSync))" }
     /// The server's own setup with a provider: `setup|<provider>|<firstFailedAt epoch s>`.
     static func setupKey(provider: SourceKind, firstFailedAt: Date) -> String { "setup|\(provider.rawValue)|\(epoch(firstFailedAt))" }
 

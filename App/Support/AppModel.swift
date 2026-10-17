@@ -183,9 +183,9 @@ final class AppModel {
         await refreshShared()
     }
 
-    /// The one way the app changes anything — the app's own editors and applied proposals both land here.
+    /// The one way the app changes anything — the app's own editors and applied proposals both land here. `basis` is the
+    /// fingerprint an Ask proposal was made against: the server refuses (409) when the rows changed since.
     @discardableResult
-    /// `basis` is the fingerprint an Ask proposal was made against: the server refuses (409) when the rows changed since.
     func perform(_ action: AppAction, basis: String? = nil) async throws -> String {
         if case let .navigate(destination) = action {
             route(destination)

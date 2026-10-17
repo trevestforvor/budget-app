@@ -216,9 +216,12 @@ public actor SyncService {
         let report = try await api.ingest(snapshot, batchID: batchID)
         let removed = try await api.removeSourceRows(.plaid, externalIDs: deleted)
         link.cursor = next
-        // Best effort, after the rows are in: never fails the sync (CardBills.swift).
+        // Best effort, after the rows are in: never fails the sync (CardBills.swift). A card-bill check that wasn't ready or
+        // consented is asked again on a retry, as in 0.5.x: one link's sync, a reconnect or a new link, never a sync of
+        // everything. That is `retriesSignIn`, not `requestedByPerson` (which also covers "sync everything" and leaves
+        // out reconnects and new links); it's what gates a live balance call, not this.
         link.cardBills = await CardBillSync.refresh(enabled: await settings.cardBillsEnabled, source: source, snapshot: snapshot,
-                                                    previous: link.cardBills, requestedByPerson: trigger.requestedByPerson, api: api, now: Date(),
+                                                    previous: link.cardBills, requestedByPerson: trigger.retriesSignIn, api: api, now: Date(),
                                                     institution: link.institution, logger: logger)
         return ProviderSyncOutcome(report: report, removed: removed)
     }

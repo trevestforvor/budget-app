@@ -525,7 +525,9 @@ public actor ServerSettings {
         case .number:
             let range = d.range ?? 0.25...(24 * 7)
             guard let number = Double(raw), range.contains(number) else {
-                throw BudgetAPIError.rejected("\(d.label) must be a number between \(range.lowerBound.formatted()) and \(range.upperBound.formatted()).")
+                // Plain digits, not `formatted()`: the server's locale mustn't change the message ("0.25", never "0,25").
+                let plain = { (n: Double) in n == n.rounded() ? String(Int(n)) : String(n) }
+                throw BudgetAPIError.rejected("\(d.label) must be a number between \(plain(range.lowerBound)) and \(plain(range.upperBound)).")
             }
             return String(number)
         case .choice:
