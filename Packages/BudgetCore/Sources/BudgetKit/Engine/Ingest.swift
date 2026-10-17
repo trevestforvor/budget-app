@@ -85,6 +85,33 @@ public struct IngestReport: Hashable, Codable, Sendable {
     }
 }
 
+/// What Undo would do with one batch (`GET /v1/imports/:batch/undo`), with the counts behind it.
+public struct RollbackPlan: Hashable, Codable, Sendable {
+    public enum Verdict: String, Codable, Sendable {
+        /// Undo removes the rows; nothing sends them again.
+        case undo
+        /// Undo removes the rows, but `returning` of them come back at the next sync: it needs the person's yes.
+        case undoReturns
+        /// Undo would lose rows for good (a cursor source never re-sends them): hide them instead.
+        case refuse
+    }
+
+    public var batchID: String
+    /// The batch's rows still in the ledger.
+    public var rows: Int
+    /// Those rows by `SourceKind` raw value.
+    public var bySource: [String: Int]
+    /// Window-source rows the next sync fetches again (posted on or after its start).
+    public var returning: Int
+    public var verdict: Verdict
+    /// Why, and what to do instead, in the person's words.
+    public var message: String
+
+    public init(batchID: String, rows: Int, bySource: [String: Int], returning: Int, verdict: Verdict, message: String) {
+        self.batchID = batchID; self.rows = rows; self.bySource = bySource; self.returning = returning; self.verdict = verdict; self.message = message
+    }
+}
+
 extension Ledger {
     func accountKind(_ id: String) -> AccountKind? { accounts.first { $0.id == id }?.kind }
 
@@ -317,6 +344,27 @@ extension Ledger {
             new.originalMerchant = new.merchant
             new.merchant = old.merchant
         }
+    }
+
+    /// What undoing a batch would do, worked out before anything is removed. A cursor source (Plaid) never sends a row
+    /// twice, so removing its rows loses them for good: refused, hide them instead. A window source re-sends its last
+    /// days, so rows from `nextWindowStart` on come back at the next sync: undo needs a yes. Anything else (files) undoes.
+    func rollbackPlan(batchID: String, nextWindowStart: Date?) -> RollbackPlan {
+        let rows = transactions.filter { $0.batchID == batchID }
+        let bySource = Dictionary(grouping: rows, by: \.source.rawValue).mapValues(\.count)
+        let returning = nextWindowStart.map { start in rows.filter { $0.source.syncStyle == .window && $0.postedAt >= start }.count } ?? 0
+        let n = rows.count == 1 ? "this row" : "these \(rows.count) rows"
+        if let kept = rows.first(where: { [.cursor, .device].contains($0.source.syncStyle) }) {
+            return RollbackPlan(batchID: batchID, rows: rows.count, bySource: bySource, returning: 0, verdict: .refuse,
+                                message: "\(kept.source.displayName) won't send \(n) again, so undoing would lose \(rows.count == 1 ? "it" : "them") for good. Hide \(rows.count == 1 ? "it" : "them") instead: hidden rows stay out of every total, and you can show them again from Activity.")
+        }
+        if returning > 0, let source = rows.first(where: { $0.source.syncStyle == .window })?.source {
+            let back = returning == rows.count ? (rows.count == 1 ? "It comes" : "All of them come") : "\(returning) of them come"
+            return RollbackPlan(batchID: batchID, rows: rows.count, bySource: bySource, returning: returning, verdict: .undoReturns,
+                                message: "Undo removes \(n). \(back) back at the next sync, because \(source.displayName) sends its last days again. Hide \(rows.count == 1 ? "it" : "them") instead to keep \(rows.count == 1 ? "it" : "them") out of your totals for good.")
+        }
+        return RollbackPlan(batchID: batchID, rows: rows.count, bySource: bySource, returning: 0, verdict: .undo,
+                            message: rows.isEmpty ? "Nothing from this batch is left to remove." : "Undo removes \(n) and nothing sends \(rows.count == 1 ? "it" : "them") again.")
     }
 
     mutating func rollback(batchID: String) -> Int {

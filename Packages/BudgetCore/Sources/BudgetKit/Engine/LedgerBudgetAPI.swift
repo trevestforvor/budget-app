@@ -663,11 +663,20 @@ public actor LedgerBudgetAPI: BudgetAPI {
     }
 
     // MARK: - [lane L] rollback
-    /// Removes every row a batch added and re-anchors the affected accounts. Returns the rows removed.
+    /// Removes every row a batch added and re-anchors the affected accounts. Returns the rows removed. The plan
+    /// (`rollbackPlan`) is worked out inside the same write, so no sync slips in between: a batch it refuses (Plaid's)
+    /// is a 409 and changes nothing, and one whose rows partly come back (`nextWindowStart`, the next sync's window) is
+    /// a 409 until `acknowledgeReturning`.
     @discardableResult
-    public func rollback(batchID: String) async throws -> Int {
+    public func rollback(batchID: String, nextWindowStart: Date? = nil, acknowledgeReturning: Bool = false) async throws -> Int {
         tick()
-        return try await write { ledger.rollback(batchID: batchID) }
+        return try await write {
+            let plan = ledger.rollbackPlan(batchID: batchID, nextWindowStart: nextWindowStart)
+            if plan.verdict == .refuse || (plan.verdict == .undoReturns && !acknowledgeReturning) {
+                throw BudgetAPIError.server(status: 409, message: plan.message)
+            }
+            return ledger.rollback(batchID: batchID)
+        }
     }
     // MARK: - [end lane L] rollback
 

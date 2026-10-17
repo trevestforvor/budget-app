@@ -486,7 +486,7 @@ func addImportRoutes(_ router: Router<BasicRequestContext>, _ service: BudgetSer
         let record = ImportRecord(batchID: batchID, kind: .file, linkID: nil, label: body.label ?? "File import",
                                   report: report, createdAt: Date(), rolledBack: false)
         try await service.store.upsertImport(record)
-        return try HTTP.json(record, status: .created)
+        return try HTTP.json(record.annotated(), status: .created)
     }
 
     /// `{files: [import bodies]}` → one `IngestReport` per file, worked out in order without saving.
@@ -503,13 +503,40 @@ func addImportRoutes(_ router: Router<BasicRequestContext>, _ service: BudgetSer
         return try HTTP.json(try await service.api.importDuplicates(apply: body.apply == true))
     }
 
-    router.delete("/v1/imports/:batch") { _, context in
+    @Sendable func importRecord(_ context: BasicRequestContext) async throws -> ImportRecord {
         let batch = try context.parameters.require("batch")
-        guard var record = try await service.store.imports().first(where: { $0.batchID == batch }) else { throw BudgetAPIError.notFound }
-        let removed = try await service.api.rollback(batchID: batch)
+        guard let record = try await service.store.imports().first(where: { $0.batchID == batch }) else { throw BudgetAPIError.notFound }
+        return record
+    }
+
+    /// What Undo would do with a batch (`RollbackPlan`): how many rows, how many come back at the next sync, and
+    /// whether it's refused (Plaid: hide instead).
+    router.get("/v1/imports/:batch/undo") { _, context in
+        try HTTP.json(try await ImportUndo.plan(for: try await importRecord(context), service))
+    }
+
+    /// Rolls a batch back. 409, changing nothing, when Undo is refused (a Plaid sync), and when rows would come back
+    /// at the next sync (SimpleFIN) unless `?acknowledge=returning`.
+    router.delete("/v1/imports/:batch") { request, context in
+        var record = try await importRecord(context)
+        let policy = ImportUndo.policy(for: record)
+        if policy.mode == .refused { throw BudgetAPIError.server(status: 409, message: policy.message) }
+        let removed = try await service.api.rollback(batchID: record.batchID, nextWindowStart: try await ImportUndo.nextWindowStart(for: record, service),
+                                                     acknowledgeReturning: request.uri.queryParameters.get("acknowledge") == "returning")
         record.rolledBack = true
         try await service.store.upsertImport(record)
         return try HTTP.json(["removed": removed])
+    }
+
+    /// Hides a batch's rows from every total instead of removing them (`ActionResult`, with its undo).
+    router.post("/v1/imports/:batch/hide") { _, context in
+        var record = try await importRecord(context)
+        let result = try await service.api.hideBatch(batchID: record.batchID)
+        if record.hiddenAt == nil, result.affectedTransactions > 0 {
+            record.hiddenAt = Date()
+            try await service.store.upsertImport(record)
+        }
+        return try HTTP.json(result)
     }
     // MARK: - [end lane L] addImportRoutes
 

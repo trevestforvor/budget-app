@@ -139,24 +139,67 @@ function historyRow(record) {
     [r.byMemory, "by remembered merchants"], [r.byModel, "by the decision model"]].filter(([n]) => n > 0).map(([n, how]) => `${count(n)} ${how}`);
   const how = [filed.length ? `Filed on their own: ${filed.join(", ")}.` : "Nothing was filed on its own.",
     r.modelCalls ? `${plural(r.modelCalls, "question")} to the decision model${r.modelMilliseconds != null ? `, ${(r.modelMilliseconds / 1000).toFixed(1)} s` : ""}.` : null].filter(Boolean).join(" ");
-  const undo = record.rolledBack ? tag("Undone") : button("Undo", { compact: true, "aria-label": `Undo ${record.label}`,
-    onclick: (e) => armed(e.currentTarget, r.rowsAdded ? `Click again to remove ${plural(r.rowsAdded, "row")}` : "Click again to undo", () => undoImport(record)) });
-  return h("div", { class: `row${record.rolledBack ? " dim" : ""}` },
+  const failed = record.outcome === "failed", policy = record.undo || { mode: "allowed" };
+  // A Plaid sync can't be undone (Plaid won't send its rows again), so it offers Hide; a SimpleFIN sync asks first
+  // how many rows its next sync brings back; a failed sync has nothing to undo.
+  const hideNote = !record.rolledBack && !failed && !record.hiddenAt && sync && policy.mode === "refused" && r.rowsAdded
+    ? `${policy.message || "Undo is off for this sync."} Hidden rows stay out of every total, and you can show them again from Activity.` : null;
+  const actions = record.rolledBack ? tag("Undone") : failed ? null : record.hiddenAt ? tag("Hidden")
+    : policy.mode === "refused" ? (sync && r.rowsAdded ? hideButton(record) : null)
+    : policy.mode === "warn" ? [undoButton(record, true), r.rowsAdded ? hideButton(record) : null]
+    : undoButton(record, false);
+  return h("div", { class: `row${record.rolledBack || failed ? " dim" : ""}` },
     h("span", { class: `glyph ${sync ? "tone-cyan" : "neutral"}` }, icon(sync ? "sync" : "file"), h("span", { class: "sr-only" }, sync ? "Sync" : "File import")),
     h("div", { class: "grow" }, h("div", { class: "title wrap" }, record.label), h("div", { class: "sub wrap" }, summary),
+      failed ? h("div", { class: "warn-line act-text" }, `Didn't sync: ${record.error || "the provider didn't answer."}`) : null,
       (r.warnings || []).map((w) => h("div", { class: "warn-line" }, h("span", { class: "dot watch", "aria-hidden": "true" }), h("span", {}, "Warning: ", w))),
+      hideNote ? h("div", { class: "help" }, hideNote) : null,
       details("Details", how)),
-    h("div", { class: "row-actions" }, undo));
+    h("div", { class: "row-actions" }, actions));
 }
 
-async function undoImport(record) {
+/// Undo, armed by a second click. With `ask` (a SimpleFIN sync) the first click asks the server what Undo would do, and
+/// the armed button says how many rows the next sync brings back; the second sends that yes along.
+function undoButton(record, ask) {
+  const r = record.report;
+  return button("Undo", { compact: true, "aria-label": `Undo ${record.label}`, onclick: async (e) => {
+    const b = e.currentTarget;
+    if (!ask || b.dataset.armed === "1") {
+      armed(b, r.rowsAdded ? `Click again to remove ${plural(r.rowsAdded, "row")}` : "Click again to undo", () => undoImport(record, b._acknowledge === true));
+      return;
+    }
+    try {
+      const plan = await api(`/v1/imports/${encodeURIComponent(record.batchID)}/undo`);
+      if (plan.verdict === "refuse") { toast(plan.message); return; }
+      b._acknowledge = plan.verdict === "undoReturns";
+      armed(b, b._acknowledge ? `Click again to remove ${plural(plan.rows, "row")}; ${count(plan.returning)} come back at the next sync`
+        : `Click again to remove ${plural(plan.rows, "row")}`, () => undoImport(record, b._acknowledge));
+    } catch (error) { reportError(error); }
+  } });
+}
+
+/// Hide rows: what a sync batch gets instead of Undo. Hidden rows keep balances and stay hidden when the bank sends them again.
+function hideButton(record) {
+  return button("Hide rows", { compact: true, kind: "quiet", "aria-label": `Hide the rows from ${record.label}`,
+    onclick: (e) => armed(e.currentTarget, `Click again to hide ${plural(record.report.rowsAdded, "row")}`, () => hideImport(record)) });
+}
+
+async function undoImport(record, acknowledge) {
   try {
-    const r = await api(`/v1/imports/${encodeURIComponent(record.batchID)}`, { method: "DELETE" });
+    const r = await api(`/v1/imports/${encodeURIComponent(record.batchID)}${acknowledge ? "?acknowledge=returning" : ""}`, { method: "DELETE" });
     toast(`Removed ${plural(r.removed, "transaction")} from ${record.label}`);
     // The file table above says so too, when the undone file is one of this batch.
     if (batch) for (const item of batch) if (item.batchID === record.batchID) item.undone = true;
     await afterWrite();
     if (batch && viewRef) viewRef.renderTable();
+  } catch (error) { reportError(error); }
+}
+
+async function hideImport(record) {
+  try {
+    const result = await api(`/v1/imports/${encodeURIComponent(record.batchID)}/hide`, { method: "POST" });
+    toast(`${result.message} You can show them again from Activity.`);
+    await afterWrite();
   } catch (error) { reportError(error); }
 }
 
