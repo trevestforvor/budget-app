@@ -126,8 +126,25 @@ public struct PlaidSource: TransactionSource {
         return try Self.parseSync(try await transport.json(try Self.request(environment, "transactions/sync", body, credentials)))
     }
 
-    /// All pages from `cursor` to now.
+    /// How many times a pagination that Plaid changed under us starts over before the sync gives up (and tries later).
+    public static let paginationRestarts = 3
+
+    /// All pages from `cursor` to now. When Plaid's data changes mid-way (TRANSACTIONS_SYNC_MUTATION_DURING_PAGINATION),
+    /// the pages so far are thrown away and the loop starts again from the cursor it began with, up to
+    /// `paginationRestarts` times.
     public func sync(from cursor: String?) async throws -> SyncPage {
+        var restarts = 0
+        while true {
+            do {
+                return try await pages(from: cursor)
+            } catch let error as SourceHTTPError
+                where restarts < Self.paginationRestarts && PlaidAPIError(error)?.errorCode == "TRANSACTIONS_SYNC_MUTATION_DURING_PAGINATION" {
+                restarts += 1
+            }
+        }
+    }
+
+    private func pages(from cursor: String?) async throws -> SyncPage {
         var page = try await syncPage(cursor: cursor)
         var all = page
         while page.hasMore {
@@ -171,6 +188,61 @@ public struct PlaidSource: TransactionSource {
             return a
         }
         return SourceSnapshot(source: .plaid, accounts: accounts, warnings: [])
+    }
+
+    // MARK: Item
+
+    /// What `/item/get` says about the Item: the ground truth for its live state.
+    public struct Item: Hashable, Sendable {
+        public var itemID: String?
+        public var institutionID: String?
+        /// `item.error`; nil while the Item is healthy.
+        public var error: PlaidAPIError?
+        /// When the bank's consent runs out (`consent_expiration_time`); nil at banks without an expiry.
+        public var consentExpiresAt: Date?
+        public var billedProducts: [String]
+        public var availableProducts: [String]
+        /// The webhook URL Plaid has for the Item.
+        public var webhook: String?
+        /// `status.transactions.last_successful_update`.
+        public var transactionsUpdatedAt: Date?
+        public var requestID: String?
+    }
+
+    /// `/item/get`. Plaid's errors (ITEM_NOT_FOUND above all) come back as `PlaidAPIError`.
+    public func item() async throws -> Item {
+        do {
+            return try Self.parseItem(try await transport.json(
+                try Self.request(environment, "item/get", ["access_token": .string(accessToken)], credentials)))
+        } catch let error as SourceHTTPError {
+            throw PlaidAPIError(error) ?? error
+        }
+    }
+
+    static func parseItem(_ json: JSONValue) throws -> Item {
+        guard case let .object(o) = json, case let .object(item)? = o["item"] else { throw DecisionError.malformed("no item") }
+        func list(_ key: String) -> [String] {
+            if case let .array(a)? = item[key] { a.compactMap { if case let .string(s) = $0 { s } else { nil } } } else { [] }
+        }
+        var error: PlaidAPIError?
+        if case let .object(e)? = item["error"], string(e, "error_code") != nil || string(e, "error_type") != nil {
+            error = PlaidAPIError(status: 200, errorType: string(e, "error_type"), errorCode: string(e, "error_code"),
+                                  errorMessage: string(e, "error_message"), displayMessage: string(e, "display_message"),
+                                  requestID: string(e, "request_id"))
+        }
+        var updated: Date?
+        if case let .object(status)? = o["status"], case let .object(transactions)? = status["transactions"] {
+            updated = string(transactions, "last_successful_update").flatMap(timestamp)
+        }
+        return Item(itemID: string(item, "item_id"), institutionID: string(item, "institution_id"), error: error,
+                    consentExpiresAt: string(item, "consent_expiration_time").flatMap(timestamp), billedProducts: list("billed_products"),
+                    availableProducts: list("available_products"), webhook: string(item, "webhook").flatMap { $0.isEmpty ? nil : $0 },
+                    transactionsUpdatedAt: updated, requestID: string(o, "request_id"))
+    }
+
+    /// An ISO 8601 time, with or without fractional seconds ("2026-11-03T17:20:13Z", "…13.123Z").
+    static func timestamp(_ s: String) -> Date? {
+        (try? Date(s, strategy: Date.ISO8601FormatStyle(includingFractionalSeconds: true))) ?? (try? Date(s, strategy: .iso8601))
     }
 
     // MARK: Parsing

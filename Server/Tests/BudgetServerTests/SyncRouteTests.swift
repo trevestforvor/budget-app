@@ -150,6 +150,9 @@ struct SyncRouteTests {
         let retried = try await service.sync.sync(linkID: "plaid-item-1")
         #expect(!retried.ok && retried.error?.contains("try again") == true)
         #expect(try await service.store.links().first?.status == .connected)
+        // 0.6.0: the schedule first waits out the failure's backoff, then takes the link.
+        #expect(await service.sync.syncAll().isEmpty)
+        try await service.sync.updateLink("plaid-item-1") { $0.nextAttemptAt = nil }
         #expect(await service.sync.syncAll().map(\.ok) == [true])
     }
 

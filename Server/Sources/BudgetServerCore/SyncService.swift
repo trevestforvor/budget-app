@@ -99,12 +99,18 @@ public actor SyncService {
         return results
     }
 
-    /// Syncs one link now, whatever its state. Asking for it is a retry: a link waiting for a sign-in is tried again
-    /// (the person may just have signed in — Plaid's update mode ends with this call, not a token exchange), and it's
-    /// marked as needing one only if the bank still refuses. Any other failure leaves it for the next scheduled sync.
+    /// Syncs one link now. Asked by the person, a reconnect or a new link, that's whatever its state, and a retry: a link
+    /// waiting for a sign-in is tried again (the person may just have signed in — Plaid's update mode ends with this
+    /// call, not a token exchange), and it's marked as needing one only if the bank still refuses. Any other failure
+    /// leaves it for the next scheduled sync. A webhook's sync keeps the stop rules (`LinkHealthBook.isDue`): a link
+    /// whose access was withdrawn, or that has needed a sign-in three times running, is left alone.
     public func sync(linkID: String, trigger: SyncTrigger = .personLink) async throws -> LinkSyncResult {
         try await serialized {
             guard let link = try await self.store.links().first(where: { $0.id == linkID }) else { throw BudgetAPIError.notFound }
+            guard LinkHealthBook.isDue(link, trigger: trigger, now: Date()) else {
+                return LinkSyncResult(linkID: link.id, institution: link.institution, ok: false, error: link.lastError, errorKind: link.errorKind,
+                                      skipped: "\(link.institution) is waiting for you to reconnect it, so the server didn't ask the bank.")
+            }
             return await self.syncAndPublish(link, trigger: trigger)
         }
     }
@@ -170,8 +176,18 @@ public actor SyncService {
         if trigger.retriesSignIn, link.status == .needsReauth { link.status = .connected }
         let batchID = "\(link.provider.rawValue)-\(link.id)-\(Int(Date().timeIntervalSince1970))"
         do {
-            guard let sealer else { throw BudgetAPIError.rejected("BUDGET_TOKEN_KEY isn't set; can't open stored tokens.") }
-            let token = try sealer.open(link.sealedToken)
+            guard let sealer else {
+                throw LinkFailure(kind: .providerSetup, code: "no-token-key", message: "BUDGET_TOKEN_KEY isn't set; can't open stored tokens.")
+            }
+            if link.provider == .plaid, link.sealedToken.isEmpty {
+                // Plaid deleted the Item (ITEM_NOT_FOUND, confirmed by /item/get) and the token was dropped: nothing to ask.
+                throw LinkFailure(kind: .revoked, code: "ITEM_NOT_FOUND", message: Self.itemGoneMessage(link))
+            }
+            let token: String
+            do { token = try sealer.open(link.sealedToken) } catch {
+                throw LinkFailure(kind: .providerSetup, code: "token-unsealable",
+                                  message: "The saved sign-in for \(link.institution) won't open with this server's BUDGET_TOKEN_KEY.")
+            }
             let outcome: ProviderSyncOutcome
             switch link.provider {
             case .plaid: outcome = try await syncPlaid(&link, token: token, batchID: batchID, trigger: trigger)
@@ -190,16 +206,28 @@ public actor SyncService {
             try await store.upsertLink(link)
             if LinkHealthBook.shouldRecordImport(report, failure: nil) {
                 try await store.upsertImport(ImportRecord(batchID: batchID, kind: .sync, linkID: link.id, label: "\(link.institution) sync",
-                                                          report: report, createdAt: Date(), rolledBack: false))
+                                                          report: report, createdAt: Date(), rolledBack: false,
+                                                          outcome: report.warnings.isEmpty ? .ok : .warning))
             }
             logger.info("synced \(link.institution): +\(report.rowsAdded) rows, \(report.needsReview) to review, \(report.modelCalls) model calls in \(report.modelMilliseconds ?? 0) ms\(report.warnings.isEmpty ? "" : " — " + report.warnings.joined(separator: " "))\((report.notes ?? []).isEmpty ? "" : " — " + (report.notes ?? []).joined(separator: " "))")
             return LinkSyncResult(linkID: link.id, institution: link.institution, ok: true, report: report, removed: removed, error: nil)
         } catch {
-            // Provider auth failures need the person to reconnect; everything else retries next run.
+            // A refused sign-in or withdrawn access waits for the person; everything else backs off and retries.
             let failure = LinkFailureClassifier.classify(error, provider: link.provider)
-            LinkHealthBook.recordFailure(&link, failure, now: Date())
+            let now = Date()
+            LinkHealthBook.recordFailure(&link, failure, now: now)
             try? await store.upsertLink(link)
-            logger.error("sync failed for \(link.institution): \(String(describing: error))")
+            // The failure goes in the history, so the person can see the bank has been failing, not only that it is.
+            // It wrote no rows, so it gets an id of its own: the batch id is per second, and a failure must never replace
+            // the record of a batch that did write rows.
+            if LinkHealthBook.shouldRecordImport(nil, failure: failure) {
+                let failedID = "\(batchID)-failed-\(UUID().uuidString.prefix(8).lowercased())"
+                try? await store.upsertImport(ImportRecord(batchID: failedID, kind: .sync, linkID: link.id, label: "\(link.institution) sync",
+                                                           report: IngestReport(batchID: failedID, source: link.provider), createdAt: now,
+                                                           rolledBack: false, outcome: .failed, error: failure.message, errorKind: failure.kind))
+            }
+            // The kind, the provider's code and Plaid's request_id (what Plaid support asks for); never a token or a body.
+            logger.error("sync failed for \(link.institution): \(failure.kind.rawValue), code \(failure.code ?? "none"), request_id \(failure.requestID ?? "none"): \(failure.message)")
             return LinkSyncResult(linkID: link.id, institution: link.institution, ok: false, report: nil, removed: 0, error: failure.message,
                                   errorKind: failure.kind)
         }
@@ -208,11 +236,30 @@ public actor SyncService {
     // MARK: - [lane P] Plaid
 
     /// Plaid: incrementally by cursor, then card bills (best effort).
+    ///
+    /// The rows and the cursor are separate writes (the ledger, then the link), so they're replay-safe rather than
+    /// atomic: the cursor is stored only after the rows are in and the removed ones dropped, and a crash in between
+    /// replays from the old cursor, which ingest absorbs (rows are keyed by Plaid's id).
     private func syncPlaid(_ link: inout StoredLink, token: String, batchID: String, trigger: SyncTrigger) async throws -> ProviderSyncOutcome {
-        guard let plaid = try await providers.plaid() else { throw BudgetAPIError.rejected("Plaid isn't set up on the server.") }
+        guard let plaid = try await providers.plaid() else {
+            throw LinkFailure(kind: .providerSetup, code: "plaid-not-configured", message: "Plaid isn't set up on the server.")
+        }
         let source = PlaidSource(environment: plaid.environment, credentials: .init(clientID: plaid.clientID, secret: plaid.secret),
                                  accessToken: token, institution: link.institution, transport: providers.transport)
-        let (snapshot, next, deleted) = try await source.snapshot(cursor: link.cursor)
+        let snapshot: SourceSnapshot, next: String, deleted: [String]
+        do {
+            (snapshot, next, deleted) = try await source.snapshot(cursor: link.cursor)
+        } catch where PlaidErrors.plaidError(error)?.errorCode == "ITEM_NOT_FOUND" {
+            // Unrecoverable: the Item was removed at Plaid. Once /item/get agrees, drop the token (it opens nothing now)
+            // and keep the link, its accounts and its rows. Never /item/remove it: there's nothing left to remove.
+            if await Self.itemIsGone(source) {
+                link.sealedToken = ""
+                logger.warning("Plaid no longer has the Item for \(link.institution); its token is dropped, its rows kept")
+                throw LinkFailure(kind: .revoked, code: "ITEM_NOT_FOUND", requestID: PlaidErrors.plaidError(error)?.requestID,
+                                  message: Self.itemGoneMessage(link))
+            }
+            throw error
+        }
         let report = try await api.ingest(snapshot, batchID: batchID)
         let removed = try await api.removeSourceRows(.plaid, externalIDs: deleted)
         link.cursor = next
@@ -224,6 +271,20 @@ public actor SyncService {
                                                     previous: link.cardBills, requestedByPerson: trigger.retriesSignIn, api: api, now: Date(),
                                                     institution: link.institution, logger: logger)
         return ProviderSyncOutcome(report: report, removed: removed)
+    }
+
+    /// Whether `/item/get` also says the Item is gone. Any other answer (healthy, another error, no answer) keeps the token.
+    static func itemIsGone(_ source: PlaidSource) async -> Bool {
+        do {
+            _ = try await source.item()
+            return false
+        } catch {
+            return PlaidErrors.plaidError(error)?.errorCode == "ITEM_NOT_FOUND"
+        }
+    }
+
+    static func itemGoneMessage(_ link: StoredLink) -> String {
+        "Plaid no longer has this connection to \(link.institution). Link the bank again; its history stays."
     }
 
     // MARK: - [end lane P]
@@ -262,21 +323,50 @@ public actor SyncService {
         var style = Date.FormatStyle(date: .abbreviated, time: .shortened)
         style.timeZone = await settings.timeZone
         let accounts = await api.accountList()
+        let history = Self.recentSyncs((try? await store.imports()) ?? [])
         let rows = links.flatMap { link in
             let base = InstitutionLink(id: link.id, institution: link.institution, primary: link.provider, fallback: nil, accountKinds: [],
                                        status: link.status, note: Self.note(link, style), lastSync: link.lastSync, lastError: link.lastError,
                                        errorKind: link.errorKind, failingSince: link.firstFailedAt, nextRetryAt: link.nextAttemptAt,
-                                       consentExpiresAt: link.plaid?.consentExpiresAt)
+                                       consentExpiresAt: link.plaid?.consentExpiresAt, recentSyncs: history[link.id])
             return link.provider == .simplefin ? SimpleFINLinkState.institutionRows(link, base: base, accounts: accounts) : [base]
         }
         await api.setInstitutions(rows)
     }
 
-    /// One plain line about a link, for clients that show a note.
+    /// Each link's last five recorded syncs, newest first: the ones that changed rows, warned or failed (a clean sync with
+    /// nothing new isn't recorded).
+    static func recentSyncs(_ records: [ImportRecord], limit: Int = 5) -> [String: [SyncOutcome]] {
+        var byLink: [String: [ImportRecord]] = [:]
+        for record in records where record.kind == .sync { if let id = record.linkID { byLink[id, default: []].append(record) } }
+        return byLink.mapValues { list in
+            list.sorted { $0.createdAt > $1.createdAt }.prefix(limit).map { r in
+                SyncOutcome(at: r.createdAt, ok: r.outcome != .failed, rowsAdded: r.report.rowsAdded, kind: r.errorKind,
+                            message: r.error ?? (r.report.warnings.isEmpty ? nil : r.report.warnings.joined(separator: " ")))
+            }
+        }
+    }
+
+    /// One plain line about a link, for clients that show a note: what's wrong, by its kind, and what happens next.
     static func note(_ link: StoredLink, _ style: Date.FormatStyle) -> String {
-        if link.status == .needsReauth { return "\(link.institution) needs you to sign in again. Reconnect it on the Budget dashboard." }
-        if link.lastError != nil { return "The last sync didn't go through. The next one tries again." }
-        return link.lastSync.map { "Last synced \($0.formatted(style))." } ?? "Not synced yet."
+        let retry = link.nextAttemptAt.map { " The server tries again \($0.formatted(style))." } ?? " The next sync tries again."
+        switch link.errorKind {
+        case .revoked?:
+            if link.provider == .plaid, link.sealedToken.isEmpty { return itemGoneMessage(link) }
+            return "Access to \(link.institution) was withdrawn. Reconnect it on the Budget dashboard."
+        case .needsSignIn?:
+            return "\(link.institution) needs you to sign in again. Reconnect it on the Budget dashboard."
+        case .rateLimited?:
+            return "\(link.institution) asked the server to slow down." + retry
+        case .providerSetup?:
+            return "The server's \(link.provider.displayName) setup needs attention on the Budget dashboard: \(link.lastError ?? "it was refused")."
+        case .transient?:
+            return "The last sync didn't go through." + retry
+        case nil:
+            if link.status == .needsReauth { return "\(link.institution) needs you to sign in again. Reconnect it on the Budget dashboard." }
+            if link.lastError != nil { return "The last sync didn't go through. The next one tries again." }
+            return link.lastSync.map { "Last synced \($0.formatted(style))." } ?? "Not synced yet."
+        }
     }
 
     /// Runs `syncAll` on an interval for the life of the process. The first wait counts from the last sync, not from
