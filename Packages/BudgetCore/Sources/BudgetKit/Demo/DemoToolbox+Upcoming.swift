@@ -41,6 +41,22 @@ extension DemoToolbox {
             }
             return .object(row)
         })
+        // Card bills come only from Plaid's Liabilities. Without them the model is told so in words, so it doesn't read an
+        // empty list as "nothing due" or estimate a bill from the card's balance.
+        let cards = ledger.accounts.filter { $0.kind == .credit }
+        let billed = Set(upcoming.cardBills.map(\.accountID))
+        o["note"] = .string("Paychecks, bills and subscriptions are predictions from past ones"
+                            + (billed.isEmpty ? "." : "; card bills come from the card issuer.") + " Card bills pay for spending already made.")
+        guard !upcoming.cardBills.isEmpty else {
+            o["cardBills"] = .string(cards.isEmpty
+                ? "No credit cards are linked."
+                : "No card bills are known: statements, minimums and due dates come only from Plaid's card bills, which aren't on for these cards or haven't come in lately. Don't estimate them.")
+            return (.object(o), figures)
+        }
+        let unbilled = cards.filter { !billed.contains($0.id) }.map(\.shortLabel)
+        if !unbilled.isEmpty {
+            o["cardsWithoutBills"] = .string("No card bill is known for \(unbilled.joined(separator: ", ")). Don't estimate one.")
+        }
         o["cardBills"] = .array(upcoming.cardBills.map { bill in
             var row: [String: JSONValue] = ["card": .string(bill.accountName ?? bill.accountID), "status": .string(bill.status?.rawValue ?? "due")]
             if let v = bill.statementBalance { row["statementBalance"] = .string(v.display); figures.append(Figure(id: "stmt-\(bill.id)", label: "\(bill.accountName ?? "Card") statement", detail: nil, value: v)) }
@@ -50,7 +66,6 @@ extension DemoToolbox {
             if let v = bill.statementDate { row["statementDate"] = .string(v.formatted(day)) }
             return .object(row)
         })
-        o["note"] = .string("Paychecks, bills and subscriptions are predictions from past ones; card bills come from the card issuer. Card bills pay for spending already made.")
         return (.object(o), figures)
     }
 }

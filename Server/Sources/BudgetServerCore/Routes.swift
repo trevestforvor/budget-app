@@ -314,9 +314,12 @@ public func buildRouter(_ service: BudgetService, surface: Surface = .api) -> Ro
     }
     router.get("/v1/status") { _, _ in try HTTP.json(try await api.serverStatus()) }
     // MARK: - [lane A] actions
+    /// `Budget-Basis` (optional): the fingerprint an Ask proposal was made against. The change is refused with a 409,
+    /// and nothing changes, when the rows it reaches changed since; without it the action applies as it is.
     router.post("/v1/actions") { request, _ in
         let action = try await HTTP.body(AppAction.self, request)
-        return try HTTP.json(try await api.perform(action))
+        let basis = request.headers[HTTPField.Name("Budget-Basis")!].flatMap { $0.isEmpty ? nil : $0 }
+        return try HTTP.json(try await api.perform(action, basis: basis))
     }
     /// What the action would do; nothing changes. A write only in method: it takes a body, so it's POST.
     router.post("/v1/actions/preview") { request, _ in

@@ -1058,17 +1058,12 @@ extension DemoLedger {
 
     /// The preview for a rule about to be saved, as it would stand among `list` (the rules after the change).
     func rulePreview(_ rule: BudgetRule, in list: [BudgetRule], title: String, applyToExisting: Bool) -> Preview {
-        let known = Set(activeCategories.map(\.id))
-        let (candidate, book) = (RuleMatcher(rule, filesMoneyIn: isMoneyIn(rule.categoryID)), ruleBook(list))
-        var rows: [LedgerTransaction] = [], moving = 0, settling = 0, yours = 0
         // MARK: - [lane A] rule-match loop (ruleMatches)
-        for row in transactions {
-            let text = RuleText(row)
-            guard candidate.applies(to: row, text) else { continue }
-            rows.append(row)
-            // Re-filing reaches only the rows this rule would win (a newer rule that also matches keeps its rows), and
-            // never a row the person filed themselves — the same test `refile` makes.
-            guard book.winner(for: row, text, known: known)?.id == rule.id else { continue }
+        let (rows, winners) = ruleMatches(rule, in: list)
+        var moving = 0, settling = 0, yours = 0
+        // Re-filing reaches only the rows this rule would win (a newer rule that also matches keeps its rows), and
+        // never a row the person filed themselves — the same test `refile` makes.
+        for row in winners {
             switch Self.refiling(row, under: rule.categoryID) {
             case .moves: moving += 1
             case .leavesReview: settling += 1

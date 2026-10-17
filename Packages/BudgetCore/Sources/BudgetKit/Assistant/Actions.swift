@@ -542,14 +542,49 @@ public struct ProposedAction: Identifiable, Hashable, Sendable, Codable {
     public var basis: String? = nil
     /// How many rows it reaches.
     public var matchCount: Int? = nil
-    /// A few of them, in words, when there are more than a handful.
+    /// Of those, how many applying it changes. Forgetting a merchant, deleting a rule or a rule that doesn't re-file
+    /// what it matches reaches rows but changes none. Nil from a proposal made before server 0.6.0.
+    public var changeCount: Int? = nil
+    /// A few of the rows it reaches, in words, when it changes more than a handful.
     public var sample: [String]? = nil
 
     public init(id: String, action: AppAction, title: String, detail: String? = nil, effects: [Figure] = [], basis: String? = nil,
-                matchCount: Int? = nil, sample: [String]? = nil) {
+                matchCount: Int? = nil, changeCount: Int? = nil, sample: [String]? = nil) {
         self.id = id; self.action = action; self.title = title; self.detail = detail; self.effects = effects
-        self.basis = basis; self.matchCount = matchCount; self.sample = sample
+        self.basis = basis; self.matchCount = matchCount; self.changeCount = changeCount; self.sample = sample
     }
+
+    /// Above this many changed rows, a card shows the count and a sample before it applies.
+    public static let reviewAbove = 5
+
+    /// A card for `action` from its preview: what it would do, the basis to apply it with, and when it changes more
+    /// than `reviewAbove` rows a sample in words. The ledger proposes with it, and the phone refreshes a stale card with it.
+    public init(id: String = UUID().uuidString, action: AppAction, preview: ActionPreview, timeZone: TimeZone,
+                categoryName: (String) -> String?) {
+        let changes = Self.changes(of: action, preview: preview)
+        let reviews = (changes ?? 0) > Self.reviewAbove
+        self.init(id: id, action: action, title: preview.title, detail: preview.detail, effects: preview.effects, basis: preview.basis,
+                  matchCount: preview.matchCount, changeCount: changes,
+                  sample: reviews ? preview.sampleLines(timeZone: timeZone, categoryName: categoryName) : nil)
+    }
+
+    /// How many of the rows `preview` reaches applying `action` changes. A re-file or an edit changes every row it
+    /// names (each becomes the person's answer, even under the category it had) and a merge moves every row; a rule
+    /// changes only what it re-files, and only when asked to; the rest leave their rows as they are.
+    static func changes(of action: AppAction, preview: ActionPreview) -> Int? {
+        switch action {
+        case .recategorize, .editTransactions, .mergeCategory: return preview.matchCount
+        case let .createBudgetRule(p): return p.applyToExisting ? preview.changeCount : 0
+        case let .updateBudgetRule(p): return p.applyToExisting == true ? preview.changeCount : 0
+        default: return preview.matchCount.map { _ in preview.changeCount ?? 0 }
+        }
+    }
+
+    /// How many rows applying it changes, as the review counts them (the rows it reaches, from an older proposal).
+    public var reviewCount: Int { changeCount ?? matchCount ?? 0 }
+
+    /// Whether applying it first shows the count and the sample.
+    public var needsReview: Bool { !action.isClientOnly && reviewCount > Self.reviewAbove }
 }
 
 public struct ActionResult: Hashable, Sendable, Codable {
@@ -588,6 +623,16 @@ public struct ActionPreview: Hashable, Sendable, Codable {
                 matchCount: Int? = nil, changeCount: Int? = nil, conflicts: [String] = []) {
         self.title = title; self.detail = detail; self.effects = effects; self.sample = sample
         self.matchCount = matchCount; self.changeCount = changeCount; self.conflicts = conflicts
+    }
+
+    /// The sample in words, one line a row: "Oct 3 · Blue Bottle · −$5.40 · Dining".
+    public func sampleLines(timeZone: TimeZone, categoryName: (String) -> String?) -> [String] {
+        var day = Date.FormatStyle.dateTime.month(.abbreviated).day()
+        day.timeZone = timeZone
+        return sample.map { row in
+            let category = row.categorization.flatMap { categoryName($0.categoryID) } ?? "Not filed"
+            return [row.postedAt.formatted(day), row.merchant, row.amount.formatted(), category].joined(separator: " · ")
+        }
     }
 }
 
