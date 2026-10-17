@@ -203,7 +203,8 @@ struct ConfirmBody: Decodable { let categoryID: String }
 struct AskBody: Decodable { let question: String; let conversationID: String?; let sessionID: String?; let capabilities: [String]? }
 /// `scenarioID` (0.5.0) projects with a Plan scenario's changes on top; an older server ignores it.
 struct ProjectionBody: Decodable { let horizonMonths: Int; let goal: GoalQuery?; let scenarioID: String? }
-struct PlaidExchangeBody: Decodable { let publicToken: String; let institution: String }
+/// `institutionID` (0.6.0 dashboards): Link's `institution_id`, for the one-Item-per-bank check and stored on the link.
+struct PlaidExchangeBody: Decodable { let publicToken: String; let institution: String; var institutionID: String? = nil }
 struct PlaidTokenBody: Decodable {
     let linkID: String?
     /// With `linkID`: update mode asking the person to consent to liabilities (the dashboard's "Grant card-bill access").
@@ -376,30 +377,46 @@ func addLinkRoutes(_ router: Router<BasicRequestContext>, _ service: BudgetServi
         let body = (try? await HTTP.body(PlaidTokenBody.self, request)) ?? PlaidTokenBody(linkID: nil)
         if body.grantCardBills == true, body.linkID == nil { throw BudgetAPIError.rejected("Granting card-bill access needs the link it's for.") }
         var accessToken: String?
+        var renewal = false
         if let linkID = body.linkID {
             guard let link = try await service.store.links().first(where: { $0.id == linkID }) else { throw BudgetAPIError.notFound }
             guard link.provider == .plaid else { throw BudgetAPIError.rejected("\(link.institution) connects through \(link.provider.displayName), not Plaid.") }
             // Update mode needs a live Item; one Plaid deleted can only be linked again.
             guard link.hasLiveItem else { throw BudgetAPIError.rejected(SyncService.itemGoneMessage(link)) }
             accessToken = try requireSealer().open(link.sealedToken)
+            // A working link opened in update mode is "Renew access": Plaid's reauthorization renews the bank's consent
+            // (as the phone's renewal does); without it Link would find nothing to fix.
+            renewal = body.grantCardBills != true && !LinkHealthBook.waitsForPerson(link)
         }
         // WEBHOOK-002: a new Item takes this server's webhook URL from its link token.
         let webhook = await PlaidMaintenance.webhookURL(service.settings, sandbox: plaid.environment == .sandbox)
         let token = try await PlaidSource.linkToken(environment: plaid.environment, credentials: .init(clientID: plaid.clientID, secret: plaid.secret),
                                                     userID: "owner", investments: true, redirectURI: plaid.redirectURI,
                                                     accessToken: accessToken, grantLiabilities: body.grantCardBills == true,
-                                                    webhook: webhook, transport: service.providers.transport)
+                                                    webhook: webhook, reauthorization: renewal, transport: service.providers.transport)
         return try HTTP.json(["linkToken": token])
     }
 
     router.post("/v1/links/plaid/exchange") { request, _ in
         guard let plaid = try await service.providers.plaid() else { throw BudgetAPIError.rejected("Plaid isn't set up yet — add its keys on the dashboard.") }
         let body = try await HTTP.body(PlaidExchangeBody.self, request)
+        let institutionID = StoredLink.institutionID(body.institutionID)
+        // ITEM-011: one Item per bank, checked before the exchange, so a second Item never comes to exist on this server
+        // (each one uses up a Plaid Trial slot). The public token is left to expire unexchanged.
+        if let existing = StoredLink.duplicateItem(in: try await service.store.links(), institutionID: institutionID, institution: body.institution) {
+            service.logger.info("plaid exchange refused: \(existing.id) already holds an Item at that bank")
+            throw BudgetAPIError.server(status: 409, message: StoredLink.duplicateItemMessage(existing))
+        }
         let exchanged = try await PlaidSource.exchange(publicToken: body.publicToken, environment: plaid.environment,
                                                        credentials: .init(clientID: plaid.clientID, secret: plaid.secret), transport: service.providers.transport)
-        let link = StoredLink(id: "plaid-" + exchanged.itemID, provider: .plaid, institution: body.institution, externalID: exchanged.itemID,
+        var link = StoredLink(id: "plaid-" + exchanged.itemID, provider: .plaid, institution: body.institution, externalID: exchanged.itemID,
                               sealedToken: try requireSealer().seal(exchanged.accessToken), cursor: nil, status: .connected,
                               lastSync: nil, lastError: nil, createdAt: Date())
+        if let institutionID {
+            var plaid = PlaidLinkState()
+            plaid.institutionID = institutionID
+            link.plaid = plaid
+        }
         try await service.store.upsertLink(link)
         let result = try await service.sync.sync(linkID: link.id, trigger: .afterLink)
         return try HTTP.json(result, status: .created)

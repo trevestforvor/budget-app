@@ -50,7 +50,7 @@ Conventions: JSON; dates are ISO-8601; money is `{"minor": 123456, "currency": "
 |---|---|---|---|
 | GET | `/v1/links` | — | `[LinkSummary]`: id, provider, institution, status, last sync, last error (in the provider's words), `externalID` (Plaid's item_id, Teller's enrollment id — not a credential), and for Plaid links `cardBills`: the last card-bill check `{access, checkedAt, cards?, requestID?, message?}` ([card bills](#upcoming-and-card-bills)). Never the access token |
 | POST | `/v1/links/plaid/token` | `{linkID?, grantCardBills?}` | `{linkToken}` for Plaid Link (730 days of history requested; a new link consents to `investments` and `liabilities` in `additional_consented_products`, never in `products`, so no bank is hidden and nothing is billed until used; a Plaid account not enabled for Liabilities answers `INVALID_PRODUCT`, and the token is made again without it). With `linkID`, update mode for that Item ([reconnecting](#reconnecting-a-bank)); an unknown `linkID` is a 404 and a non-Plaid one a 422, never a token for a new Item. `grantCardBills: true` (with `linkID`, else a 422) is the same update mode asking for liabilities consent ([card bills](#upcoming-and-card-bills)) |
-| POST | `/v1/links/plaid/exchange` | `{publicToken, institution}` | 201 + `LinkSyncResult`: the Item is stored (token sealed) and its first sync runs |
+| POST | `/v1/links/plaid/exchange` | `{publicToken, institution, institutionID?}` | 201 + `LinkSyncResult`: the Item is stored (token sealed, with Link's `institution_id`) and its first sync runs. 409 before any exchange when a Plaid link with a working Item is already at that bank: same `institutionID` when both are known, else the same name (one Item per bank, [below](#reconnect)) |
 | POST | `/v1/links/teller` | `{accessToken, enrollmentID?, institution}` | 201 + `LinkSyncResult` (needs the Teller certificate on the server) |
 | POST | `/v1/links/simplefin` | `{setupToken}` | 201 + `LinkSyncResult`: the setup token is claimed for an access URL, stored sealed |
 | POST | `/v1/links/{id}/sync` | — | `LinkSyncResult` for that link, now. A link waiting for a sign-in is tried again: it's marked `needsReauth` again only if the provider still refuses the sign-in, and any other failure leaves it `connected` for the next scheduled sync. 404 for an unknown link |
@@ -380,11 +380,24 @@ Every 0.6.0 field is optional and every new enum decodes tolerantly, so 0.5.x ap
 
 ### Plaid webhook
 
-Not built yet. `POST /v1/plaid/webhook` exists on the API listener only, takes no bearer token, and answers 503.
+`POST /v1/plaid/webhook`, on the API listener only, with no bearer token: Plaid's signed `Plaid-Verification` JWT is the auth (ES256 only, key from `/webhook_verification_key/get` by `kid`, `iat` at most 5 minutes old, SHA-256 of the raw body equal to `request_body_sha256`, the configured environment).
+- 200 once verified, before any work; the work is queued per Item. 400 without the header or with a body that isn't a webhook; 401 for a bad signature, `alg`, `kid`, key, time or hash; 413 above 64 KiB; 503 when the key can't be fetched or the server's own cap on key fetches is reached (Plaid retries 5xx).
+- A webhook is only a trigger: `TRANSACTIONS/SYNC_UPDATES_AVAILABLE` → a sync (at most one per Item a minute); `ITEM/*` → `/item/get`; `HOLDINGS/DEFAULT_UPDATE` → holdings at the next check; `LIABILITIES/DEFAULT_UPDATE` → card bills (at most every 6 hours); `LINK/SESSION_FINISHED` → the matching reconnect session is checked; `WEBHOOK_UPDATE_ACKNOWLEDGED` is recorded. Anything else is a 200 that does nothing.
+- `LinkSummary.webhook {url, acknowledgedAt, lastReceivedAt, lastCode}` says whether webhooks reach the server for an Item.
 
 ### Reconnect
 
-Not built yet.
+Signing in to a Plaid bank again, or renewing its consent, always in update mode on the same Item (no exchange afterwards, no new Item).
+
+| Method | Path | Body | Returns |
+|---|---|---|---|
+| POST | `/v1/links/{id}/reconnect` | — | 201 + `ReconnectSession {id, linkID, institution, state: waiting, url, callbackScheme: "budgetapp-plaid", expiresAt, pollAfterSeconds}`. `url` is Plaid's Hosted Link page: open it in `ASWebAuthenticationSession`; it ends on `budgetapp-plaid://reconnect-done`. A live session with more than 5 minutes left is returned again (with its `url`). 404 for an unknown link; 422 for a link that isn't Plaid's, whose Item is gone or whose access was withdrawn (`.newLink`: only the dashboard can link it again), or a server setup problem (`errorKind: providerSetup`, message names the fix); 429 over 5 starts an hour or 10 a day per link, or when Plaid asks to slow down; 502 when Plaid can't be reached |
+| GET | `/v1/links/{id}/reconnect/{session}` | — | `ReconnectSession`, never with `url`. `waiting` → `syncing` → `done` (with `result`, the sync's `LinkSyncResult`), or `exited`, `failed`, `expired` with a `message`. Finishing is confirmed with `/item/get` (a null `item.error`) before the link counts as repaired. Plaid is asked at most every 5 s however often this is polled. 404 for a session that doesn't exist, belongs to another link, or was lost to a restart |
+
+- Both answer `Cache-Control: no-store` and errors as `{error, errorKind?}`. Neither the hosted URL nor the link token is ever logged; pushes never carry them.
+- `InstitutionLink.reconnect` says how a link is repaired: `phone` (the routes above), `dashboard`, `providerSite` (SimpleFIN Bridge), or `newLink`. `InstitutionLink.consentExpiresAt` (and the dashboard's `LinkSummary.consentExpiresAt`: the consent date, or a week after a `PENDING_DISCONNECT` when that's sooner) and `Overview.attention` (`reason: consentExpiring`, id `expiring-<linkID>`, `dueBy`) drive the phone's "Renew access".
+- **On the dashboard**, `POST /v1/links/plaid/token {linkID}` makes the update-mode token for Plaid Link (web). For a link that's working (not waiting for a sign-in) it's a renewal and asks for `update.reauthorization_enabled`; `grantCardBills` never does. When Link finishes, `POST /v1/links/{id}/sync`; that sync, on a link that was waiting for a sign-in or whose consent ends within 14 days, makes its daily Item check due, so the new consent date is read within 15 minutes.
+- **One Item per bank:** Plaid Link on the dashboard closes when the person picks a bank that already has a working Plaid link (`LinkSummary.institutionID`, else the name), and `POST /v1/links/plaid/exchange` refuses the same case with 409 before exchanging. A link whose Item is gone or whose access was withdrawn doesn't count.
 
 ### Sync health and SimpleFIN
 

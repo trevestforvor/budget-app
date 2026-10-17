@@ -36,10 +36,13 @@ public struct PlaidLinkState: Codable, Hashable, Sendable {
 
     public init() {}
 
-    /// Copies what the dashboard shows about this Item onto its summary.
-    func summaryFields(into summary: inout LinkSummary) {
+    /// Copies what the dashboard shows about this Item onto its summary. The access-ends date is the one the phone and
+    /// the pushes show (`ConnectionAlerts.shownAccessEnds`): the consent date, or a week after a PENDING_DISCONNECT when
+    /// that comes first, so the dashboard's "access ends" banner agrees with them.
+    func summaryFields(into summary: inout LinkSummary, now: Date = Date()) {
         summary.institutionID = institutionID
-        summary.consentExpiresAt = consentExpiresAt
+        let warned = pendingDisconnectAt.map { $0.addingTimeInterval(ConnectionAlerts.pendingDisconnectNotice) }
+        summary.consentExpiresAt = [consentExpiresAt, warned].compactMap { $0 }.filter { $0 > now }.min() ?? consentExpiresAt
         summary.lastItemCheckAt = lastItemCheckAt
         if webhookURL != nil || webhookAcknowledgedAt != nil || lastWebhookAt != nil || lastWebhookCode != nil {
             summary.webhook = LinkWebhookStatus(url: webhookURL, acknowledgedAt: webhookAcknowledgedAt, lastReceivedAt: lastWebhookAt,
@@ -84,4 +87,34 @@ extension StoredLink {
     /// (no sync, balance, /item/get, /item/remove or update mode), and it never counts as a live Item at its institution.
     /// Linking the bank again is the only way back.
     public var hasLiveItem: Bool { provider == .plaid && !sealedToken.isEmpty }
+}
+
+// MARK: One Item per bank
+
+extension StoredLink {
+    /// A link that already holds a working Plaid Item at the bank Link just signed in to: linking it again would make a
+    /// second Item (on the Trial plan, one of ten lifetime slots) and bring the same accounts in twice under new ids.
+    /// Matched by Plaid's `institution_id` when both sides have it (the daily Item check reads the link's); otherwise by
+    /// the bank's name, which came from the same Link metadata when the link was made. A link whose Item is gone or whose access was withdrawn
+    /// doesn't count: linking again is the only way back for those.
+    static func duplicateItem(in links: [StoredLink], institutionID: String?, institution: String) -> StoredLink? {
+        let name = institution.trimmingCharacters(in: .whitespaces).lowercased()
+        return links.first { link in
+            guard link.hasLiveItem, link.errorKind != .revoked else { return false }
+            if let known = link.plaid?.institutionID, let institutionID { return known == institutionID }
+            // "Plaid" is what the dashboard sends when Link names no bank; it says nothing about which one.
+            return !name.isEmpty && name != "plaid" && link.institution.trimmingCharacters(in: .whitespaces).lowercased() == name
+        }
+    }
+
+    /// What the dashboard says when it refuses a second Item at a bank.
+    static func duplicateItemMessage(_ existing: StoredLink) -> String {
+        "\(existing.institution) is already linked. Use Reconnect on it instead, so you keep its history and don't use up a Plaid Item."
+    }
+
+    /// Plaid's `institution_id` as Link reported it, when it looks like one (`ins_…`); anything else isn't stored.
+    static func institutionID(_ raw: String?) -> String? {
+        guard let raw, (1...64).contains(raw.count), raw.allSatisfy({ $0.isASCII && ($0.isLetter || $0.isNumber || $0 == "_") }) else { return nil }
+        return raw
+    }
 }

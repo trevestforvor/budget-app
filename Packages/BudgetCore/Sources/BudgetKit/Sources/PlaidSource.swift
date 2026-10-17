@@ -61,9 +61,11 @@ public struct PlaidSource: TransactionSource {
     ///   Only ever started by the person's own click.
     /// - Parameter webhook: where Plaid sends the Item's webhooks (this server's `/v1/plaid/webhook`). It's baked into an
     ///   Item when it's created; an existing Item is moved with `updateWebhook`.
+    /// - Parameter reauthorization: with `accessToken`, renew the bank's consent on an Item that's still healthy (the
+    ///   dashboard's "Renew access"); ignored for a new link.
     public static func linkToken(environment: Environment, credentials: Credentials, userID: String, investments: Bool,
                                  daysRequested: Int = 730, redirectURI: String? = nil, accessToken: String? = nil,
-                                 grantLiabilities: Bool = false, webhook: String? = nil,
+                                 grantLiabilities: Bool = false, webhook: String? = nil, reauthorization: Bool = false,
                                  transport: any HTTPTransport = URLSessionTransport()) async throws -> String {
         var body: [String: JSONValue] = [
             "client_name": .string("Budget"), "language": .string("en"), "country_codes": .array([.string("US")]),
@@ -75,6 +77,7 @@ public struct PlaidSource: TransactionSource {
                 body["products"] = .array([])
                 body["additional_consented_products"] = .array([.string(liabilitiesProduct)])
             }
+            if reauthorization { body["update"] = .object(["reauthorization_enabled": .bool(true)]) }
         } else {
             // Never in `products`: that list is a requirement every institution must meet, so it would hide banks.
             body["products"] = .array([.string("transactions")])

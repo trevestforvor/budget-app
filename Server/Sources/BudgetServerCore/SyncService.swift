@@ -163,6 +163,15 @@ public actor SyncService {
         return result
     }
 
+    /// Whether the person's sync of `link` may follow a sign-in on the dashboard (Plaid update mode) that renewed the
+    /// bank's consent: it was waiting for one, or its consent ends within 14 days. Its daily Item check is then made due,
+    /// so the next look (within 15 minutes) reads the new date and the "access ends" banner goes, instead of a day later.
+    static func mayHaveRenewedConsent(_ link: StoredLink, now: Date) -> Bool {
+        guard link.provider == .plaid, link.plaid?.lastItemCheckAt != nil else { return false }
+        if LinkHealthBook.waitsForPerson(link) { return true }
+        return link.plaid?.consentExpiresAt.map { $0.timeIntervalSince(now) < 14 * 86_400 } ?? false
+    }
+
     /// Runs `work` after every run already started. Not re-entrant: `work` must never call `serialized` again
     /// (`updateLink`, `sync(linkID:)`, `syncAll`), directly or through anything it calls, or both wait forever. Inside a
     /// sync, change the `inout` link instead.
@@ -208,6 +217,7 @@ public actor SyncService {
             }
             let removed = outcome.removed
             LinkHealthBook.recordSuccess(&link, now: Date())
+            if trigger == .personLink, Self.mayHaveRenewedConsent(original, now: Date()) { link.plaid?.lastItemCheckAt = nil }
             try await store.upsertLink(link)
             let linkID = link.id
             if await LinkHealthBook.shouldRecordImport(report, failure: nil, lastRecordedWarnings: { await self.lastRecordedWarnings(linkID) }) {
