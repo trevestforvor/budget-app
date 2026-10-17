@@ -47,8 +47,9 @@ extension Ledger {
 
     /// The institutions as the phone lists them: each published link with the ledger accounts it holds and how far their
     /// rows reach, then one entry per institution whose accounts all come from imported statements (nothing to sign in
-    /// to). A link holds the accounts at its institution that its provider brought in; a SimpleFIN link, one bridge
-    /// for many banks, holds every SimpleFIN account.
+    /// to). A link holds the accounts at its institution that its provider brought in. A row that already names its
+    /// accounts holds exactly those: the server splits a SimpleFIN link into one row per bank behind it. A SimpleFIN
+    /// row that names none (a link not synced since 0.6.0) holds every SimpleFIN account.
     func institutionLinks(_ published: [InstitutionLink]) -> [InstitutionLink] {
         var newest: [String: Date] = [:]
         for row in transactions where row.postedAt > newest[row.accountID] ?? .distantPast { newest[row.accountID] = row.postedAt }
@@ -60,7 +61,9 @@ extension Ledger {
         var claimed: Set<String> = []
         var result = published.map { original in
             var link = original
+            let named = link.accountIDs.map(Set.init)
             let held = accounts.filter { account in
+                if let named { return named.contains(account.id) }
                 guard let provider = link.primary, provider != .fileImport, account.source == provider else { return false }
                 return provider == .simplefin || Self.institutionKey(account.institution) == Self.institutionKey(link.institution)
             }

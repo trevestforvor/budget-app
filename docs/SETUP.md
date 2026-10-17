@@ -25,7 +25,7 @@ git clone <this repo> budget && cd budget
 | Server | `./setup.sh server [mac\|docker\|olares]` | Asks where it runs. `mac`: Postgres, a launchd service, nightly backups. `docker`: Compose with Postgres and daily backups. `olares`: deploys to the installed app. Then checks `/health` | [Where it runs](INSTALL-SERVER.md#where-it-runs) |
 | Address | `./setup.sh address [tailscale\|caddy\|cloudflare\|url]` | Asks how the phone reaches the API, sets that up, saves the address and checks it | [Server §5](INSTALL-SERVER.md#5-give-the-phone-an-https-address) |
 | App | `./setup.sh app` | Signing config, the Xcode project; builds and installs on a connected iPhone | [App](INSTALL-APP.md) |
-| Check | `./setup.sh check` | Shows what's installed and answering. Changes nothing | |
+| Check | `./setup.sh check` | Shows what's installed and answering, and how many banks are linked through each provider (counts only; Mac and Docker installs, since an Olares dashboard isn't reachable from here). Changes nothing | |
 
 These parts happen in a browser, so you do them yourself:
 1. [Link your banks](INSTALL-SERVER.md#6-link-banks) on the dashboard.
@@ -64,7 +64,7 @@ Ask the person for these, since only they can get them:
 | Installing on a phone | Apple team ID and a bundle prefix they own (`com.theirname`) | https://developer.apple.com/account → Membership details |
 | Where the server runs | Mac, Docker or Olares | Their choice; [compared](INSTALL-SERVER.md#where-it-runs) |
 | Phone → server | Tailscale (private), Caddy (their domain, with ports 80 and 443 forwarded), a Cloudflare Tunnel (their domain on Cloudflare), or an address they already have | Their choice; [compared](INSTALL-SERVER.md#5-give-the-phone-an-https-address) |
-| Banks | A SimpleFIN setup token, or a Plaid client ID and secret | https://beta-bridge.simplefin.org, https://dashboard.plaid.com |
+| Banks | Their choice: a SimpleFIN setup token, or a Plaid client ID and secret ([compared](INSTALL-SERVER.md#6-link-banks)); `BUDGET_BANKS=simplefin\|plaid\|later` tells `./setup.sh` which steps to print | https://beta-bridge.simplefin.org, https://dashboard.plaid.com |
 | Optional: Ask | An OpenAI-compatible endpoint, model ID and key | Their provider |
 | Optional: morning push | An APNs key (`.p8`) and its Key ID | https://developer.apple.com/account/resources/authkeys/list |
 

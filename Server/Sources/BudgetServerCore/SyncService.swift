@@ -274,6 +274,7 @@ public actor SyncService {
 
     /// One plain line about a link, for clients that show a note.
     static func note(_ link: StoredLink, _ style: Date.FormatStyle) -> String {
+        if link.provider == .teller { return tellerGone }  // [lane S] Teller removed (SPEC §10)
         if link.status == .needsReauth { return "\(link.institution) needs you to sign in again. Reconnect it on the Budget dashboard." }
         if link.lastError != nil { return "The last sync didn't go through. The next one tries again." }
         return link.lastSync.map { "Last synced \($0.formatted(style))." } ?? "Not synced yet."

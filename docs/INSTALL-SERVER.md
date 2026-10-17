@@ -113,13 +113,23 @@ For an agent: `BUDGET_ADDRESS=caddy BUDGET_DOMAIN=budget.example.com ./setup.sh 
 
 ## 6. Link banks
 
-On the dashboard, go to Accounts → **Connect a bank**.
+On the dashboard, go to Accounts → **Connect a bank**. Choose either; you can add the other later. The dashboard shows the same comparison above its two tabs.
 
-- **SimpleFIN** (the easiest). Sign up at [SimpleFIN Bridge](https://beta-bridge.simplefin.org) (about $15 a year), connect your banks there, then create a setup token and paste it in. Each sync reaches back about 90 days.
-- **Plaid** (more banks, two years of history). Use your own [Plaid account](https://dashboard.plaid.com) and enter its client ID and secret on the dashboard.
+| | **Plaid** | **SimpleFIN** |
+|---|---|---|
+| Cost | Your own Plaid account. Free Trial: 10 bank logins for the life of the account (removing one doesn't free it). Paid plans bill per bank | $15 a year (or $1.50 a month) to SimpleFIN, up to 25 banks |
+| Setup | Developer sign-up, keys and an identity check. Banks that sign in on their own site need an https return address; approval can take days | Sign up, add your banks on their site, paste one token |
+| Card bills (statement, minimum, due date) | Yes | No |
+| Merchant names and bank categories | Yes | Raw bank descriptions |
+| History | Up to 2 years at link | About 90 days per request; Budget walks back further where the bank allows |
+| Freshness | Several times a day | About once a day |
+| Investments | Holdings by position | Balances only |
+
+- **Plaid.** Use your own [Plaid account](https://dashboard.plaid.com) and enter its client ID and secret on the dashboard.
   - Start in Sandbox, which is free and uses made-up data.
   - Then request the free Trial plan for real banks. It allows 10 bank logins for the life of the account, and removing one doesn't free its slot.
   - OAuth banks (Chase and others) also need an `https://` redirect URI: [SERVER.md → Plaid step by step](SERVER.md#plaid-step-by-step).
+- **SimpleFIN.** Sign up at [SimpleFIN Bridge](https://beta-bridge.simplefin.org), add your banks there (check yours at https://beta-bridge.simplefin.org/search-institutions), then create a setup token and paste it in. The dashboard lists each bank behind the token, and a bank that wants you to sign in again is fixed on SimpleFIN Bridge, then retried from the dashboard or the phone. SimpleFIN gives no warning before that happens; the first failed sync is the signal. SimpleFIN refreshes about once a day and allows about 24 requests a day, so the server pulls at most four times a day on its schedule and stops at 20 requests in any 24 hours; the first sync also brings about a year of history, and older history follows over the next day or two, as far back as SimpleFIN has it (two years at most). Removing the link on the dashboard deletes the server's access; remove the app at SimpleFIN Bridge too, to stop the sharing there.
 - **Statements.** CSV or OFX/QFX files go in under Imports, to fill in history from before a link's reach. Each import can be undone.
 
 Linked accounts sync every 6 hours (`BUDGET_SYNC_INTERVAL_HOURS`), and **Sync now** pulls right away.

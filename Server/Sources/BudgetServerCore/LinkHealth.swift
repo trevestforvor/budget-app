@@ -21,6 +21,7 @@ enum LinkFailureClassifier {
     /// sign-in (a 401 or 403, ITEM_LOGIN_REQUIRED, a disconnected Teller enrollment) needs one, anything else is
     /// transient.
     static func classify(_ error: any Error, provider: SourceKind) -> LinkFailure {
+        if provider == .teller { return SyncService.tellerFailure }  // [lane S] Teller removed (SPEC §10)
         if let failure = PlaidErrors.classify(error) ?? SimpleFINErrors.classify(error) { return failure }
         return LinkFailure(kind: SyncService.needsSignIn(error) ? .needsSignIn : .transient, message: SyncService.describe(error))
     }
@@ -56,9 +57,11 @@ enum LinkHealthBook {
         link.failureCount = (link.failureCount ?? 0) + 1
     }
 
-    /// Whether a run with `trigger` syncs this link: a link waiting for a sign-in only when the trigger is a retry.
+    /// Whether a run with `trigger` syncs this link: a link waiting for a sign-in only when the trigger is a retry, and
+    /// a stored Teller link never (Teller shut down; only syncing that one link says so again).
     static func isDue(_ link: StoredLink, trigger: SyncTrigger, now: Date) -> Bool {
-        link.status != .needsReauth || trigger.retriesSignIn
+        guard link.provider != .teller else { return false }  // [lane S] Teller removed (SPEC §10)
+        return link.status != .needsReauth || trigger.retriesSignIn
     }
 
     /// Whether the sync goes in the import history: when it changed rows.

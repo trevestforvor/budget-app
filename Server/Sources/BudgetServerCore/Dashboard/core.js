@@ -570,8 +570,14 @@ export function institutionGroups() {
   }
   // [lane S] grouping
   const loose = [];
-  for (const l of links) { const g = groups.get(norm(l.institution)); if (g) g.links.push(l); else loose.push(l); }
-  // SimpleFIN Bridge is one link for several banks, whose accounts carry the banks' own names.
+  for (const l of links) {
+    // SimpleFIN Bridge is one link for several banks. Each bank the server names (banks[], with its accounts) joins
+    // that bank's card as its own view of the link: its status and last good data, the link's id (syncing it syncs
+    // the link), so only the bank that needs a sign-in says so.
+    if (l.provider === "simplefin" && l.banks && l.banks.length) { bridgeBanks(l, groups); continue; }
+    const g = groups.get(norm(l.institution)); if (g) g.links.push(l); else loose.push(l);
+  }
+  // A Bridge whose banks aren't known yet (not synced since 0.6.0): it serves every card of SimpleFIN accounts alone.
   const bridges = loose.filter((l) => l.provider === "simplefin");
   if (bridges.length === 1) {
     const claimed = [...groups.values()].filter((g) => !g.links.length && g.accounts.every((a) => a.source === "simplefin"));
@@ -593,19 +599,79 @@ export function institutionGroups() {
 }
 
 // [lane S] groupState
-function groupState(g, hours) {
-  const via = [...new Set(g.links.map((l) => SOURCE[l.provider] || l.provider))].join(" and ");
-  const lastSync = g.links.map((l) => l.lastSync).filter(Boolean).sort().pop();
-  const reauth = g.links.find((l) => l.status === "needsReauth");
-  if (reauth) return { tone: "act", label: "Needs sign-in", detail: [lastSync ? `last updated ${dateShort(lastSync)}` : null, via && `via ${via}`], lastSync, problem: reauth };
-  const failing = g.links.find((l) => l.lastError);
-  if (failing) return { tone: "watch", label: lastSync ? `Updated ${ago(lastSync)}` : "Hasn't synced yet", detail: [via && `via ${via}`, "last sync failed, retrying"], lastSync, problem: failing };
-  if (g.kind === "linked") {
-    if (!lastSync) return { tone: "neutral", label: "Waiting for the first sync", detail: [via && `via ${via}`] };
-    const stale = Date.now() - new Date(lastSync) > (2 * hours + 1) * 3600 * 1000;
-    return { tone: stale ? "watch" : "ok", label: `Updated ${ago(lastSync)}`, detail: [via && `via ${via}`], lastSync, stale };
+/// One SimpleFIN bank as its card sees the link. A link SimpleFIN refused as a whole (a new setup token fixes it)
+/// keeps the link's own state on every card.
+function bankView(l, b) {
+  if (l.status === "needsReauth" || l.errorKind === "revoked") return { ...l, bank: b.name };
+  const signIn = b.status === "needsReauth";
+  return { ...l, bank: b.name, status: b.status, errorKind: signIn ? "needsSignIn" : l.errorKind,
+    lastSync: b.lastGoodAt || l.lastSync,
+    lastError: signIn ? `${b.name} needs you to sign in again on SimpleFIN Bridge.` : l.lastError };
+}
+function bridgeBanks(l, groups) {
+  for (const b of l.banks) {
+    const ids = new Set(b.accountIDs || []);
+    const cards = [...groups.values()].filter((g) => g.accounts.some((a) => ids.has(a.id)));
+    if (!cards.length) {
+      const key = `link:${l.id}~${b.id}`;
+      if (!groups.has(key)) groups.set(key, { key, name: b.name, accounts: [], links: [] });
+      cards.push(groups.get(key));
+    }
+    for (const g of cards) g.links.push(bankView(l, b));
   }
-  if (g.kind === "statements") return { tone: "neutral", label: "From statements you import", detail: [] };
+}
+
+/// One account's freshness from the overview (`accountHealth`, server 0.6.0): current, stale, waitingForSignIn,
+/// statementsOverdue or notSynced. Null when the overview hasn't loaded.
+export function accountHealth(id) {
+  const list = (store.overview && store.overview.accountHealth) || [];
+  return list.find((x) => x.id === id) || null;
+}
+
+/// A failing link's words by its error kind; the provider's own text stays under Details.
+const FAILING = {
+  providerSetup: "the server's provider setup needs fixing", rateLimited: "rate limited, retrying later", transient: "last sync failed, retrying",
+};
+
+function groupState(g, hours) {
+  // Teller withdrew its API in July 2026: a link stored before then can't sync or reconnect, only be removed (⋯ menu).
+  // It never hides another link's problem at the same bank; a group of Teller links only says so.
+  const live = g.links.filter((l) => l.provider !== "teller");
+  const lastSync = (live.length ? live : g.links).map((l) => l.lastSync).filter(Boolean).sort().pop();
+  if (g.links.length && !live.length) {
+    return { tone: "watch", label: "Teller has shut down — remove this link", detail: [lastSync ? `last updated ${dateShort(lastSync)}` : null, "its transactions stay"], lastSync };
+  }
+  const tellerNote = live.length < g.links.length ? "remove the old Teller link (Teller has shut down)" : null;
+  const via = [...new Set(live.map((l) => SOURCE[l.provider] || l.provider))].join(" and ");
+  const reauth = live.find((l) => l.status === "needsReauth" || l.errorKind === "revoked");
+  if (reauth) return { tone: "act", label: "Needs sign-in", detail: [lastSync ? `last updated ${dateShort(lastSync)}` : null, via && `via ${via}`, tellerNote], lastSync, problem: reauth };
+  const failing = live.find((l) => l.lastError || (l.errorKind && l.errorKind !== "needsSignIn"));
+  if (failing) {
+    return { tone: "watch", label: lastSync ? `Updated ${ago(lastSync)}` : "Hasn't synced yet",
+      detail: [via && `via ${via}`, FAILING[failing.errorKind] || FAILING.transient, tellerNote], lastSync, problem: failing };
+  }
+  // Behind is the accounts' own health (no clean pull in 2 days; a statement overdue after 40), not a guess from the
+  // link's time.
+  const health = g.accounts.map((a) => accountHealth(a.id)).filter(Boolean);
+  if (g.kind === "linked") {
+    if (!lastSync) return { tone: tellerNote ? "watch" : "neutral", label: "Waiting for the first sync", detail: [via && `via ${via}`, tellerNote] };
+    const stale = health.filter((x) => x.state === "stale");
+    if (stale.length) {
+      // The link may have synced since ("Updated 2 hours ago") without bringing these accounts, so the header says
+      // how far behind they are, not when the link last ran.
+      const since = stale.map((x) => x.lastGoodSync).filter(Boolean).sort()[0] || lastSync;
+      if (stale.length === g.accounts.length) {
+        return { tone: "watch", label: `Not updated since ${dateShort(since)}`, detail: [via && `via ${via}`, tellerNote], lastSync: since, stale: true };
+      }
+      return { tone: "watch", label: `Updated ${ago(lastSync)}`,
+        detail: [via && `via ${via}`, `${plural(stale.length, "account")} not updated since ${dateShort(since)}`, tellerNote], lastSync: since, stale: true };
+    }
+    return { tone: tellerNote ? "watch" : "ok", label: `Updated ${ago(lastSync)}`, detail: [via && `via ${via}`, tellerNote], lastSync };
+  }
+  if (g.kind === "statements") {
+    const overdue = health.some((x) => x.state === "statementsOverdue");
+    return { tone: overdue ? "watch" : "neutral", label: "From statements you import", detail: [overdue ? "a newer statement is due" : null] };
+  }
   if (g.kind === "demo") return { tone: "neutral", label: "Demo data", detail: ["not a real connection"] };
   return { tone: "neutral", label: "Not linked", detail: [] };
 }

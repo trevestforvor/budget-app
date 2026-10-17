@@ -24,6 +24,8 @@
 #   BUDGET_TEAM_ID        Apple Developer team ID              BUDGET_BUNDLE_PREFIX  com.yourname (app = <prefix>.budget)
 #   BUDGET_DEVICE         the iPhone's UDID or name            BUDGET_YES=1          yes to every question (needed
 #                                                                                    without a terminal: there, no is the default)
+#   BUDGET_BANKS          plaid | simplefin | later            which provider's steps to print at the end (either works;
+#                                                              docs/INSTALL-SERVER.md §6 compares them)
 #
 # Secrets are never printed. The phone's token is on the dashboard: Settings → Connect your phone → Show.
 # Guides: docs/SETUP.md (start here), docs/INSTALL-SERVER.md, docs/INSTALL-APP.md.
@@ -208,6 +210,18 @@ PY
 
 # MARK: - check
 
+bank_counts() {  # bank_counts DASHBOARD_URL — "Banks: N linked (Plaid M, SimpleFIN K)", counts only, nothing else from the links
+  curl -fsS --max-time 3 "$1/v1/links" 2>/dev/null | /usr/bin/python3 -I -c '
+import collections, json, sys
+try: links = json.load(sys.stdin)
+except ValueError: sys.exit()
+names = {"plaid": "Plaid", "simplefin": "SimpleFIN"}
+count = collections.Counter(names.get(l.get("provider"), "other") for l in links if isinstance(l, dict))
+parts = ["%s %d" % (n, count[n]) for n in ("Plaid", "SimpleFIN")]
+if count["other"]: parts.append("other %d" % count["other"])
+print("Banks: %d linked (%s)" % (sum(count.values()), ", ".join(parts)))' 2>/dev/null || true
+}
+
 check_installed() {  # what a Mac or Docker install has in common: settings, API, dashboard, backups
   local backups=$1
   [[ $(mode_of "$ENV_FILE") == 600 ]] && ok "budget.env is private (600)" || { bad "$ENV_FILE isn't mode 600"; fails=1; }
@@ -218,6 +232,8 @@ check_installed() {  # what a Mac or Docker install has in common: settings, API
   else bad "API isn't answering on 127.0.0.1:$(api_port)"; fails=1; fi
   curl -fsS --max-time 3 -o /dev/null "http://127.0.0.1:$(dash_port)/" 2>/dev/null \
     && ok "dashboard: http://budget.localhost:$(dash_port)" || warn "the dashboard isn't answering on $(dash_port)"
+  local banks; banks=$(bank_counts "http://127.0.0.1:$(dash_port)")
+  [[ -n $banks ]] && ok "$banks"
   local latest; latest=$(ls -1t "$backups"/budget-*.dump 2>/dev/null | head -1 || true)
   if [[ -n $latest ]]; then ok "latest backup: $(basename "$latest")"; else warn "no backup in $backups yet"; fi
 }
@@ -703,6 +719,7 @@ for ts in d.values():
 # MARK: - main
 
 all() {
+  case ${BUDGET_BANKS:-} in ''|plaid|simplefin|later) ;; *) die "BUDGET_BANKS is plaid, simplefin or later ($BUDGET_BANKS)." ;; esac
   printf '%sBudget setup%s: the server, the phone'"'"'s address, then the app. Each step asks first.\n' "$B" "$N"
   step "Where the server runs"
   pick_server "" skip
@@ -720,14 +737,57 @@ all() {
   [[ $KIND == none ]] && KIND=''
   cmd_check || true
   [[ $KIND == mac || $KIND == docker ]] || return 0
+  echo
+  # Banks already linked: the choice is made, so don't ask it again on a re-run.
+  local banks; banks=$(bank_counts "http://127.0.0.1:$(dash_port)")
+  if [[ -n $banks && $banks != "Banks: 0 "* ]]; then
+    banks="  1. $banks; add more at http://budget.localhost:$(dash_port) → Accounts → Connect a bank"
+  else
+    choose BUDGET_BANKS "How will this server get bank data? Either works, and you can add the other later." later \
+      "plaid|Plaid: your own developer account and keys; card bills, merchant names, 2 years of history; the free Trial is 10 bank logins, ever" \
+      "simplefin|SimpleFIN: \$15 a year, one token, up to 25 banks; about daily, 90 days per request, no card bills" \
+      "later|decide on the dashboard, which shows the two side by side"
+    banks="  1. Link banks: http://budget.localhost:$(dash_port) → Accounts → Connect a bank
+$(banks_next)"
+  fi
   cat <<EOF
 
 ${B}Next, in a browser on this machine${N} (docs/INSTALL-SERVER.md walks through each):
-  1. Link banks: http://budget.localhost:$(dash_port) → Accounts → Connect a bank (SimpleFIN or Plaid)
+$banks
   2. Optional: a model for Ask, under Settings → Models
   3. Optional: the morning summary, under Settings → Notifications
 Save BUDGET_TOKEN_KEY from $ENV_FILE in a password manager: without it, every bank must be linked again.
 EOF
+}
+
+banks_next() {  # the steps for BUDGET_BANKS, or the comparison when it's undecided
+  case ${BUDGET_BANKS:-later} in
+    plaid) cat <<'EOF'
+     a. Make a Plaid account: https://dashboard.plaid.com (Sandbox is free; real banks need the free Trial or a paid plan)
+     b. Copy the client ID and secret from https://dashboard.plaid.com/developers/keys into the Plaid tab → Keys
+     c. Add the return address shown there under Allowed redirect URIs: https://dashboard.plaid.com/developers/api
+     d. Link an account
+EOF
+    ;;
+    simplefin) cat <<'EOF'
+     a. Sign up at https://beta-bridge.simplefin.org ($15 a year, or $1.50 a month)
+     b. Add your banks there; check coverage at https://beta-bridge.simplefin.org/search-institutions
+     c. Create a setup token there and paste it in the SimpleFIN tab
+EOF
+    ;;
+    *) cat <<'EOF'
+     Plaid or SimpleFIN (the dashboard shows the same comparison):
+                    Plaid                                         SimpleFIN
+       Cost         your Plaid account; free Trial = 10 logins    $15/yr to SimpleFIN, up to 25 banks
+       Setup        developer sign-up, keys, identity check       sign up, add banks there, paste a token
+       Card bills   yes                                           no
+       Merchants    names and bank categories                     raw bank descriptions
+       History      up to 2 years at link                         ~90 days per request, walked back further
+       Freshness    several times a day                           about once a day
+       Investments  holdings by position                          balances only
+EOF
+    ;;
+  esac
 }
 
 case ${1:-} in

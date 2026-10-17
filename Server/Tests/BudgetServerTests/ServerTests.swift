@@ -376,7 +376,7 @@ struct ServerTests {
                 let csp = response.headers[.contentSecurityPolicy] ?? ""
                 #expect(csp.contains("default-src 'self'"))
                 #expect(csp.contains("script-src 'self' https://cdn.plaid.com"))
-                #expect(csp.contains("https://cdn.teller.io"))
+                #expect(!csp.contains("teller.io"))
                 #expect(csp.contains("frame-ancestors 'self' https://*.olares.com"))
                 #expect(csp.contains("object-src 'none'") && csp.contains("base-uri 'none'"))
             }
@@ -584,36 +584,8 @@ struct ServerTests {
                 #expect(response.status == .ok)
                 #expect(String(buffer: response.body).contains(#""origin":"environment""#)) // back to the env keys
             }
-            try await client.execute(uri: "/dash/providers/teller", method: .delete, headers: write) { #expect($0.status == .ok) }
         }
         #expect(try await service.store.providerSettings()?.plaid == nil)
-    }
-
-    @Test("Teller: sandbox needs no certificate, real environments do, and bad PEMs are refused")
-    func dashboardTeller() async throws {
-        let (dash, service) = try await TestServer.app(surface: .dashboard)
-        let write: HTTPFields = [HTTPField.Name("X-Budget-Dashboard")!: "1", .contentType: "application/json"]
-        try await dash.test(.router) { client in
-            try await client.execute(uri: "/v1/links/teller", method: .post, headers: write,
-                                     body: TestServer.body(#"{"accessToken":"t","institution":"Harbor"}"#)) { #expect($0.status == .unprocessableContent) }
-            try await client.execute(uri: "/dash/providers/teller", method: .put, headers: write,
-                                     body: TestServer.body(#"{"applicationID":"app_1","environment":"development"}"#)) { response in
-                #expect(response.status == .unprocessableContent)
-                #expect(String(buffer: response.body).contains("certificate.pem"))
-            }
-            try await client.execute(uri: "/dash/providers/teller", method: .put, headers: write,
-                                     body: TestServer.body(#"{"applicationID":"app_1","environment":"development","certificatePEM":"nope","keyPEM":"nope"}"#)) {
-                #expect($0.status == .unprocessableContent)
-            }
-            try await client.execute(uri: "/dash/providers/teller", method: .put, headers: write,
-                                     body: TestServer.body(#"{"applicationID":"app_1","environment":"sandbox"}"#)) { response in
-                #expect(response.status == .ok)
-                #expect(String(buffer: response.body).contains(#""applicationID":"app_1""#))
-            }
-            try await client.execute(uri: "/v1/status", method: .get) { #expect(String(buffer: $0.body).contains("teller")) }
-        }
-        let teller = try #require(await service.providers.teller())
-        #expect(teller.environment == "sandbox" && !teller.hasCertificate)
     }
 
     @Test("Server settings: dashboard over environment over default, validated, applied live; the models have their own calls")

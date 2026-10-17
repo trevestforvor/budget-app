@@ -153,57 +153,6 @@ struct SyncRouteTests {
         #expect(await service.sync.syncAll().map(\.ok) == [true])
     }
 
-    @Test("Teller: reconnecting stores the new token for the enrollment and syncs; only Teller links take one")
-    func tellerToken() async throws {
-        let teller = ScriptedProvider([
-            "/accounts": [(401, #"{"error": {"code": "enrollment.disconnected", "message": "The enrollment is disconnected"}}"#), (200, "[]")],
-            "/item/public_token/exchange": [PlaidScript.exchange],
-            "/transactions/sync": [PlaidScript.page("cursor-1")],
-            "/accounts/balance/get": [PlaidScript.balances],
-        ])
-        let (dash, service) = try await TestServer.app(seedDemo: false, plaid: teller, surface: .dashboard)
-        try await service.providers.saveTeller(applicationID: "app_test", environment: "sandbox", certificatePEM: nil, keyPEM: nil)
-        try await dash.test(.router) { client in
-            try await client.execute(uri: "/v1/links/teller", method: .post, headers: Self.write,
-                                     body: TestServer.body(#"{"accessToken":"tok-1","enrollmentID":"enr_1","institution":"Harbor"}"#)) { response in
-                #expect(response.status == .created)
-                let decoded = try Self.decode(LinkSyncResult.self, response)
-                #expect(decoded.error == "Teller: The enrollment is disconnected")
-            }
-            #expect(try await service.store.links().first?.status == .needsReauth)
-            try await client.execute(uri: "/v1/links", method: .get) { response in
-                let decoded = try Self.decode([LinkSummary].self, response)
-                #expect(decoded.first?.externalID == "enr_1")
-            }
-
-            try await client.execute(uri: "/v1/links/teller-enr_1/token", method: .put, headers: Self.write,
-                                     body: TestServer.body(#"{"accessToken":"tok-2"}"#)) { response in
-                #expect(response.status == .ok)
-                let decoded = try Self.decode(LinkSyncResult.self, response)
-                #expect(decoded.ok)
-            }
-            #expect(teller.requests.last { $0.path == "/accounts" }?.authorization == "Basic " + Data("tok-2:".utf8).base64EncodedString())
-            try await client.execute(uri: "/v1/links/teller-enr_1/token", method: .put, headers: Self.write,
-                                     body: TestServer.body(#"{"accessToken":"  "}"#)) { #expect($0.status == .unprocessableContent) }
-            try await client.execute(uri: "/v1/links/teller-nope/token", method: .put, headers: Self.write,
-                                     body: TestServer.body(#"{"accessToken":"tok-3"}"#)) { #expect($0.status == .notFound) }
-
-            // A Plaid link reconnects through Link, not a pasted token; and Plaid's update mode is only for Plaid links.
-            try await client.execute(uri: "/v1/links/plaid/exchange", method: .post, headers: Self.write,
-                                     body: TestServer.body(#"{"publicToken":"public-1","institution":"Summit"}"#)) { #expect($0.status == .created) }
-            try await client.execute(uri: "/v1/links/plaid-item-1/token", method: .put, headers: Self.write,
-                                     body: TestServer.body(#"{"accessToken":"tok-3"}"#)) { response in
-                #expect(response.status == .unprocessableContent)
-                #expect(String(buffer: response.body).contains("Only Teller connections"))
-            }
-            try await client.execute(uri: "/v1/links/plaid/token", method: .post, headers: Self.write,
-                                     body: TestServer.body(#"{"linkID":"teller-enr_1"}"#)) { #expect($0.status == .unprocessableContent) }
-        }
-        let link = try #require(try await service.store.links().first { $0.id == "teller-enr_1" })
-        #expect(link.status == .connected && link.lastError == nil)
-        #expect(try service.sealer?.open(link.sealedToken) == "tok-2")
-    }
-
     @Test("Syncs never overlap: a second sync-all joins the one under way, and one bank's sync waits its turn")
     func serialized() async throws {
         let plaid = ScriptedProvider([
