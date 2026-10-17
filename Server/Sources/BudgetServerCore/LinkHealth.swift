@@ -69,6 +69,25 @@ enum LinkHealthBook {
         link.plaid?.signInFailures = nil
     }
 
+    /// Plaid's `/item/get` says the Item is healthy again (the person signed in elsewhere, or LOGIN_REPAIRED): connected,
+    /// the error and the failure run cleared, which ends the push episode. Not stamped as synced: nothing was pulled.
+    static func recordRepaired(_ link: inout StoredLink) {
+        link.status = .connected
+        link.lastError = nil
+        link.errorKind = nil
+        link.errorCode = nil
+        link.errorRequestID = nil
+        link.firstFailedAt = nil
+        link.failureCount = nil
+        link.nextAttemptAt = nil
+        link.plaid?.signInFailures = nil
+    }
+
+    /// Whether the link waits for the person: a refused sign-in or withdrawn access (or a link parked before 0.6.0).
+    static func waitsForPerson(_ link: StoredLink) -> Bool {
+        link.status == .needsReauth || link.errorKind == .needsSignIn || link.errorKind == .revoked
+    }
+
     /// A sync failed: why, the failure run, and when to try again. Only a refused sign-in (or withdrawn access) waits for
     /// the person; anything else leaves the status as it was and backs off. `jitter` (0.8–1.2) spreads the retries.
     static func recordFailure(_ link: inout StoredLink, _ failure: LinkFailure, now: Date, jitter: Double = .random(in: 0.8...1.2)) {

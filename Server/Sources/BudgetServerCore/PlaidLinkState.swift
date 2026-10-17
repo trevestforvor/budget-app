@@ -37,7 +37,15 @@ public struct PlaidLinkState: Codable, Hashable, Sendable {
     public init() {}
 
     /// Copies what the dashboard shows about this Item onto its summary.
-    func summaryFields(into summary: inout LinkSummary) {}
+    func summaryFields(into summary: inout LinkSummary) {
+        summary.institutionID = institutionID
+        summary.consentExpiresAt = consentExpiresAt
+        summary.lastItemCheckAt = lastItemCheckAt
+        if webhookURL != nil || webhookAcknowledgedAt != nil || lastWebhookAt != nil || lastWebhookCode != nil {
+            summary.webhook = LinkWebhookStatus(url: webhookURL, acknowledgedAt: webhookAcknowledgedAt, lastReceivedAt: lastWebhookAt,
+                                                lastCode: lastWebhookCode)
+        }
+    }
 
     // MARK: Balance only on request
 

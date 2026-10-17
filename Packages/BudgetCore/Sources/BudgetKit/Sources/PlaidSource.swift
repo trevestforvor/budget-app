@@ -285,6 +285,20 @@ public struct PlaidSource: TransactionSource {
         }
     }
 
+    /// `/item/webhook/update`: where Plaid sends this Item's webhooks from now on. Plaid confirms with a
+    /// WEBHOOK_UPDATE_ACKNOWLEDGED webhook to the new URL. Returns Plaid's request id.
+    @discardableResult
+    public func updateWebhook(_ url: String) async throws -> String? {
+        do {
+            let json = try await transport.json(try Self.request(environment, "item/webhook/update",
+                                                                 ["access_token": .string(accessToken), "webhook": .string(url)], credentials))
+            guard case let .object(o) = json else { return nil }
+            return Self.string(o, "request_id")
+        } catch let error as SourceHTTPError {
+            throw PlaidAPIError(error) ?? error
+        }
+    }
+
     static func parseItem(_ json: JSONValue) throws -> Item {
         guard case let .object(o) = json, case let .object(item)? = o["item"] else { throw DecisionError.malformed("no item") }
         func list(_ key: String) -> [String] {

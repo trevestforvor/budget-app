@@ -126,11 +126,14 @@ public actor SyncService {
     /// Changes a stored link in its turn, between syncs, so a sync that read the link earlier can't write over the
     /// change. Every link write outside a sync goes through here. Never call it from inside a sync or another
     /// `serialized` block: the queue isn't re-entrant, and that waits forever.
-    public func updateLink(_ id: String, _ change: @escaping @Sendable (inout StoredLink) async throws -> Void) async throws {
+    /// `change` may return what it found (the daily Item check says whether it healed the link).
+    @discardableResult
+    public func updateLink<T: Sendable>(_ id: String, _ change: @escaping @Sendable (inout StoredLink) async throws -> T) async throws -> T {
         try await serialized {
             guard var link = try await self.store.links().first(where: { $0.id == id }) else { throw BudgetAPIError.notFound }
-            try await change(&link)
+            let result = try await change(&link)
             try await self.store.upsertLink(link)
+            return result
         }
     }
 
