@@ -152,6 +152,11 @@ struct PlaidWebhookNotice: Sendable {
 /// cached by `kid` (asked again after a day), a `kid` Plaid doesn't know is remembered for a minute, one fetch per `kid`
 /// is in flight at a time, and all fetches together are capped at one per 10 seconds and 30 an hour. Over the cap the
 /// answer is 503, which Plaid retries.
+///
+/// A key with no `expired_at` when fetched is trusted until its day is up, unless Plaid starts signing with a new `kid`
+/// first: that's when Plaid rotates, so the others with no `expired_at` are asked again on their next use (within the
+/// cap; until then, and while Plaid can't be reached, the cached key still verifies). Beyond that, a key Plaid retires
+/// mid-day is accepted until its day is up, on purpose: asking on every webhook would put Plaid on the request path.
 actor PlaidWebhookVerifier {
     typealias KeyFetcher = @Sendable (String) async throws -> PlaidSource.WebhookKey
 
@@ -214,9 +219,11 @@ actor PlaidWebhookVerifier {
 
     private var keys: [String: (key: PlaidSource.WebhookKey, fetchedAt: Date)] = [:]
     private var unknown: [String: Date] = [:]
-    private var inFlight: [String: Task<Lookup, Never>] = [:]
+    /// A fetch in flight, with what failed when it gave no key (logged once, by the request that started it).
+    private var inFlight: [String: Task<(Lookup, (any Error)?), Never>] = [:]
     private var fetches: [Date] = []
     private var refusals: [Refusal: Int] = [:]
+    private var fetchFailures = 0
 
     init(fetch: @escaping KeyFetcher, logger: Logger, clock: @escaping @Sendable () -> Date = { Date() }) {
         self.fetch = fetch; self.logger = logger; self.clock = clock
@@ -279,26 +286,33 @@ actor PlaidWebhookVerifier {
         if let missed = unknown[kid], now.timeIntervalSince(missed) < Self.unknownKidFor { return .unknown }
         let result: Lookup
         if let running = inFlight[kid] {
-            result = await running.value
+            result = await running.value.0
         } else {
             guard fetchesAllowed(now) else { return cached.map { .key($0.key) } ?? .capped }
             fetches.append(now)
             let fetch = self.fetch
-            let task = Task<Lookup, Never> {
+            let task = Task<(Lookup, (any Error)?), Never> {
                 do {
                     let key = try await fetch(kid)
-                    return key.keyID == kid ? .key(key) : .unknown
+                    return (key.keyID == kid ? .key(key) : .unknown, nil)
                 } catch let error as PlaidAPIError where Self.meansUnknownKey(error) {
-                    return .unknown
+                    return (.unknown, error)
                 } catch {
-                    return .unavailable
+                    return (.unavailable, error)
                 }
             }
             inFlight[kid] = task
-            result = await task.value
+            let failure: (any Error)?
+            (result, failure) = await task.value
             inFlight[kid] = nil
+            if let failure { logFetchFailure(failure) }
             switch result {
             case let .key(key):
+                // A kid this server hasn't seen: Plaid may have rotated, so the keys it had that showed no retirement date
+                // are asked again on their next use.
+                if cached == nil {
+                    for (other, entry) in keys where other != kid && entry.key.expiredAt == nil { keys[other]?.fetchedAt = .distantPast }
+                }
                 keys[kid] = (key, clock())
                 unknown[kid] = nil
             case .unknown:
@@ -321,10 +335,22 @@ actor PlaidWebhookVerifier {
         return fetches.count < Self.fetchesPerHour
     }
 
-    /// Plaid saying the key id isn't one of its keys: a bad request that isn't about this server's own keys or a limit.
+    /// Plaid saying the key id isn't one of its keys, by its exact code (ITEM-002). Any other error, our own request's
+    /// included, is a 503 that Plaid retries, never a 401 that drops the webhook for good.
     static func meansUnknownKey(_ error: PlaidAPIError) -> Bool {
-        guard ["INVALID_INPUT", "INVALID_REQUEST"].contains(error.errorType ?? "") else { return false }
-        return PlaidErrors.kind(type: error.errorType, code: error.errorCode) == .transient
+        error.errorType == "INVALID_INPUT" && error.errorCode == "INVALID_WEBHOOK_VERIFICATION_KEY_ID"
+    }
+
+    /// Logs what Plaid said to a key fetch that didn't give a key: its type, code and request_id (or, without a Plaid
+    /// answer, the failure), never the `kid` asked for. The first ten, then every hundredth; the fetch cap bounds it too.
+    func logFetchFailure(_ error: any Error) {
+        fetchFailures += 1
+        guard fetchFailures <= 10 || fetchFailures % 100 == 0 else { return }
+        if let plaid = PlaidErrors.plaidError(error) {
+            logger.notice("plaid webhook key not fetched: HTTP \(plaid.status), type \(plaid.errorType ?? "none"), code \(plaid.errorCode ?? "none"), request_id \(plaid.requestID ?? "none") (\(fetchFailures) so far)")
+        } else {
+            logger.notice("plaid webhook key not fetched: type none, code none, request_id none: \(SyncService.describe(error)) (\(fetchFailures) so far)")
+        }
     }
 
     /// Counts a refusal and logs its reason: the first ten, then every hundredth, so a flood can't fill the log.
@@ -492,9 +518,12 @@ actor PlaidWebhookQueue {
             logger.notice("plaid webhook work for link \(linkID) dropped: the link is gone")
             return
         }
-        if work.itemCheck { await service.plaidMaintenance.checkItem(linkID) }
+        // A check that heals the link leaves its sync to this queue, so it's spaced with the rest: LOGIN_REPAIRED and
+        // SYNC_UPDATES_AVAILABLE in one burst make one sync, and one just after a heal waits its turn.
+        var syncCode = work.sync ? work.syncCode : nil
+        if work.itemCheck, await service.plaidMaintenance.checkItem(linkID, syncIfHealed: false) == .healed { syncCode = "LOGIN_REPAIRED" }
         if work.liabilities { await refreshCardBills(linkID) }
-        if work.sync { await sync(linkID, code: work.syncCode) }
+        if let syncCode { await sync(linkID, code: syncCode) }
     }
 
     /// The webhook's sync, or a wait for the end of the spacing when one ran too lately. The sync keeps the stop rules

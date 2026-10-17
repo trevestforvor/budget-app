@@ -224,7 +224,7 @@ Teller stopped taking new customers in July 2026; this is for an existing Teller
 
 ### Plaid webhooks and reconnect
 
-**Webhooks (server 0.6.0).** `POST /v1/plaid/webhook` on the API port takes Plaid's webhooks with no bearer token: the signed `Plaid-Verification` JWT is its auth. It's on when `BUDGET_PLAID_WEBHOOKS` isn't `false` and `BUDGET_PUBLIC_URL` is an https address (plain http only on a sandbox test server). New Items get `<public URL>/v1/plaid/webhook` from their link token. The daily Item check moves existing Items to it with `/item/webhook/update`, and Plaid confirms the move with `WEBHOOK_UPDATE_ACKNOWLEDGED`. The dashboard shows that, and the last webhook, per link.
+**Webhooks (server 0.6.0).** `POST /v1/plaid/webhook` on the API port takes Plaid's webhooks with no bearer token: the signed `Plaid-Verification` JWT is its auth. It's on when `BUDGET_PLAID_WEBHOOKS` isn't `false` and `BUDGET_PUBLIC_URL` is an https address (plain http only on a sandbox test server). New Items get `<public URL>/v1/plaid/webhook` from their link token. The daily Item check moves existing Items to it with `/item/webhook/update`, and Plaid confirms the move with `WEBHOOK_UPDATE_ACKNOWLEDGED`.
 
 - **Verified before anything is done:** `alg` must be exactly ES256, and the key comes from Plaid's `/webhook_verification_key/get` by `kid`. It's cached for a day and refused once Plaid retires it. `iat` must be at most 5 minutes old, and the SHA-256 of the raw body must match `request_body_sha256`.
   - A forged request can't make the server call Plaid freely. Header and `kid` shape are checked first. An unknown `kid` is remembered for a minute. Key fetches are capped at one per 10 seconds and 30 an hour, and over the cap the answer is 503.

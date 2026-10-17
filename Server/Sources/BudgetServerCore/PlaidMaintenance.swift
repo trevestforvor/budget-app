@@ -93,13 +93,22 @@ public actor PlaidMaintenance {
     /// `SyncService.updateLink`, `serialized` or a sync (the queue isn't re-entrant, and that waits forever). A webhook
     /// queue calls it after its own turn.
     public func checkItem(_ linkID: String) async {
-        if await check(linkID, force: true) != .skipped { await sync.publishInstitutions() }
+        await checkItem(linkID, syncIfHealed: true)
+    }
+
+    /// The same, saying what the check did. With `syncIfHealed` false a link it heals gets no sync from here: the caller
+    /// (the webhook queue, which spaces its syncs) runs that one itself.
+    @discardableResult
+    func checkItem(_ linkID: String, syncIfHealed: Bool) async -> Outcome {
+        let outcome = await check(linkID, force: true, syncIfHealed: syncIfHealed)
+        if outcome != .skipped { await sync.publishInstitutions() }
+        return outcome
     }
 
     /// One check, in the Item's turn. A link it heals gets one sync, queued after the check (never inside it: the queue
-    /// isn't re-entrant).
+    /// isn't re-entrant), unless the caller syncs it itself.
     @discardableResult
-    func check(_ linkID: String, force: Bool) async -> Outcome {
+    func check(_ linkID: String, force: Bool, syncIfHealed: Bool = true) async -> Outcome {
         let outcome: Outcome
         do {
             outcome = try await sync.updateLink(linkID) { link in await self.inspect(&link, force: force) }
@@ -107,7 +116,7 @@ public actor PlaidMaintenance {
             logger.error("item check for link \(linkID) didn't run: \(error)")
             return .skipped
         }
-        if outcome == .healed { await sync.requestSync(linkID: linkID, trigger: .webhook("LOGIN_REPAIRED")) }
+        if outcome == .healed, syncIfHealed { await sync.requestSync(linkID: linkID, trigger: .webhook("LOGIN_REPAIRED")) }
         return outcome
     }
 
