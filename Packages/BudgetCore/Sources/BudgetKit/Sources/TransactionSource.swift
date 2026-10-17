@@ -81,6 +81,9 @@ public struct SourceSnapshot: Hashable, Sendable {
     public var connections: [SourceConnection] = []
     /// Accounts the provider couldn't bring this time, by external id.
     public var accountProblems: [String: SourceAccountProblem] = [:]
+    /// A statement whose row ids were made with a different key than the ledger's older statement rows
+    /// (`StatementIDs.Gate.keyChanged`): those rows can't match by id, so they're matched by date and amount instead.
+    public var statementKeyChanged: Bool = false
 }
 
 /// One bank sign-in behind an aggregator link.
@@ -117,6 +120,9 @@ extension AccountKind {
 
 // MARK: - Deduplication
 
+/// What an incoming row is to the rows it could duplicate (P1.3).
+public typealias DedupeDecision = Deduplicator.Decision
+
 /// Deduplicates rows across sources "on account + date + amount + fuzzy description" (intent).
 /// The same card purchase can arrive from SimpleFIN and Plaid with different descriptors and
 /// a day or two apart (pending vs posted), so dates get a window and descriptions a similarity.
@@ -143,25 +149,56 @@ public enum Deduplicator {
             && similarity(a.description, b.description) >= similarityThreshold
     }
 
-    /// The ledger row an incoming row duplicates, if any: same account and amount within the date window,
-    /// most similar description first, then nearest date. Every wording of each side is compared — a
-    /// provider's short name ("AMC Theatres") and its bank descriptor ("AplPay AMC 0001 EXAMPLE") — and
-    /// a same-amount row a day or less away counts whatever the wording. A near-identical description
-    /// stretches the window to five days: card credits can post days after the statement dates them.
+    /// What an incoming row is to the ledger rows it could duplicate (`decide`).
+    public enum Decision: Hashable, Sendable {
+        /// Nothing qualifies: a new row.
+        case none
+        /// The row it duplicates, by index.
+        case match(Int)
+        /// Two or more qualify and the wording doesn't pick one: indices, best first. The row is added and the person asked.
+        case ambiguous([Int])
+    }
+
+    /// A best candidate this similar settles it however close the runner-up: rows that agree on wording are the same
+    /// merchant at the same amount, so they're interchangeable and pair one for one, nearest first.
+    public static let decisiveScore = 0.8
+    /// Below `decisiveScore`, a runner-up within this much of the best leaves it unclear.
+    public static let ambiguityMargin = 0.25
+
+    /// What an incoming row duplicates: same account and amount within the date window. Every wording of each side is
+    /// compared — a provider's short name ("AMC Theatres") and its bank descriptor ("AplPay AMC 0001 EXAMPLE") — and a
+    /// same-amount row a day or less away qualifies whatever the wording. A near-identical description stretches the
+    /// window to five days: card credits can post days after the statement dates them. Qualifying rows rank by
+    /// similarity, then nearest date. One qualifying row is a match; with more, it's a match only when the best is
+    /// decisive (`decisiveScore`) or clearly ahead of the next (`ambiguityMargin`), and ambiguous otherwise.
     /// `similarOnly` drops the any-wording day-apart rule: an after-the-fact sweep can't tell whether that
     /// synced row already stands for a different imported row, so it needs the descriptions to agree.
-    public static func bestMatch(account: String, date: Date, amount: Money, descriptions: [String], in rows: [LedgerTransaction],
-                                 similarOnly: Bool = false) -> Int? {
-        var best: (index: Int, score: Double, gap: TimeInterval)?
+    public static func decide(account: String, date: Date, amount: Money, descriptions: [String], in rows: [LedgerTransaction],
+                              similarOnly: Bool = false) -> Decision {
+        var qualifying: [(index: Int, score: Double, gap: TimeInterval)] = []
         for (index, row) in rows.enumerated() where row.accountID == account && row.amount == amount {
             let gap = abs(row.postedAt.timeIntervalSince(date))
             guard gap <= wideWindow else { continue }
             let score = descriptions.flatMap { d in [similarity(row.merchant, d), similarity(row.rawDescription, d)] }.max() ?? 0
-            let matches = (!similarOnly && gap <= 86_400) || (gap <= dateWindow && score >= similarityThreshold) || score >= 0.8
+            let matches = (!similarOnly && gap <= 86_400) || (gap <= dateWindow && score >= similarityThreshold) || score >= decisiveScore
             guard matches else { continue }
-            if best == nil || score > best!.score || (score == best!.score && gap < best!.gap) { best = (index, score, gap) }
+            qualifying.append((index, score, gap))
         }
-        return best?.index
+        // Ties keep the earlier row, as the single best pick always did.
+        let ranked = qualifying.sorted { ($0.score, -$0.gap, -$0.index) > ($1.score, -$1.gap, -$1.index) }
+        guard let best = ranked.first else { return .none }
+        guard ranked.count > 1, best.score < decisiveScore, ranked[1].score >= best.score - ambiguityMargin else { return .match(best.index) }
+        return .ambiguous(ranked.map(\.index))
+    }
+
+    /// The best candidate `decide` ranks first, ambiguous or not, for callers that only want an index.
+    public static func bestMatch(account: String, date: Date, amount: Money, descriptions: [String], in rows: [LedgerTransaction],
+                                 similarOnly: Bool = false) -> Int? {
+        switch decide(account: account, date: date, amount: amount, descriptions: descriptions, in: rows, similarOnly: similarOnly) {
+        case .none: nil
+        case let .match(index): index
+        case let .ambiguous(indices): indices.first
+        }
     }
 
     public static let wideWindow: TimeInterval = 5 * 86_400

@@ -10,24 +10,62 @@ import { renderGroups } from "./groups.js";
 const TABS = [
   // Decisions (groups), as the phone's badge counts them; the tab itself says how many transactions they file.
   { id: "categories", label: "Needs a category", count: () => store.overview.reviewDecisions ?? store.overview.reviewCount, render: renderGroups },
-  { id: "duplicates", label: "Duplicates", count: () => (cached("dupes") ? cached("dupes").pairs.length : 0), tone: "watch", render: renderDuplicates },
+  { id: "duplicates", label: "Duplicates", count: () => (cached("dupes") ? cached("dupes").pairs.length : 0) + (lookAlike ? lookAlike.length : 0), tone: "watch", render: renderDuplicates },
   { id: "recurring", label: "Recurring", count: () => recurringCount(), tone: "watch", render: renderRecurring },
   { id: "recheck", label: "Re-check filings", count: () => 0, render: renderRecheck },
 ];
 
 // MARK: Duplicates
 
+/// The last /v1/duplicates answer (server 0.6.0): rows added that might be the same charge as one already here. An
+/// older server has no such route, so it reads as none.
+let lookAlike = null;
+const loadLookAlike = async () => (lookAlike = await api("/v1/duplicates").catch((error) => (error.status === 404 ? [] : Promise.reject(error))));
+
 function renderDuplicates(panel, { force = false } = {}) {
   fill(panel, skeleton(4));
-  heavy("dupes", { force }).then((r) => drawDuplicates(panel, r), (error) => fill(panel, callout({ tone: "watch", title: error.message, detail: error.detail,
+  Promise.all([heavy("dupes", { force }), loadLookAlike()]).then(([r]) => {
+    if (view) view.updateCounts();
+    drawDuplicates(panel, r);
+  }, (error) => fill(panel, callout({ tone: "watch", title: error.message, detail: error.detail,
     actions: [button("Try again", { compact: true, onclick: () => renderDuplicates(panel, { force: true }) })] })));
+}
+
+/// One answer on a possible duplicate: `sameAs` a candidate's id (Same charge) or null (Keep both).
+async function answerLookAlike(panel, item, sameAs, e) {
+  await busy(e.currentTarget, "Saving…", async () => {
+    const r = await api(`/v1/duplicates/${encodeURIComponent(item.id)}`, { method: "POST", body: { sameAs } });
+    toast(r.merged ? "Merged into one transaction. If that was wrong, Bring back is in Imports, under the import or sync it came in with." : "Kept both. File it as usual.");
+    await afterWrite();
+    renderDuplicates(panel, { force: true });
+  });
+}
+
+/// "Look alike": rows a statement or a sync added because the wording couldn't tell which row already here they are.
+function lookAlikeSection(panel) {
+  if (!lookAlike || !lookAlike.length) return null;
+  const line = (t) => `${SOURCE[t.source] || t.source} · ${dateShort(t.postedAt)} · ${t.rawDescription}`;
+  return h("section", { class: "card stack", "aria-labelledby": "dupes-alike" },
+    h("h2", { class: "t-headline", id: "dupes-alike" }, "Look alike"),
+    h("p", { class: "t-callout muted" }, `${plural(lookAlike.length, "transaction")} came in for the same amount as one already here, and the wording didn't say which. Same charge keeps one copy (the bank's own, which stays current); Keep both leaves them as two.`),
+    h("div", { class: "rows" }, lookAlike.map((item) => h("div", { class: "row" },
+      h("div", { class: "grow" },
+        h("div", { class: "title wrap" }, item.row.merchant, " ", tag("Look alike", "watch")),
+        h("div", { class: "sub wrap" }, `${accountName(item.row.accountID) || "—"} · ${line(item.row)}`),
+        item.candidates.map((c) => h("div", { class: "sub wrap" }, "Might be: ", line(c), " ",
+          button("Same charge", { kind: "tinted", compact: true, "aria-label": `Same charge as ${c.rawDescription} on ${dateShort(c.postedAt)}`,
+            onclick: (e) => answerLookAlike(panel, item, c.id, e) })))),
+      rowMoney(item.row.amount),
+      h("div", { class: "actions" }, button("Keep both", { compact: true, onclick: (e) => answerLookAlike(panel, item, null, e) }))))));
 }
 
 function drawDuplicates(panel, r) {
   const look = button("Look again", { compact: true, onclick: (e) => busy(e.currentTarget, "Looking…", async () => { await heavy("dupes", { force: true }); drawDuplicates(panel, cached("dupes")); }) });
+  const alike = lookAlikeSection(panel);
+  const unclear = r.ambiguous ? h("p", { class: "help" }, `${plural(r.ambiguous, "more imported row")} look${r.ambiguous === 1 ? "s" : ""} like more than one synced row, so ${r.ambiguous === 1 ? "it's" : "they're"} left as ${r.ambiguous === 1 ? "it is" : "they are"}.`) : null;
   if (!r.pairs.length) {
-    fill(panel, h("section", { class: "card" }, emptyState({ title: "Nothing is in the ledger twice",
-      body: "When a statement you imported overlaps a bank you later linked, the copies show up here.", actions: [look] })));
+    fill(panel, alike, h("section", { class: "card" }, emptyState({ title: alike ? "Nothing else is in the ledger twice" : "Nothing is in the ledger twice",
+      body: "When a statement you imported overlaps a bank you later linked, the copies show up here.", actions: [look] }), unclear));
     return;
   }
   const n = r.pairs.length;
@@ -39,8 +77,9 @@ function drawDuplicates(panel, r) {
       renderDuplicates(panel, { force: true });
     } catch (error) { reportError(error); }
   }) });
-  fill(panel, h("section", { class: "card stack" },
-    h("p", { class: "t-callout muted" }, `${plural(n, "transaction")} came in from an imported statement and again from a sync. Removing keeps the synced copy, which stays current.`),
+  fill(panel, alike, h("section", { class: "card stack" },
+    h("p", { class: "t-callout muted" }, `${plural(n, "transaction")} came in from an imported statement and again from a sync. Removing keeps the synced copy, which stays current; Imports lists each one under its statement, to bring back.`),
+    unclear,
     h("table", { class: "table stack-phone dupes-table" },
       h("thead", {}, h("tr", {}, h("th", {}, "Account"), h("th", {}, "From the statement"), h("th", {}, "From the sync"), h("th", { class: "numcol" }, "Amount"))),
       h("tbody", {}, r.pairs.map((p) => h("tr", {},
@@ -191,8 +230,9 @@ export default {
         sub: "File what's waiting a group at a time, clear out duplicates, and have the model look again. It's the same ledger your phone shows." }),
       tablist, this.panel);
     this.show(sub);
-    // The recurring tab's count, before it's opened.
+    // The recurring and look-alike counts, before their tabs are opened.
     loadRecurring().then(() => this.updateCounts(), () => {});
+    loadLookAlike().then(() => this.updateCounts(), () => {});
   },
   navigate({ sub }) { this.show(sub); },
   unmount() { closeDrawer(); view = null; },

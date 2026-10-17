@@ -461,18 +461,22 @@ func addLinkRoutes(_ router: Router<BasicRequestContext>, _ service: BudgetServi
 
 // MARK: - [lane L] addImportRoutes
 func addImportRoutes(_ router: Router<BasicRequestContext>, _ service: BudgetService) {
-    router.get("/v1/imports") { _, _ in try HTTP.json(try await service.store.imports().map { $0.annotated() }) }
+    router.get("/v1/imports") { _, _ in try HTTP.json(await ImportUndo.annotated(try await service.store.imports(), service)) }
 
-    /// CSV / OFX / QFX text. `accountID` files the rows into an existing account (needed for CSV).
-    /// A file's rows as a snapshot, with a CSV's signs read by the kind of account it's filed into.
+    /// CSV / OFX / QFX text. `accountID` files the rows into an existing account, or `options.accountName` into a new one.
+    /// A file's rows as a snapshot, with a CSV's signs read by the kind of account it's filed into. An OFX file's ids are
+    /// made unreadable (`StatementIDs`); it waits (503) while the ledger's own statement ids are being upgraded.
     @Sendable func snapshot(_ body: ImportBody) async throws -> SourceSnapshot {
         var options = body.options ?? FileImport.Options()
         if options.accountKind == nil, let id = body.accountID, let account = try await service.api.overview().accounts.first(where: { $0.id == id }) {
             options.accountKind = account.kind
         }
-        let snapshot = try FileImport.parse(body.content, options: options)
+        if FileImport.format(of: body.content, options: options) == .ofx, let ids = service.statementIDs, !ids.gate.isOpen {
+            throw BudgetAPIError.server(status: 503, message: "Statement ids are being upgraded; try again after a restart.")
+        }
+        let snapshot = try FileImport.parse(body.content, options: options, ids: service.statementIDs)
         if body.accountID == nil, snapshot.accounts.first?.externalID == "file" {
-            throw BudgetAPIError.rejected("CSV files carry no account number — pass accountID for an existing account, or options.accountName to create one.")
+            throw BudgetAPIError.rejected("Statement files need an account: choose one, or name a new one (options.accountName).")
         }
         return snapshot
     }
@@ -483,10 +487,11 @@ func addImportRoutes(_ router: Router<BasicRequestContext>, _ service: BudgetSer
         if body.preview == true { return try HTTP.json(try await service.api.previewIngest(snapshot, into: body.accountID)) }
         let batchID = "file-" + UUID().uuidString.lowercased().prefix(12)
         let report = try await service.api.ingest(snapshot, batchID: batchID, into: body.accountID)
-        let record = ImportRecord(batchID: batchID, kind: .file, linkID: nil, label: body.label ?? "File import",
+        // A file name can hold the account number ("Checking_9876543210123.qfx").
+        let record = ImportRecord(batchID: batchID, kind: .file, linkID: nil, label: StatementIDs.maskNumbers(body.label ?? "File import"),
                                   report: report, createdAt: Date(), rolledBack: false)
         try await service.store.upsertImport(record)
-        return try HTTP.json(record, status: .created)
+        return try HTTP.json(record.annotated(), status: .created)
     }
 
     /// `{files: [import bodies]}` → one `IngestReport` per file, worked out in order without saving.
@@ -503,13 +508,46 @@ func addImportRoutes(_ router: Router<BasicRequestContext>, _ service: BudgetSer
         return try HTTP.json(try await service.api.importDuplicates(apply: body.apply == true))
     }
 
-    router.delete("/v1/imports/:batch") { _, context in
+    @Sendable func importRecord(_ context: BasicRequestContext) async throws -> ImportRecord {
         let batch = try context.parameters.require("batch")
-        guard var record = try await service.store.imports().first(where: { $0.batchID == batch }) else { throw BudgetAPIError.notFound }
-        let removed = try await service.api.rollback(batchID: batch)
-        record.rolledBack = true
-        try await service.store.upsertImport(record)
+        guard let record = try await service.store.imports().first(where: { $0.batchID == batch }) else { throw BudgetAPIError.notFound }
+        return record
+    }
+
+    /// What Undo would do with a batch (`RollbackPlan`): how many rows, how many come back at the next sync, and
+    /// whether it's refused (Plaid: hide instead).
+    router.get("/v1/imports/:batch/undo") { _, context in
+        try HTTP.json(try await ImportUndo.plan(for: try await importRecord(context), service))
+    }
+
+    /// Rolls a batch back. 409, changing nothing, when Undo is refused (a Plaid sync), and when SimpleFIN rows could
+    /// come back (at the next sync, or once linked again) unless `?acknowledge=returning`.
+    router.delete("/v1/imports/:batch") { request, context in
+        let record = try await importRecord(context)
+        let policy = ImportUndo.policy(for: record)
+        if policy.mode == .refused { throw BudgetAPIError.server(status: 409, message: policy.message) }
+        let removed = try await service.api.rollback(batchID: record.batchID, nextWindowStart: try await ImportUndo.nextWindowStart(for: record, service),
+                                                     acknowledgeReturning: request.uri.queryParameters.get("acknowledge") == "returning")
+        // Read again after the ledger work and change only `rolledBack`, so a hide that ran meanwhile keeps its `hiddenAt`.
+        var fresh = try await importRecord(context)
+        fresh.rolledBack = true
+        try await service.store.upsertImport(fresh)
         return try HTTP.json(["removed": removed])
+    }
+
+    /// Hides a batch's rows from every total instead of removing them (`ActionResult`, with its undo). `hiddenAt` is
+    /// set whenever the batch's rows end up all hidden, so a retry after a failed save still marks the record.
+    router.post("/v1/imports/:batch/hide") { _, context in
+        let record = try await importRecord(context)
+        let result = try await service.api.hideBatch(batchID: record.batchID)
+        if await service.api.hiddenBatchIDs().contains(record.batchID) {
+            var fresh = try await importRecord(context)
+            if fresh.hiddenAt == nil || result.affectedTransactions > 0 {
+                fresh.hiddenAt = Date()
+                try await service.store.upsertImport(fresh)
+            }
+        }
+        return try HTTP.json(result)
     }
     // MARK: - [end lane L] addImportRoutes
 

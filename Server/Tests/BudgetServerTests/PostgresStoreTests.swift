@@ -22,7 +22,7 @@ struct PostgresStoreTests {
             group.addTask { await store.client.run() }
             try await store.migrate()
             try await store.migrate() // idempotent
-            for table in ["budget_rows", "budget_docs", "budget_links", "budget_imports", "budget_settings", "budget_chats", "budget_balances"] {
+            for table in ["budget_rows", "budget_docs", "budget_links", "budget_imports", "budget_settings", "budget_chats", "budget_balances", "budget_merges"] {
                 try await store.client.query(PostgresQuery(unsafeSQL: "DELETE FROM \(table)"))
             }
             try await body(store)

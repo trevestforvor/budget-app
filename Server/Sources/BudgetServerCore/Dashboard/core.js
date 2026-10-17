@@ -456,9 +456,12 @@ export const swatch = (id) => h("span", { class: `sw tone-${(category(id) || {})
 /// DSTag-like label for a category: its swatch and name.
 export const categoryTag = (id) => h("span", { class: "cat" }, swatch(id), categoryName(id));
 // [lane L] accountName
-export const accountName = (id) => {
-  const a = ((store.overview && store.overview.accounts) || []).find((x) => x.id === id);
-  return a ? a.name + (a.mask ? ` ••${a.mask}` : "") : "";
+/// An account as the person names it: their nickname, else the bank's name, with its last digits. Takes the account or
+/// its id; "" for an id that's gone.
+export const accountName = (idOrAccount) => {
+  const a = typeof idOrAccount === "object" && idOrAccount ? idOrAccount
+    : ((store.overview && store.overview.accounts) || []).find((x) => x.id === idOrAccount);
+  return a ? (a.nickname || a.name) + (a.mask ? ` ••${a.mask}` : "") : "";
 };
 // [end lane L] accountName
 

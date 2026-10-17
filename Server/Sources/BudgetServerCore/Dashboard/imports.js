@@ -1,7 +1,7 @@
 // Imports: one table for one file or a year of them (preview, then import), and the history of every
 // import and sync with its warnings and an Undo that says what it removes.
 import { fill, h, api, store, heavy, cached, pageHead, sectionHead, button, busy, armed, isArmed, callout, details, tag, icon, afterWrite,
-  reportError, toast, money, count, plural, dateShort, span, KIND, SOURCE, emptyState, loadInto } from "./core.js";
+  reportError, toast, money, count, plural, dateShort, span, KIND, SOURCE, emptyState, loadInto, accountName } from "./core.js";
 import { ordersRegion } from "./orders.js";
 
 const NEW = "__new__";
@@ -12,6 +12,15 @@ let batch = null;
 let viewRef = null;
 
 const isOFX = (name, text) => /\.(ofx|qfx)$/i.test(name) || /<OFX>|OFXHEADER/i.test(text.slice(0, 4000));
+
+/// A new account for an OFX file, named from the file the way the server would ("Card ••1234"). The number stays in
+/// the browser: only the name and kind are sent.
+function ofxNewAccount(text) {
+  const acct = ((text || "").match(/<ACCTID>\s*([^<\s]+)/i) || [])[1] || "";
+  const digits = acct.replace(/\D/g, "").slice(-4), card = /<CCSTMTRS>/i.test(text || "");
+  const org = ((text || "").match(/<ORG>\s*([^<\r\n]+)/i) || [])[1] || "";
+  return { name: `${card ? "Card" : "Account"}${digits.length >= 2 ? ` ••${digits}` : ""}`, institution: org.trim(), kind: card ? "credit" : "checking", balance: "" };
+}
 
 /// Which account a statement belongs to: the last digits in its name or its OFX account number
 /// (Chase1234_Activity….CSV, "Amex Gold 22222.csv"), else a distinctive word of an account's name.
@@ -27,7 +36,7 @@ function guessAccount(name, text) {
 
 function ready(item) {
   if (item.done) return true;
-  if (item.ofx) return true;
+  // An OFX file needs an account too: its account number never becomes one.
   if (!item.accountID) return false;
   return item.accountID !== NEW || !!item.newAccount.name.trim();
 }
@@ -40,17 +49,18 @@ function parseBalance(raw) {
   return { minor: Math.round(n * 100), currency: "USD" };
 }
 
-/// The request body for one file, preview or not. A new account (CSV) carries its name, kind and balance.
+/// The request body for one file, preview or not. A new account carries its name and kind, and a CSV's its balance
+/// (an OFX file states its own).
 function importBody(item, preview) {
   const account = store.overview.accounts.find((a) => a.id === item.accountID);
   const options = { format: item.ofx ? "ofx" : "csv", sign: item.ofx ? "auto" : item.sign,
     institution: account ? account.institution : (item.newAccount.institution.trim() || "Import") };
   const body = { content: item.text, label: item.name, preview, options };
   if (account) body.accountID = account.id;
-  else if (!item.ofx) {
+  else {
     options.accountName = item.newAccount.name.trim();
     options.accountKind = item.newAccount.kind;
-    const balance = parseBalance(item.newAccount.balance);
+    const balance = item.ofx ? null : parseBalance(item.newAccount.balance);
     if (balance) options.balance = balance;
   }
   return body;
@@ -64,9 +74,9 @@ function accountSelect(item, view) {
   const accounts = store.overview.accounts;
   const select = h("select", { class: "input", "aria-label": `Account for ${item.name}`, disabled: !!item.done,
     onchange: (e) => { item.accountID = e.target.value; item.guessed = false; item.preview = null; item.error = null; view.renderTable(); } },
-    h("option", { value: "" }, item.ofx ? "A new account from the file" : "Choose an account…"),
-    accounts.map((a) => h("option", { value: a.id }, `${a.institution} · ${a.name}${a.mask ? ` ••${a.mask}` : ""}`)),
-    item.ofx ? null : h("option", { value: NEW }, "New account…"));
+    h("option", { value: "" }, "Choose an account…"),
+    accounts.map((a) => h("option", { value: a.id }, `${a.institution} · ${accountName(a)}`)),
+    h("option", { value: NEW }, "New account…"));
   select.value = item.accountID;
   return select;
 }
@@ -91,7 +101,7 @@ function newAccountRow(item, view) {
     input("name", "New account's name", { placeholder: "Chase Checking", "aria-required": "true" }),
     input("institution", "Bank", { placeholder: "Chase" }),
     h("label", { class: "field" }, h("span", { class: "help" }, "Kind"), kind),
-    input("balance", "Balance today (optional)", { inputmode: "decimal", placeholder: "2450.18" }))));
+    item.ofx ? null : input("balance", "Balance today (optional)", { inputmode: "decimal", placeholder: "2450.18" }))));
 }
 
 function samplesRow(item) {
@@ -134,29 +144,161 @@ function fileRow(item, view) {
 function historyRow(record) {
   const r = record.report, sync = record.kind === "sync";
   const summary = [dateShort(record.createdAt), plural(r.rowsAdded, "new transaction"), r.duplicatesSkipped ? `${count(r.duplicatesSkipped)} already here` : null,
-    r.rowsUpdated ? `${count(r.rowsUpdated)} updated` : null, r.needsReview ? `${count(r.needsReview)} to review` : null, span(r.addedFrom, r.addedThrough) || null].filter(Boolean).join(" · ");
+    r.rowsUpdated ? `${count(r.rowsUpdated)} updated` : null,
+    r.pendingSettled ? `${count(r.pendingSettled)} pending settled` : null, r.pendingDropped ? `${count(r.pendingDropped)} pending dropped` : null,
+    r.needsReview ? `${count(r.needsReview)} to review` : null, span(r.addedFrom, r.addedThrough) || null].filter(Boolean).join(" · ");
   const filed = [[r.byRule, "by your rules"], [r.byTransferMatch, "as transfers between your accounts"], [r.byStatement, "settled by the statement"],
     [r.byMemory, "by remembered merchants"], [r.byModel, "by the decision model"]].filter(([n]) => n > 0).map(([n, how]) => `${count(n)} ${how}`);
   const how = [filed.length ? `Filed on their own: ${filed.join(", ")}.` : "Nothing was filed on its own.",
     r.modelCalls ? `${plural(r.modelCalls, "question")} to the decision model${r.modelMilliseconds != null ? `, ${(r.modelMilliseconds / 1000).toFixed(1)} s` : ""}.` : null].filter(Boolean).join(" ");
-  const undo = record.rolledBack ? tag("Undone") : button("Undo", { compact: true, "aria-label": `Undo ${record.label}`,
-    onclick: (e) => armed(e.currentTarget, r.rowsAdded ? `Click again to remove ${plural(r.rowsAdded, "row")}` : "Click again to undo", () => undoImport(record)) });
-  return h("div", { class: `row${record.rolledBack ? " dim" : ""}` },
+  const failed = record.outcome === "failed", policy = record.undo || { mode: "allowed" };
+  // A Plaid sync can't be undone (Plaid won't send its rows again), so it offers Hide; a SimpleFIN sync asks first
+  // how many rows its next sync brings back; a failed sync has nothing to undo.
+  const hideNote = !record.rolledBack && !failed && !record.hiddenAt && sync && policy.mode === "refused" && r.rowsAdded
+    ? `${policy.message || "Undo is off for this sync."} Hidden rows stay out of every total, and you can show them again from Activity.` : null;
+  const actions = record.rolledBack ? tag("Undone") : failed ? null : record.hiddenAt ? tag("Hidden")
+    : policy.mode === "refused" ? (sync && r.rowsAdded ? hideButton(record) : null)
+    : policy.mode === "warn" ? [undoButton(record, true), r.rowsAdded ? hideButton(record) : null]
+    : undoButton(record, false);
+  return h("div", { class: `row${record.rolledBack || failed ? " dim" : ""}` },
     h("span", { class: `glyph ${sync ? "tone-cyan" : "neutral"}` }, icon(sync ? "sync" : "file"), h("span", { class: "sr-only" }, sync ? "Sync" : "File import")),
     h("div", { class: "grow" }, h("div", { class: "title wrap" }, record.label), h("div", { class: "sub wrap" }, summary),
+      failed ? h("div", { class: "warn-line act-text" }, `Didn't sync: ${record.error || "the provider didn't answer."}`) : null,
       (r.warnings || []).map((w) => h("div", { class: "warn-line" }, h("span", { class: "dot watch", "aria-hidden": "true" }), h("span", {}, "Warning: ", w))),
-      details("Details", how)),
-    h("div", { class: "row-actions" }, undo));
+      hideNote ? h("div", { class: "help" }, hideNote) : null,
+      details("Details", how),
+      !record.rolledBack && !failed && (r.duplicatesSkipped || mergeCounts[record.batchID]) ? alreadyHere(record) : null),
+    h("div", { class: "row-actions" }, actions));
 }
 
-async function undoImport(record) {
+/// Open merge-log entries per batch (GET /v1/merges/by-batch, server 0.6.0), so an import whose rows were swept or
+/// merged later lists them even when it skipped nothing. Reloaded with the history; an older server has none.
+let mergeCounts = {};
+async function loadMergeCounts() {
+  try { mergeCounts = (await api("/v1/merges/by-batch")) || {}; } catch { mergeCounts = {}; }
+}
+
+/// What Bring back did, in a toast: filed now, waiting in Review, or left for the decision model (`MergeUndoResult`).
+function broughtBack(r) {
+  if (r.restored === 1) {
+    return r.waiting ? "Brought back. The decision model files it when the server next syncs or imports."
+      : r.toReview ? "Brought back. It's waiting in Review for a category." : "Brought back and filed.";
+  }
+  const parts = [r.filed ? `${count(r.filed)} filed` : null, r.toReview ? `${count(r.toReview)} waiting in Review` : null,
+    r.waiting ? `${count(r.waiting)} for the decision model to file when the server next syncs or imports, a few hundred at a time` : null].filter(Boolean);
+  return `Brought back ${plural(r.restored, "transaction")}${parts.length ? `: ${parts.join(", ")}` : ""}.`;
+}
+
+/// "N already here" (or, for an import that skipped nothing, "N merged"), opened: each row the batch skipped and any
+/// statement copy swept or merged since, with what it matched and Bring back. Read from the merge log (server 0.6.0)
+/// when opened; an older server has none to show.
+function alreadyHere(record) {
+  const r = record.report;
+  const list = h("div", { class: "rows" });
+  const line = (t) => `${dateShort(t.postedAt)} · ${t.rawDescription} · ${money(t.amount)}`;
+  const KIND_LABEL = { skippedIncoming: "Already here", sweptFileCopy: "Removed as a copy", duplicateResolved: "You said same charge",
+    pendingSettled: "Pending, posted under a new id", pendingDropped: "Pending, the bank dropped it" };
+  // What the logged row went into, or why it went.
+  const why = (m) => m.kind === "pendingSettled" ? `Posted as: ${m.keptBefore ? line(m.keptBefore) : "a new row"}`
+    : m.kind === "pendingDropped" ? `${SOURCE[m.dropped.source] || "The bank"} stopped sending it, on two syncs at least half a day apart.`
+    : m.keptID ? `Matched ${SOURCE[(m.keptBefore || {}).source] || "a row already in the ledger"}${m.keptBefore ? `: ${line(m.keptBefore)}` : ""}` : null;
+  // Rows an earlier import skipped (or merged) first are listed under that import, not this one.
+  const before = r.duplicatesSkippedBefore || 0;
+  const beforeNote = before ? h("div", { class: "help" }, `${plural(before, "row")} ${before === 1 ? "was" : "were"} skipped or merged by an earlier import first; ${before === 1 ? "it's" : "they're"} listed under that import, with Bring back.`) : null;
+  const load = async () => {
+    fill(list, h("div", { class: "help" }, "Loading…"));
+    try {
+      const merges = await api(`/v1/merges?batch=${encodeURIComponent(record.batchID)}`);
+      const open = merges.filter((m) => !m.undoneAt);
+      if (!open.length) {
+        fill(list, beforeNote && !merges.length ? beforeNote
+          : h("div", { class: "help" }, merges.length ? "All of them were brought back." : "Rows skipped before this server kept a log can't be listed."));
+        return;
+      }
+      const skipped = open.filter((m) => m.kind === "skippedIncoming").length;
+      fill(list,
+        open.map((m) => h("div", { class: "row" },
+          h("div", { class: "grow" }, h("div", { class: "title wrap" }, line(m.dropped), " ", tag(KIND_LABEL[m.kind] || m.kind)),
+            why(m) ? h("div", { class: "sub wrap" }, why(m)) : null),
+          button("Bring back", { kind: "quiet", compact: true, "aria-label": `Bring back ${m.dropped.rawDescription} on ${dateShort(m.dropped.postedAt)}`,
+            onclick: (e) => busy(e.currentTarget, "Bringing back…", async () => {
+              toast(broughtBack(await api(`/v1/merges/${encodeURIComponent(m.id)}/undo`, { method: "POST" })));
+              await afterWrite();
+              await load();
+            }) }))),
+        beforeNote,
+        skipped > 1 ? h("div", { class: "card-foot" }, button(`Bring back all ${skipped}`, { compact: true, onclick: (e) => armed(e.currentTarget, `Click again to add ${plural(skipped, "row")} anyway`, async () => {
+          try {
+            toast(broughtBack(await api(`/v1/imports/${encodeURIComponent(record.batchID)}/merges/undo`, { method: "POST" })));
+            await afterWrite();
+            await load();
+          } catch (error) { reportError(error); }
+        }) })) : null);
+    } catch (error) {
+      fill(list, h("div", { class: "help" }, error.status === 404 ? "This server doesn't keep a list of skipped rows yet." : error.message));
+    }
+  };
+  let loaded = false;
+  // What the import itself did (skipped rows, pending charges swept), from its report; otherwise every open entry for
+  // it, which counts rows merged or swept as copies since.
+  const merged = mergeCounts[record.batchID] || 0, pending = (r.pendingSettled || 0) + (r.pendingDropped || 0);
+  const said = [r.duplicatesSkipped ? `${count(r.duplicatesSkipped)} already here` : null,
+    pending ? `${plural(pending, "pending charge")} settled or dropped` : null].filter(Boolean).join(" · ");
+  return h("details", { class: "disclosure", ontoggle: (e) => { if (e.currentTarget.open && !loaded) { loaded = true; load(); } } },
+    h("summary", {}, said || `${count(merged)} merged or removed as copies`), list);
+}
+
+/// Undo, armed by a second click. With `ask` (a SimpleFIN sync) the first click asks the server what Undo would do, and
+/// the armed button says how many rows come back; the second sends that yes along. Clicks while the plan is loading
+/// are ignored, so a double-click can't send the yes before the count was on screen.
+function undoButton(record, ask) {
+  const r = record.report;
+  return button("Undo", { compact: true, "aria-label": `Undo ${record.label}`, onclick: async (e) => {
+    const b = e.currentTarget;
+    if (b.dataset.pending === "1") return;
+    if (!ask || b.dataset.armed === "1") {
+      armed(b, r.rowsAdded ? `Click again to remove ${plural(r.rowsAdded, "row")}` : "Click again to undo", () => undoImport(record, b._acknowledge === true));
+      return;
+    }
+    b.dataset.pending = "1";
+    try {
+      const plan = await api(`/v1/imports/${encodeURIComponent(record.batchID)}/undo`);
+      if (plan.verdict === "refuse") { toast(plan.message); return; }
+      b._acknowledge = plan.verdict === "undoReturns";
+      const back = plan.returning ? `${count(plan.returning)} come back at the next sync` : "linking it again brings them back";
+      armed(b, `Click again to remove ${plural(plan.rows, "row")}${b._acknowledge ? `; ${back}` : ""}`, () => undoImport(record, b._acknowledge));
+    } catch (error) { reportError(error); } finally { b.dataset.pending = ""; }
+  } });
+}
+
+/// Hide rows: what a sync batch gets instead of Undo. Hidden rows keep balances and stay hidden when the bank sends them again.
+function hideButton(record) {
+  return button("Hide rows", { compact: true, kind: "quiet", "aria-label": `Hide the rows from ${record.label}`,
+    onclick: (e) => armed(e.currentTarget, `Click again to hide ${plural(record.report.rowsAdded, "row")}`, () => hideImport(record)) });
+}
+
+async function undoImport(record, acknowledge) {
   try {
-    const r = await api(`/v1/imports/${encodeURIComponent(record.batchID)}`, { method: "DELETE" });
+    const r = await api(`/v1/imports/${encodeURIComponent(record.batchID)}${acknowledge ? "?acknowledge=returning" : ""}`, { method: "DELETE" });
     toast(`Removed ${plural(r.removed, "transaction")} from ${record.label}`);
     // The file table above says so too, when the undone file is one of this batch.
     if (batch) for (const item of batch) if (item.batchID === record.batchID) item.undone = true;
     await afterWrite();
     if (batch && viewRef) viewRef.renderTable();
+  } catch (error) { reportError(error); }
+}
+
+async function hideImport(record) {
+  try {
+    const result = await api(`/v1/imports/${encodeURIComponent(record.batchID)}/hide`, { method: "POST" });
+    // History works "hidden" out from the rows on every read, so this undo also brings Hide rows back.
+    toast(`${result.message} You can show them again from Activity.`, result.undo ? { action: { label: "Undo", run: async () => {
+      try {
+        await api("/v1/actions", { method: "POST", body: result.undo });
+        await afterWrite();
+      } catch (error) { reportError(error); }
+    } } } : {});
+    await afterWrite();
   } catch (error) { reportError(error); }
 }
 
@@ -197,11 +339,11 @@ function renderCoverage(data) {
     const statements = a.source === "fileImport";
     return h("div", { class: "cov-row" },
       h("div", { class: "cov-name" },
-        h("div", { class: "title" }, a.name, a.mask ? h("span", { class: "mask" }, ` ••${a.mask}`) : null),
+        h("div", { class: "title" }, a.nickname || a.name, a.mask ? h("span", { class: "mask" }, ` ••${a.mask}`) : null),
         h("div", { class: "sub" }, `${a.institution} · ${statements ? "statements" : `via ${SOURCE[a.source] || a.source}`}`,
           gaps ? h("span", { class: "watch-text" }, ` · ${gaps === 1 ? "1 empty month" : `${gaps} empty months`}`) : null)),
-      h("div", { class: "cov-strip", role: "img", "aria-label": `${a.name}: ${described}.` }, cells),
-      h("div", { class: "cov-act" }, statements ? h("a", { class: "btn quiet", href: `#/imports?account=${encodeURIComponent(a.id)}`, "aria-label": `Import a statement into ${a.name}` }, "Import") : null));
+      h("div", { class: "cov-strip", role: "img", "aria-label": `${a.nickname || a.name}: ${described}.` }, cells),
+      h("div", { class: "cov-act" }, statements ? h("a", { class: "btn quiet", href: `#/imports?account=${encodeURIComponent(a.id)}`, "aria-label": `Import a statement into ${accountName(a)}` }, "Import") : null));
   });
   return [
     h("div", { class: "cov-grid" }, h("div", { class: "cov-row cov-head", "aria-hidden": "true" }, h("div", { class: "cov-name" }), h("div", { class: "cov-strip" }, marks), h("div", { class: "cov-act" })), rows),
@@ -225,6 +367,7 @@ export default {
   navigate({ params }) { this.preselect = params.get("account") || ""; this.render(); },
   refresh({ after } = {}) {
     if (after && this.coverage && cached("coverage") === undefined) loadInto(this.coverage, () => heavy("coverage"), renderCoverage);
+    if (after) loadMergeCounts().then(() => this.refresh());
     if (!this.history || isArmed(this.history) || this.history.querySelector(".busy")) return;
     if (after) this.limit = Math.max(50, this.limit);
     this.renderHistory();
@@ -245,6 +388,7 @@ export default {
       this.history);
     this.renderFlow();
     this.renderHistory();
+    loadMergeCounts().then(() => this.refresh());
   },
 
   /// Accounts × the last 24 months (GET /dash/coverage): which months have transactions, and which don't.
@@ -280,9 +424,9 @@ export default {
     const items = await Promise.all(files.sort((a, b) => a.name.localeCompare(b.name)).map(async (f) => {
       const text = await f.text(), ofx = isOFX(f.name, text);
       const guess = guessAccount(f.name, text);
-      const accountID = guess || (!ofx && this.preselect) || "";
+      const accountID = guess || this.preselect || "";
       return { name: f.name, text, ofx, accountID, guessed: !!guess, sign: "auto", preview: null, done: null, error: null,
-        newAccount: { name: "", institution: "", kind: "checking", balance: "" } };
+        newAccount: ofx ? ofxNewAccount(text) : { name: "", institution: "", kind: "checking", balance: "" } };
     }));
     batch = items;
     this.render();
@@ -291,7 +435,7 @@ export default {
   renderTable() {
     if (!batch) return this.renderFlow();
     const wrap = this.flow.querySelector(".table-wrap");
-    const rows = batch.flatMap((item) => [fileRow(item, this), !item.ofx && item.accountID === NEW && !item.done ? newAccountRow(item, this) : null, samplesRow(item)].filter(Boolean));
+    const rows = batch.flatMap((item) => [fileRow(item, this), item.accountID === NEW && !item.done ? newAccountRow(item, this) : null, samplesRow(item)].filter(Boolean));
     fill(wrap, h("table", { class: "table stack-phone file-table" },
       h("thead", {}, h("tr", {}, h("th", {}, "File"), h("th", {}, "Into account"), h("th", {}, "Dates"), h("th", { class: "numcol" }, "New"),
         h("th", { class: "numcol" }, "Already here"), h("th", {}, "Status"))),

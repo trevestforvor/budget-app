@@ -15,6 +15,9 @@ public struct DuplicateSweep: Hashable, Codable, Sendable {
     public var applied: Bool
     public var pairs: [Pair]
     public var removed: Int
+    /// Imported rows that look like more than one synced row, so the sweep leaves them for the person (Review). Optional
+    /// so sweeps from servers before 0.6.0 still decode.
+    public var ambiguous: Int?
 }
 
 public struct IngestReport: Hashable, Codable, Sendable {
@@ -48,8 +51,22 @@ public struct IngestReport: Hashable, Codable, Sendable {
     /// A few of the rows skipped as already in the ledger from another source, and what each matched,
     /// so a preview can be checked by eye.
     public var duplicateSamples: [DuplicateSample]?
+    /// Rows added that might be the same charge as one already here, so they wait in review naming it
+    /// (`LedgerState.possibleDuplicates`). Optional so reports saved before it existed still decode.
+    public var possibleDuplicates: Int?
+    /// Rows a provider sent again with a better description, merchant or category hint. Optional, as above.
+    public var namesImproved: Int?
+    /// Of `duplicatesSkipped`, rows an earlier import already skipped (or the person merged, or a sweep removed as a
+    /// statement copy): the merge log lists them under that import, with Bring back. Optional, as above.
+    public var duplicatesSkippedBefore: Int?
+    /// Pending rows a window source (SimpleFIN) stopped sending: settled into the posted row that replaced them, or
+    /// removed once the bank dropped them (missed twice, half a day apart). Both are in the merge log. Optional, as above.
+    public var pendingSettled: Int?
+    public var pendingDropped: Int?
     /// Internal hand-off to the categorizer; not part of the wire report.
     var newRowIDs: [String] = []
+    /// Internal: the rows `possibleDuplicates` counts, flagged for review once they're categorized.
+    var possibleDuplicateIDs: [String] = []
 
     public init(batchID: String, source: SourceKind, warnings: [String] = []) {
         self.batchID = batchID
@@ -60,6 +77,7 @@ public struct IngestReport: Hashable, Codable, Sendable {
     enum CodingKeys: String, CodingKey {
         case batchID, source, accountsAdded, accountsUpdated, rowsAdded, rowsUpdated, duplicatesSkipped, byRule, byMemory, byModel, needsReview, modelCalls, warnings
         case modelMilliseconds, addedFrom, addedThrough, duplicateSamples, byTransferMatch, byStatement, notes
+        case possibleDuplicates, namesImproved, duplicatesSkippedBefore, pendingSettled, pendingDropped
     }
 
     public struct DuplicateSample: Hashable, Codable, Sendable {
@@ -82,6 +100,34 @@ public struct IngestReport: Hashable, Codable, Sendable {
         modelCalls = outcome.modelCalls
         modelMilliseconds = outcome.modelMilliseconds
         warnings += outcome.warnings
+    }
+}
+
+/// What Undo would do with one batch (`GET /v1/imports/:batch/undo`), with the counts behind it.
+public struct RollbackPlan: Hashable, Codable, Sendable {
+    public enum Verdict: String, Codable, Sendable {
+        /// Undo removes the rows; nothing sends them again.
+        case undo
+        /// Undo removes the rows, but `returning` of them come back at the next sync (and all of them if the connection
+        /// is linked again): it needs the person's yes.
+        case undoReturns
+        /// Undo would lose rows for good (a cursor source never re-sends them): hide them instead.
+        case refuse
+    }
+
+    public var batchID: String
+    /// The batch's rows still in the ledger.
+    public var rows: Int
+    /// Those rows by `SourceKind` raw value.
+    public var bySource: [String: Int]
+    /// Window-source rows the next sync fetches again (posted on or after its start).
+    public var returning: Int
+    public var verdict: Verdict
+    /// Why, and what to do instead, in the person's words.
+    public var message: String
+
+    public init(batchID: String, rows: Int, bySource: [String: Int], returning: Int, verdict: Verdict, message: String) {
+        self.batchID = batchID; self.rows = rows; self.bySource = bySource; self.returning = returning; self.verdict = verdict; self.message = message
     }
 }
 
@@ -126,13 +172,27 @@ extension Ledger {
     mutating func prepareIngest(_ snapshot: SourceSnapshot, batchID: String, into targetAccountID: String?) throws -> IngestReport {
         var report = IngestReport(batchID: batchID, source: snapshot.source, warnings: snapshot.warnings)
         var touched = Set<String>()
+        var skipped: [RowMergeRecord] = []
         let byID = Dictionary(uniqueKeysWithValues: transactions.enumerated().map { ($1.id, $0) })
+        // Rows let go of on purpose stay gone when sent again (an overlapping statement, a re-sent sync row), and rows an
+        // earlier import skipped are counted as skipped before: they're logged under that import.
+        let mergedAway = self.mergedAway
+        let skippedBefore = Set(mergeLog.lazy.filter { $0.kind == .skippedIncoming && $0.undoneAt == nil }.map(\.droppedID))
+        func countSkippedBefore() { report.duplicatesSkippedBefore = (report.duplicatesSkippedBefore ?? 0) + 1 }
+        // Pending rows the sweep settles or drops, taken out once every account is done (indices stay valid until then).
+        var swept = Set<String>()
+        var sweptLog: [RowMergeRecord] = []
 
         for sourceAccount in snapshot.accounts {
             let label = sourceAccount.name + (sourceAccount.mask.map { " ••" + $0 } ?? "")
             guard sourceAccount.balance.currencyCode == Self.homeCurrency else {
                 report.warnings.append("Set aside \(label): it's in \(sourceAccount.balance.currencyCode), and Budget only tracks \(Self.homeCurrency) for now, so its transactions weren't added.")
                 continue
+            }
+            // No code path may make an account from a statement's own account number again (P0.6): a file names an
+            // existing account or a new one by name.
+            guard snapshot.source != .fileImport || targetAccountID != nil || sourceAccount.externalID.hasPrefix("csv-") else {
+                throw BudgetAPIError.rejected("Choose the account this statement belongs to, or name a new one.")
             }
             let accountID: String
             if let targetAccountID {
@@ -143,7 +203,8 @@ extension Ledger {
                 if let index = accounts.firstIndex(where: { $0.id == accountID }) {
                     accounts[index].balance = sourceAccount.balance
                     accounts[index].name = sourceAccount.name
-                    if let mask = sourceAccount.mask { accounts[index].mask = mask }
+                    // The last digits the person set stay; so do the kind and the nickname (never written here).
+                    if let mask = sourceAccount.mask, accounts[index].maskSetByPerson != true { accounts[index].mask = mask }
                     accounts[index].balanceAsOf = sourceAccount.balanceDate
                     if snapshot.source != .fileImport && snapshot.accountProblems[sourceAccount.externalID] == nil { accounts[index].lastSyncedAt = now }
                     report.accountsUpdated += 1
@@ -160,40 +221,50 @@ extension Ledger {
             // Rows already on the account from a *different* source are the only fuzzy-duplicate
             // candidates: a source's own rows are told apart by id (two identical coffees on one day
             // are two rows), and each ledger row can absorb at most one incoming row.
-            var candidates = transactions.filter { $0.accountID == accountID && $0.source != snapshot.source }
+            // Statement rows whose ids were made with an older key can't match by id, so they're candidates too.
+            // Known limit: the scheme stays "h1" across a key change and no change date is kept, so once the key differs
+            // every hashed row is a candidate, new-key rows included. Two real rows on one day for one amount, one already
+            // here and one in a later overlapping file, can then be taken for one.
+            var candidates = transactions.filter {
+                $0.accountID == accountID && ($0.source != snapshot.source || (snapshot.statementKeyChanged && Self.isHashedStatementRow($0)))
+            }
             var added: [LedgerTransaction] = []
             var addedIDs = Set<String>()
             // Posted rows that took over their pending row's category, by the pending row's index.
             var replaced: [(pending: Int, posted: String)] = []
             var otherCurrency = 0
+            // Every incoming row id, whatever became of it: a pending row among them isn't missing.
+            var seen = Set<String>()
             for row in sourceAccount.transactions {
                 guard row.amount.currencyCode == Self.homeCurrency else { otherCurrency += 1; continue }
                 // A statement file's row ids are only unique within the file, so they're scoped to the account
                 // the rows land in (two cards can each have a $6.50 coffee on the same day).
                 let id = snapshot.source == .fileImport
                     ? "\(snapshot.source.rawValue):\(accountID):\(row.externalID)" : "\(snapshot.source.rawValue):\(row.externalID)"
+                seen.insert(id)
                 // Files imported before ids were scoped to an account used the bare id.
                 let legacy = snapshot.source == .fileImport ? byID["\(snapshot.source.rawValue):\(row.externalID)"].flatMap { transactions[$0].accountID == accountID ? $0 : nil } : nil
                 if let index = byID[id] ?? legacy {
                     // Same provider row seen again: pending → posted, or an amended amount.
+                    var updated = false
                     if transactions[index].isPending != row.isPending || transactions[index].amount != row.amount || transactions[index].postedAt != row.posted {
                         transactions[index].isPending = row.isPending
                         transactions[index].amount = row.amount
                         transactions[index].postedAt = row.posted
-                        report.rowsUpdated += 1
+                        updated = true
                     }
+                    // A provider often names a row better once it posts. A statement file says what it said.
+                    if snapshot.source != .fileImport, improveName(index, from: row) {
+                        report.namesImproved = (report.namesImproved ?? 0) + 1
+                        updated = true
+                    }
+                    if updated { report.rowsUpdated += 1 }
                     continue
                 }
                 guard addedIDs.insert(id).inserted else { continue }
-                if let match = Deduplicator.bestMatch(account: accountID, date: row.posted, amount: row.amount,
-                                                      descriptions: [row.payee, row.description].compactMap { $0 }, in: candidates) {
-                    let matched = candidates.remove(at: match)
+                if mergedAway.contains(id) {
                     report.duplicatesSkipped += 1
-                    if (report.duplicateSamples?.count ?? 0) < 12 {
-                        report.duplicateSamples = (report.duplicateSamples ?? []) + [IngestReport.DuplicateSample(
-                            date: row.posted, amount: row.amount, description: row.description,
-                            matchedDate: matched.postedAt, matchedDescription: matched.rawDescription, matchedSource: matched.source)]
-                    }
+                    countSkippedBefore()
                     continue
                 }
                 let name = merchant(for: row)
@@ -201,12 +272,46 @@ extension Ledger {
                     id: id, accountID: accountID, postedAt: row.posted, merchant: name.merchant, rawDescription: row.description,
                     amount: row.amount, categorization: nil, isPending: row.isPending, source: snapshot.source,
                     batchID: batchID, providerCategory: row.providerCategory, originalMerchant: name.original)
+                switch Deduplicator.decide(account: accountID, date: row.posted, amount: row.amount,
+                                           descriptions: [row.payee, row.description].compactMap { $0 }, in: candidates) {
+                case let .match(match):
+                    let matched = candidates.remove(at: match)
+                    report.duplicatesSkipped += 1
+                    if (report.duplicateSamples?.count ?? 0) < 12 {
+                        report.duplicateSamples = (report.duplicateSamples ?? []) + [IngestReport.DuplicateSample(
+                            date: row.posted, amount: row.amount, description: row.description,
+                            matchedDate: matched.postedAt, matchedDescription: matched.rawDescription, matchedSource: matched.source)]
+                    }
+                    // Logged with both ids and the row it would have been, so the person can bring it back (once).
+                    if skippedBefore.contains(id) { countSkippedBefore() }
+                    skipped.append(RowMergeRecord(id: "", kind: .skippedIncoming, at: now, batchID: batchID, keptID: matched.id,
+                                                  droppedID: id, dropped: transaction))
+                    continue
+                case let .ambiguous(indices):
+                    // Not dropped on a guess: added, and asked about. The candidates stay open to the file's other rows.
+                    possibleDuplicates[id] = indices.map { candidates[$0].id }
+                    report.possibleDuplicateIDs.append(id)
+                case .none:
+                    break
+                }
                 // A posted row that replaces its pending version (a new provider id) keeps what was done to it.
                 if let pendingID = row.replacesExternalID, let index = byID["\(snapshot.source.rawValue):\(pendingID)"],
                    transactions[index].accountID == accountID, Self.carryOver(from: transactions[index], to: &transaction) {
                     replaced.append((index, id))
                 }
                 added.append(transaction)
+            }
+            // A window source's pending rows that stopped coming (B4): only when this pull asked for pending rows and
+            // covered the account without an error. Plaid sends its own removals; files and other accounts are left alone.
+            if snapshot.source.syncStyle == .window, snapshot.includesPending, targetAccountID == nil,
+               snapshot.accountProblems[sourceAccount.externalID] == nil, let coveredFrom = sourceAccount.coveredFrom {
+                let sweep = sweepPending(account: accountID, source: snapshot.source, coveredFrom: coveredFrom, seen: seen, added: &added,
+                                         claimed: Set(replaced.map(\.posted)), claimedPending: Set(replaced.map(\.pending)), batchID: batchID)
+                replaced += sweep.replaced
+                swept.formUnion(sweep.remove)
+                sweptLog += sweep.log
+                if sweep.settled > 0 { report.pendingSettled = (report.pendingSettled ?? 0) + sweep.settled }
+                if sweep.dropped > 0 { report.pendingDropped = (report.pendingDropped ?? 0) + sweep.dropped }
             }
             if otherCurrency > 0 {
                 report.warnings.append("Skipped \(otherCurrency) transaction\(otherCurrency == 1 ? "" : "s") on \(label) that weren't in \(Self.homeCurrency).")
@@ -224,9 +329,34 @@ extension Ledger {
                 if let index = transactions.firstIndex(where: { $0.id == peer }) { transactions[index].transferPeerID = posted }
             }
         }
+        removeSweptPending(swept)
         transactions.sort { $0.postedAt > $1.postedAt }
         for id in touched { reanchor(id) }
+        appendMerges(skipped + sweptLog)
+        if let note = Self.pendingSweepNote(settled: report.pendingSettled ?? 0, dropped: report.pendingDropped ?? 0) {
+            report.notes = (report.notes ?? []) + [note]
+        }
+        if !report.possibleDuplicateIDs.isEmpty { report.possibleDuplicates = report.possibleDuplicateIDs.count }
         return report
+    }
+
+    /// Takes a provider's newer description, category hint and merchant for a row it sent again. A merchant the person
+    /// renamed (or an alias named) stays; only "what the bank calls it" follows. The category is never touched. Returns
+    /// whether anything changed.
+    mutating func improveName(_ index: Int, from row: SourceTransaction) -> Bool {
+        let before = transactions[index]
+        if let hint = row.providerCategory { transactions[index].providerCategory = hint }
+        if !row.description.trimmingCharacters(in: .whitespaces).isEmpty {
+            transactions[index].rawDescription = row.description
+            if before.originalMerchant == nil {
+                (transactions[index].merchant, transactions[index].originalMerchant) = merchant(for: row)
+            } else if case let bank = Self.merchantName(row), bank != before.merchant {
+                // When the bank's new name is the person's own, "what the bank calls it" is left as it was: clearing it
+                // would read as "never renamed", and the next re-send would put the bank's name over theirs.
+                transactions[index].originalMerchant = bank
+            }
+        }
+        return transactions[index] != before
     }
 
     /// The merchant a new row shows: the name the person gave its descriptor, else the provider's (with the
@@ -242,11 +372,13 @@ extension Ledger {
     /// Carries what the person did to a pending row onto the posted row replacing it: hidden, the note, a
     /// renamed merchant — and the category, when the person settled it (their own answer, or hid the row) or it
     /// was one side of a matched transfer, which moves to the posted row. Returns whether the category came
-    /// along; if not, the posted row is categorized afresh.
+    /// along; if not, the posted row is categorized afresh. A posted row already in the ledger (the stale-pending sweep
+    /// can settle into one) keeps a category the person gave it and a transfer pairing of its own.
     static func carryOver(from pending: LedgerTransaction, to posted: inout LedgerTransaction) -> Bool {
         carryUserFields(from: pending, to: &posted)
         guard let categorization = pending.categorization,
-              categorization.tier == .user || pending.isHidden || pending.transferPeerID != nil else { return false }
+              categorization.tier == .user || pending.isHidden || pending.transferPeerID != nil,
+              posted.categorization?.tier != .user, posted.transferPeerID == nil else { return false }
         posted.categorization = categorization
         if posted.isHidden { posted.categorization?.needsReview = false }
         posted.transferPeerID = pending.transferPeerID
@@ -265,17 +397,25 @@ extension Ledger {
 
     /// Imported (file) rows that a synced row also has — left when a provider's history arrived after
     /// the file under a stricter rule. Each pair: the file row and the synced row it duplicates.
-    func crossSourceDuplicates() -> [(file: LedgerTransaction, synced: LedgerTransaction)] {
+    func crossSourceDuplicates() -> [(file: LedgerTransaction, synced: LedgerTransaction)] { crossSourceSweep().pairs }
+
+    /// The pairs, and how many imported rows look like more than one synced row: those are left alone (the person can
+    /// tell them apart in Review; a sweep can't).
+    func crossSourceSweep() -> (pairs: [(file: LedgerTransaction, synced: LedgerTransaction)], ambiguous: Int) {
         var pairs: [(file: LedgerTransaction, synced: LedgerTransaction)] = []
+        var ambiguous = 0
         for (_, rows) in Dictionary(grouping: transactions, by: \.accountID) {
             var synced = rows.filter { $0.source != .fileImport }
             for row in rows where row.source == .fileImport {
-                guard let index = Deduplicator.bestMatch(account: row.accountID, date: row.postedAt, amount: row.amount,
-                                                         descriptions: [row.merchant, row.rawDescription], in: synced, similarOnly: true) else { continue }
-                pairs.append((row, synced.remove(at: index)))
+                switch Deduplicator.decide(account: row.accountID, date: row.postedAt, amount: row.amount,
+                                           descriptions: [row.merchant, row.rawDescription], in: synced, similarOnly: true) {
+                case let .match(index): pairs.append((row, synced.remove(at: index)))
+                case .ambiguous: ambiguous += 1
+                case .none: break
+                }
             }
         }
-        return pairs.sorted { $0.file.postedAt > $1.file.postedAt }
+        return (pairs.sorted { $0.file.postedAt > $1.file.postedAt }, ambiguous)
     }
 
     /// Drops the file copy of each pair; the synced row stays (the provider keeps updating it) and inherits
@@ -284,13 +424,13 @@ extension Ledger {
         let fileIDs = Set(pairs.map(\.file.id))
         // When both sides of a paired move are file copies, each synced row pairs with the other side's synced row.
         let replacement = Dictionary(pairs.map { ($0.file.id, $0.synced.id) }, uniquingKeysWith: { first, _ in first })
+        var swept: [RowMergeRecord] = []
         for pair in pairs {
             guard let index = transactions.firstIndex(where: { $0.id == pair.synced.id }) else { continue }
-            if pair.file.categorization?.tier == .user && pair.synced.categorization?.tier != .user {
-                transactions[index].categorization = pair.file.categorization
-            }
-            Self.carryUserFields(from: pair.file, to: &transactions[index])
-            if transactions[index].isHidden { transactions[index].categorization?.needsReview = false }
+            // The synced row as it was, so bringing the copy back can hand its fields back too.
+            swept.append(RowMergeRecord(id: "", kind: .sweptFileCopy, at: now, batchID: pair.file.batchID, keptID: pair.synced.id,
+                                        droppedID: pair.file.id, dropped: pair.file, keptBefore: transactions[index]))
+            Self.carryOnMerge(from: pair.file, to: &transactions[index], kind: .sweptFileCopy)
             if let filePeer = pair.file.transferPeerID, transactions[index].transferPeerID == nil,
                case let peer = replacement[filePeer] ?? filePeer, let other = transactions.firstIndex(where: { $0.id == peer }) {
                 transactions[index].transferPeerID = peer
@@ -302,6 +442,8 @@ extension Ledger {
         for id in fileIDs { suggestions[id] = nil; reviewReasons[id] = nil }
         for id in affected { reanchor(id) }
         unpairOrphans()
+        prunePossibleDuplicates()
+        appendMerges(swept)
         return fileIDs.count
     }
 
@@ -319,13 +461,63 @@ extension Ledger {
         }
     }
 
+    /// What undoing a batch would do, worked out before anything is removed. A cursor source (Plaid) never sends a row
+    /// twice, so removing its rows loses them for good: refused, hide them instead. A window source re-sends its last
+    /// days, so rows from `nextWindowStart` on come back at the next sync, and the rest once it's linked again: undo
+    /// needs a yes either way. Anything else (files) undoes.
+    func rollbackPlan(batchID: String, nextWindowStart: Date?) -> RollbackPlan {
+        let rows = transactions.filter { $0.batchID == batchID }
+        // Pending rows this batch's sweep settled or dropped, which undo puts back (`rollback`).
+        let ids = Set(rows.map(\.id))
+        let swept = mergeLog.filter {
+            $0.undoneAt == nil && ($0.kind == .pendingSettled || $0.kind == .pendingDropped) && ($0.batchID == batchID || $0.keptID.map(ids.contains) == true)
+        }.count
+        let sweptNote = swept == 0 ? "" : " It also puts back \(swept == 1 ? "the pending charge" : "the \(swept) pending charges") this sync settled or dropped."
+        let bySource = Dictionary(grouping: rows, by: \.source.rawValue).mapValues(\.count)
+        let returning = nextWindowStart.map { start in rows.filter { $0.source.syncStyle == .window && $0.postedAt >= start }.count } ?? 0
+        let n = rows.count == 1 ? "this row" : "these \(rows.count) rows"
+        if let kept = rows.first(where: { [.cursor, .device].contains($0.source.syncStyle) }) {
+            return RollbackPlan(batchID: batchID, rows: rows.count, bySource: bySource, returning: 0, verdict: .refuse,
+                                message: "\(kept.source.displayName) won't send \(n) again, so undoing would lose \(rows.count == 1 ? "it" : "them") for good. Hide \(rows.count == 1 ? "it" : "them") instead: hidden rows stay out of every total, and you can show them again from Activity.")
+        }
+        if let source = rows.first(where: { $0.source.syncStyle == .window })?.source {
+            // Even with none inside the next window (or no link left to sync), linking the connection again re-fetches
+            // them, so a window source's rows always need the yes.
+            let back = returning == 0 ? "None of them come back at the next sync, but \(source.displayName) sends \(rows.count == 1 ? "it" : "them") again if you link it again."
+                : "\(returning == rows.count ? (rows.count == 1 ? "It comes" : "All of them come") : "\(returning) of them come") back at the next sync, because \(source.displayName) sends its most recent days again."
+            return RollbackPlan(batchID: batchID, rows: rows.count, bySource: bySource, returning: returning, verdict: .undoReturns,
+                                message: "Undo removes \(n). \(back)\(sweptNote) Hide \(rows.count == 1 ? "it" : "them") instead to keep \(rows.count == 1 ? "it" : "them") out of your totals for good.")
+        }
+        if rows.isEmpty && swept > 0 {
+            return RollbackPlan(batchID: batchID, rows: 0, bySource: bySource, returning: 0, verdict: .undo,
+                                message: "Undo puts back \(swept == 1 ? "the pending charge" : "the \(swept) pending charges") this sync settled or dropped.")
+        }
+        return RollbackPlan(batchID: batchID, rows: rows.count, bySource: bySource, returning: 0, verdict: .undo,
+                            message: rows.isEmpty ? "Nothing from this batch is left to remove." : "Undo removes \(n) and nothing sends \(rows.count == 1 ? "it" : "them") again.\(sweptNote)")
+    }
+
     mutating func rollback(batchID: String) -> Int {
+        // What the stale-pending sweep did in this batch, or into a posted row this batch added, is undone first: the
+        // pending rows come back (a settled one takes back its note, tags and category from the posted row), ready to
+        // settle again into the posted row the next sync re-sends. Their log entries go with the batch, so a row put
+        // back this way is swept again as usual, unlike one the person brought back.
+        let leaving = Set(transactions.lazy.filter { $0.batchID == batchID }.map(\.id))
+        let sweptEntries = mergeLog.filter {
+            $0.undoneAt == nil && ($0.kind == .pendingSettled || $0.kind == .pendingDropped)
+                && ($0.batchID == batchID || $0.keptID.map(leaving.contains) == true)
+        }.map(\.id)
+        if !sweptEntries.isEmpty {
+            _ = undoMerges(sweptEntries)
+            let void = Set(sweptEntries)
+            mergeLog.removeAll { void.contains($0.id) }
+        }
         let affected = Set(transactions.filter { $0.batchID == batchID }.map(\.accountID))
         let removedIDs = Set(transactions.filter { $0.batchID == batchID }.map(\.id))
         transactions.removeAll { $0.batchID == batchID }
         for id in removedIDs { suggestions[id] = nil; reviewReasons[id] = nil }
         for id in affected { reanchor(id) }
         unpairOrphans()
+        prunePossibleDuplicates()
         return removedIDs.count
     }
 
@@ -338,6 +530,7 @@ extension Ledger {
         for id in ids { suggestions[id] = nil; reviewReasons[id] = nil }
         for id in affected { reanchor(id) }
         unpairOrphans()
+        prunePossibleDuplicates()
         return before - transactions.count
     }
 

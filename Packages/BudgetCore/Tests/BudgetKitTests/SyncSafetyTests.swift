@@ -291,7 +291,7 @@ struct CurrencyTests {
         let row = PlaidSource.transaction(try JSONValue.parse(Data(#"{"transaction_id":"t","account_id":"a","amount":1.25,"date":"2026-09-20","name":"X","iso_currency_code":null,"unofficial_currency_code":"BTC"}"#.utf8)))
         #expect(row?.transaction.amount.currencyCode == "BTC")
         let ofx = "<OFX><CURDEF>CAD<BANKACCTFROM><ACCTID>1234</BANKACCTFROM><STMTTRN><TRNTYPE>DEBIT<DTPOSTED>20260920<TRNAMT>-12.00<FITID>1<NAME>CAFE</STMTTRN><LEDGERBAL><BALAMT>100.00</LEDGERBAL></OFX>"
-        let snapshot = try FileImport.parse(ofx)
+        let snapshot = try FileImport.parse(ofx, ids: .test)
         #expect(snapshot.accounts.first?.balance.currencyCode == "CAD")
         #expect(snapshot.accounts.first?.transactions.first?.amount.currencyCode == "CAD")
     }

@@ -80,10 +80,13 @@ extension Ledger {
     /// row they hid stays as it is. A one-time upgrade (`Ledger.cardIncomeUpgrade`): it runs on the first load after it
     /// ships, which the server writes back once (`persistUpgrades`), and never again — so card credits the person later
     /// merges into Income stay there. Running it twice changes nothing anyway: the rows aren't Income any more.
-    mutating func sendCardIncomeToReview() {
-        let cards = Set(accounts.filter { $0.kind == .credit }.map(\.id))
-        guard !cards.isEmpty else { return }
+    /// With `accountID`, only that card's rows (an account the person just made a card); returns how many went.
+    @discardableResult
+    mutating func sendCardIncomeToReview(onlyOn accountID: String? = nil) -> Int {
+        let cards = Set(accounts.filter { $0.kind == .credit && (accountID == nil || $0.id == accountID) }.map(\.id))
+        guard !cards.isEmpty else { return 0 }
         let known = Set(activeCategories.map(\.id))
+        var sent = 0
         for index in transactions.indices {
             let row = transactions[index]
             guard cards.contains(row.accountID), row.amount.minorUnits > 0, !row.isHidden, var c = row.categorization,
@@ -96,7 +99,9 @@ extension Ledger {
             transactions[index].categorization = c
             suggestions[row.id] = ranked
             reviewReasons[row.id] = Categorizer.cardIncomeReason("It was filed as Income")
+            sent += 1
         }
+        return sent
     }
 }
 

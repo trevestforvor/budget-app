@@ -261,7 +261,7 @@ struct CardCreditTests {
         var state = await statement.state
         state.accounts.append(Account(id: "freedom", name: "Freedom", institution: "Harbor", kind: .credit, balance: Money(-90), source: .fileImport))
         await statement.replaceStateWithoutPersisting(state)
-        _ = try await statement.ingest(try FileImport.parse(IncomeTransferTests.qfx), batchID: "qfx", into: "freedom")
+        _ = try await statement.ingest(try FileImport.parse(IncomeTransferTests.qfx, ids: .test), batchID: "qfx", into: "freedom")
         let rows = try await statement.transactions(TransactionFilter(limit: 50))
         let interest = try #require(rows.first { $0.rawDescription == "Interest" })
         #expect(interest.categorization?.categoryID == "transfer" && interest.categorization?.needsReview == true)

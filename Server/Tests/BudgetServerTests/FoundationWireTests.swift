@@ -29,7 +29,7 @@ struct FoundationWireTests {
         let keys = try JSONSerialization.jsonObject(with: record) as? [String: Any]
         #expect(Set(keys?.keys.map { $0 } ?? []) == ["batchID", "kind", "linkID", "label", "report", "createdAt", "rolledBack"])
         let old = try JSONDecoder().decode(ImportRecord.self, from: record)
-        #expect(old.outcome == nil && old.undo == nil && old.annotated().undo == UndoPolicy(mode: .allowed))
+        #expect(old.outcome == nil && old.undo == nil && old.annotated().undo?.mode == .refused) // a Plaid sync (L1: hide instead)
         var undone = old
         undone.rolledBack = true
         #expect(undone.annotated().undo?.mode == .refused)

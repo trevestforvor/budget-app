@@ -36,3 +36,31 @@ public struct RowMergeRecord: Identifiable, Hashable, Codable, Sendable {
         self.dropped = dropped; self.keptBefore = keptBefore; self.undoneAt = undoneAt
     }
 }
+
+/// A row added that might be the same charge as one already here, with the rows it could be (`GET /v1/duplicates`).
+/// The person answers with `POST /v1/duplicates/:id`: Same charge (one of `candidates`) or Keep both.
+public struct PossibleDuplicate: Identifiable, Hashable, Codable, Sendable {
+    /// The added row's id.
+    public var id: String
+    public var row: LedgerTransaction
+    /// Best match first.
+    public var candidates: [LedgerTransaction]
+
+    public init(id: String, row: LedgerTransaction, candidates: [LedgerTransaction]) { self.id = id; self.row = row; self.candidates = candidates }
+}
+
+/// What Bring back did (`POST /v1/merges/:id/undo`, `POST /v1/imports/:batch/merges/undo`).
+public struct MergeUndoResult: Hashable, Codable, Sendable {
+    /// Rows that came back.
+    public var restored: Int
+    /// Of those, filed now: by a rule, merchant memory or a transfer match, or with the category they had when merged.
+    public var filed: Int
+    /// Waiting in Review for a category.
+    public var toReview: Int
+    /// Left for the decision model, which files them when the server next syncs or imports, a few hundred at a time.
+    public var waiting: Int
+
+    public init(restored: Int, filed: Int, toReview: Int, waiting: Int) {
+        self.restored = restored; self.filed = filed; self.toReview = toReview; self.waiting = waiting
+    }
+}

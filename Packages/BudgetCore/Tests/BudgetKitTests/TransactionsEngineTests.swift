@@ -398,7 +398,7 @@ struct TransferPairTests {
     @Test("A matched transfer records each side on the other")
     func ingestPairs() async throws {
         let api = IncomeTransferTests.api(extra: [IncomeTransferTests.row("harbor-pay", "freedom", 19, 1250, "AUTOMATIC PAYMENT - THANK", category: "income")])
-        _ = try await api.ingest(try FileImport.parse(IncomeTransferTests.qfx), batchID: "qfx", into: "cash")
+        _ = try await api.ingest(try FileImport.parse(IncomeTransferTests.qfx, ids: .test), batchID: "qfx", into: "cash")
         let withdrawal = try #require(await api.state.transactions.first { $0.rawDescription == "Withdrawal" && $0.amount == Money(-1250) })
         #expect(withdrawal.transferPeerID == "harbor-pay")
         #expect(try await api.transaction(id: "harbor-pay").transferPeerID == withdrawal.id)
