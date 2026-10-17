@@ -115,7 +115,7 @@ function accountRow(a, g) {
   // "balance as of" and a stale tag come per account from health.js.
   const sub = [KIND[a.kind] || a.kind, a.kind === "investment" ? "balance only" : null].filter(Boolean).join(" · ");
   return h("div", { class: "row" },
-    h("div", { class: "grow" }, h("div", { class: "title" }, a.name, a.mask ? h("span", { class: "mask" }, ` ••${a.mask}`) : null), h("div", { class: "sub" }, sub),
+    h("div", { class: "grow" }, h("div", { class: "title" }, a.nickname || a.name, a.mask ? h("span", { class: "mask" }, ` ••${a.mask}`) : null), h("div", { class: "sub" }, sub),
       accountRowExtras(a, g)),
     rowMoney(a.balance), accountMenuItems(a));
 }
@@ -179,8 +179,12 @@ function menu(g, view) {
   items.push(h("button", { type: "button", "aria-label": `${view.open.has(g.key) ? "Hide details for" : "Details for"} ${g.name}`,
     onclick: (e) => { close(e); view.toggleDetails(g.key); } }, view.open.has(g.key) ? "Hide details" : "Details"));
   for (const l of g.links) {
-    items.push(h("button", { type: "button", class: "caution", "aria-label": `Remove the ${g.name} ${SOURCE[l.provider] || l.provider} connection`, onclick: (e) => { e.stopPropagation(); const b = e.currentTarget; armed(b, "Click again to remove", () => { const d = b.closest("details"); if (d) d.open = false; removeLink(l); }); } },
-      g.links.length > 1 ? `Remove the ${SOURCE[l.provider] || l.provider} connection` : "Remove connection"));
+    // One SimpleFIN link can hold several banks; removing it from one bank's card removes all of them, so say so.
+    const banks = l.provider === "simplefin" ? (l.banks || []).length : 0;
+    const label = banks > 1 ? `Remove the SimpleFIN link (all ${banks} banks)`
+      : g.links.length > 1 ? `Remove the ${SOURCE[l.provider] || l.provider} connection` : "Remove connection";
+    items.push(h("button", { type: "button", class: "caution", "aria-label": banks > 1 ? `Remove the SimpleFIN link and all ${banks} of its banks` : `Remove the ${g.name} ${SOURCE[l.provider] || l.provider} connection`, onclick: (e) => { e.stopPropagation(); const b = e.currentTarget; armed(b, banks > 1 ? `Click again to remove all ${banks} banks` : "Click again to remove", () => { const d = b.closest("details"); if (d) d.open = false; removeLink(l); }); } },
+      label));
   }
   const close = (e) => { const d = e.currentTarget.closest("details"); if (d) d.open = false; };
   return h("details", { class: "menu" },

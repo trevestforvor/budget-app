@@ -11,6 +11,8 @@ struct DashboardCoverage: Encodable, Sendable {
     struct Account: Encodable, Sendable {
         var id: String
         var name: String
+        /// The person's name for it (L3), shown over the bank's `name`; omitted when unset.
+        var nickname: String?
         var institution: String
         var mask: String?
         var kind: AccountKind
@@ -52,7 +54,7 @@ struct DashboardCoverage: Encodable, Sendable {
                 let opened = first[account.id].map { key($0, calendar) }
                 // "2025-03" sorts like the month it names, so string order is month order.
                 let gaps = opened.map { opened in keys.indices.filter { $0 < keys.count - 1 && keys[$0] >= opened && row[$0] == 0 }.map { keys[$0] } } ?? []
-                return Account(id: account.id, name: account.name, institution: account.institution, mask: account.mask, kind: account.kind,
+                return Account(id: account.id, name: account.name, nickname: account.nickname, institution: account.institution, mask: account.mask, kind: account.kind,
                                source: account.source, counts: row, firstRow: first[account.id], lastRow: last[account.id], firstMonth: opened, gaps: gaps)
             }
         return DashboardCoverage(months: keys, accounts: accounts)

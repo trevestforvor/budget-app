@@ -4,6 +4,7 @@ import { fill, h, store, cached, heavy, pageHead, sectionHead, button, busy, cal
   institutionGroups, syncProblem, syncNow, describeSync, reportError, toast, bigMoney, money, plural, spell, count, dateShort, ago, skeleton,
   providerName, TIERS, tierName, emptyState } from "./core.js";
 import { reconnect, reconnectLabel } from "./accounts.js";
+import { needsNewLink } from "./linkerrors.js";
 import { flowCard } from "./flow.js";
 
 const TONE_RANK = { act: 0, watch: 1, info: 2 };
@@ -17,7 +18,8 @@ export function attentionItems() {
   for (const g of institutionGroups()) {
     const st = g.state;
     if (st.tone === "act") {
-      items.push({ tone: "act", title: `${g.name} needs you to sign in again`,
+      // The same words as the Accounts banner: an Item that's gone is linked again, not signed in to.
+      items.push({ tone: "act", title: st.problem && needsNewLink(st.problem) ? `${g.name} needs to be linked again` : `${g.name} needs you to sign in again`,
         sub: [g.accounts.length ? plural(g.accounts.length, "account") : null, st.lastSync ? `nothing new since ${dateShort(st.lastSync)}` : null].filter(Boolean).join(" · "),
         action: { label: reconnectLabel(st.problem), run: (el) => reconnect(st.problem, el) } });
     } else if (st.tone === "watch" && st.problem) {
@@ -68,7 +70,7 @@ function coverageItems() {
   if (!last || new Date().getDate() <= 7) return [];
   return coverage.accounts.filter((a) => a.source === "fileImport" && a.gaps.includes(last)).map((a) => {
     const older = a.gaps.length - 1;
-    return { tone: "watch", title: `No ${a.name} statement for ${monthName(last)} yet`,
+    return { tone: "watch", title: `No ${a.nickname || a.name} statement for ${monthName(last)} yet`,
       sub: `Download it from ${a.institution}'s website and drop it in Imports.${older ? ` ${plural(older, "earlier month")} ${older === 1 ? "has" : "have"} no transactions either.` : ""}`,
       action: { label: "Import", href: `#/imports?account=${encodeURIComponent(a.id)}` } };
   });

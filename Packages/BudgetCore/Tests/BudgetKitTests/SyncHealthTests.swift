@@ -65,7 +65,8 @@ struct SyncHealthTests {
     @Test("An imported statement isn't a sync: it never stamps lastSyncedAt")
     func fileImportDoesNotStampLastSynced() async throws {
         let api = HealthFixture.api(clock: SyncHealthClock(HealthFixture.now))
-        _ = try await api.ingest(SourceSnapshot(source: .fileImport, accounts: [HealthFixture.source("stmt", balanceDate: HealthFixture.day(3))], warnings: []), batchID: "f1")
+        // A "csv-" account: since L2 (P0.6) a statement names its account, never makes one from its own number.
+        _ = try await api.ingest(SourceSnapshot(source: .fileImport, accounts: [HealthFixture.source("csv-stmt", balanceDate: HealthFixture.day(3))], warnings: []), batchID: "f1")
         let account = try #require(await api.accountList().first)
         #expect(account.lastSyncedAt == nil)
         // Nor does it give the account a balance date: the import's stamp is the day it ran, not the statement's.

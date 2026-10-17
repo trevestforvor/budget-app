@@ -14,3 +14,4 @@ deploy/olares/budgetapi/deploy.env
 deploy/docker/budget.env
 deploy/docker/Caddyfile
 deploy/docker/backups/
+.dd/

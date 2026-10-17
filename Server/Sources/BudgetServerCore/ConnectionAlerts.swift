@@ -48,9 +48,11 @@ enum ConnectionAlerts {
 
     /// Every push the server's links and accounts call for now, most pressing first. Dates in the copy are in `timeZone`
     /// (the phone's); the keys never depend on it. `reconnect` is how each link is repaired (see `linkAlerts`).
-    static func all(links: [StoredLink], health: [AccountHealth], now: Date, timeZone: TimeZone,
+    /// `accounts` name the accounts in a stale push; without them it says "An account".
+    static func all(links: [StoredLink], health: [AccountHealth], accounts: [Account] = [], now: Date, timeZone: TimeZone,
                     reconnect: (StoredLink) -> ReconnectMethod = { ReconnectMethod.for($0, phoneCapable: false) }) -> [ConnectionAlert] {
-        let alerts = linkAlerts(links, now: now, timeZone: timeZone, reconnect: reconnect) + healthAlerts(health, links: links, now: now)
+        let alerts = linkAlerts(links, now: now, timeZone: timeZone, reconnect: reconnect)
+            + healthAlerts(health, links: links, now: now, accounts: accounts, timeZone: timeZone)
         // A stable sort: the collectors' own order holds within a kind.
         return alerts.enumerated().sorted { ($0.element.kind.rank, $0.offset) < ($1.element.kind.rank, $1.offset) }.map(\.element)
     }
@@ -147,12 +149,12 @@ public actor ConnectionAlertSender {
         let now = clock()
         guard let links = try? await store.links(), let devices = try? await morning.devices() else { return }
         guard await push.credentials() != nil else {
-            logWouldPush(links: links, health: await health(), now: now)
+            logWouldPush(links: links, health: await health().health, now: now)
             return
         }
         let listening = devices.filter { ConnectionAlerts.listens($0) && PaceAlertSender.awake($0, now: now) }
         guard !listening.isEmpty else { return }
-        let health = await health()
+        let (health, accounts) = await health()
         let capable = await ReconnectMethod.phoneCapable(settings: settings, providers: sync.providers, sealer: sync.sealer)
         let reconnect: (StoredLink) -> ReconnectMethod = { ReconnectMethod.for($0, phoneCapable: capable) }
 
@@ -168,7 +170,7 @@ public actor ConnectionAlertSender {
         for device in listening {
             let zone = TimeZone(identifier: device.timeZone) ?? ConnectionAlerts.utc
             var marked = sent[device.token] ?? [:]
-            let alerts = ConnectionAlerts.all(links: links, health: health, now: now, timeZone: zone, reconnect: reconnect)
+            let alerts = ConnectionAlerts.all(links: links, health: health, accounts: accounts, now: now, timeZone: zone, reconnect: reconnect)
             ConnectionAlerts.absorb(alerts, into: &marked, now: now)
             let due = ConnectionAlerts.due(alerts, sent: marked)
             for alert in due.prefix(PaceAlertSender.perCheck) {
@@ -203,11 +205,15 @@ public actor ConnectionAlertSender {
         if sent != saved { _ = await save(sent) }
     }
 
-    /// How fresh each account is, from the overview; empty until sync health is built or when the ledger can't be read.
-    private func health() async -> [AccountHealth] {
-        do { return try await api.overview().accountHealth ?? [] } catch {
+    /// How fresh each account is, and the accounts to name in a stale push, from the overview; empty when the ledger
+    /// can't be read.
+    private func health() async -> (health: [AccountHealth], accounts: [Account]) {
+        do {
+            let overview = try await api.overview()
+            return (overview.accountHealth ?? [], overview.accounts)
+        } catch {
             logger.error("connection alerts: couldn't read the ledger: \(error)")
-            return []
+            return ([], [])
         }
     }
 

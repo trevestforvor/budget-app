@@ -110,7 +110,7 @@ export function openRule({ summary = null, prefill = {}, onSaved } = {}) {
   const max = h("input", { class: "input", inputmode: "decimal", placeholder: "At most $", value: m.maxAmount || "" });
   const byBank = Object.entries(store.overview.accounts.reduce((all, a) => ((all[a.institution] ||= []).push(a), all), {}));
   const account = h("select", { class: "input" }, h("option", { value: "" }, "Any account"),
-    byBank.map(([bank, list]) => h("optgroup", { label: bank }, list.map((a) => h("option", { value: a.id }, `${a.name}${a.mask ? ` ••${a.mask}` : ""}`)))));
+    byBank.map(([bank, list]) => h("optgroup", { label: bank }, list.map((a) => h("option", { value: a.id }, `${a.nickname || a.name}${a.mask ? ` ••${a.mask}` : ""}`)))));
   account.value = m.accountID || "";
   const target = h("select", { class: "input", id: "rule-target" });
   // "New category…" opens the fields for one under the list; saving makes it, then the rule that files under it.
