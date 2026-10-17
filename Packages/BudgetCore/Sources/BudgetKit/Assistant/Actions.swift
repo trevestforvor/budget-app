@@ -550,6 +550,21 @@ public struct ProposedAction: Identifiable, Hashable, Sendable, Codable {
         self.id = id; self.action = action; self.title = title; self.detail = detail; self.effects = effects
         self.basis = basis; self.matchCount = matchCount; self.sample = sample
     }
+
+    /// Above this many rows, a card shows the count and a sample before it applies.
+    public static let reviewAbove = 5
+
+    /// A card for `action` from its preview: what it would do, the basis to apply it with, and above `reviewAbove`
+    /// rows a sample in words. The ledger proposes with it, and the phone refreshes a stale card with it.
+    public init(id: String = UUID().uuidString, action: AppAction, preview: ActionPreview, timeZone: TimeZone,
+                categoryName: (String) -> String?) {
+        let reviews = (preview.matchCount ?? 0) > Self.reviewAbove
+        self.init(id: id, action: action, title: preview.title, detail: preview.detail, effects: preview.effects, basis: preview.basis,
+                  matchCount: preview.matchCount, sample: reviews ? preview.sampleLines(timeZone: timeZone, categoryName: categoryName) : nil)
+    }
+
+    /// Whether applying it first shows the count and the sample.
+    public var needsReview: Bool { !action.isClientOnly && (matchCount ?? 0) > Self.reviewAbove }
 }
 
 public struct ActionResult: Hashable, Sendable, Codable {
@@ -588,6 +603,16 @@ public struct ActionPreview: Hashable, Sendable, Codable {
                 matchCount: Int? = nil, changeCount: Int? = nil, conflicts: [String] = []) {
         self.title = title; self.detail = detail; self.effects = effects; self.sample = sample
         self.matchCount = matchCount; self.changeCount = changeCount; self.conflicts = conflicts
+    }
+
+    /// The sample in words, one line a row: "Oct 3 · Blue Bottle · −$5.40 · Dining".
+    public func sampleLines(timeZone: TimeZone, categoryName: (String) -> String?) -> [String] {
+        var day = Date.FormatStyle.dateTime.month(.abbreviated).day()
+        day.timeZone = timeZone
+        return sample.map { row in
+            let category = row.categorization.flatMap { categoryName($0.categoryID) } ?? "Not filed"
+            return [row.postedAt.formatted(day), row.merchant, row.amount.formatted(), category].joined(separator: " · ")
+        }
     }
 }
 

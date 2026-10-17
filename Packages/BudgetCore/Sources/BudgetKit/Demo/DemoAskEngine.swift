@@ -597,8 +597,7 @@ struct DemoAskEngine {
 
     private func proposal(_ action: AppAction, _ cid: String, lead: String) -> AskReply {
         do {
-            let preview = try ledger.preview(action)
-            let proposed = ProposedAction(id: UUID().uuidString, action: action.proposedByAssistant(), title: preview.title, detail: preview.detail, effects: preview.effects)
+            let proposed = try ledger.proposal(for: action.proposedByAssistant())
             let args = String(decoding: try action.argumentsJSON(), as: UTF8.self)
             return reply(cid, text: lead, tools: [ToolCall(id: "w1", name: action.toolName, arguments: args)], actions: [proposed])
         } catch {

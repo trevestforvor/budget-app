@@ -15,9 +15,8 @@ struct DemoToolbox: AgentToolbox {
     var assistantContext: AssistantContext { ledger.assistantContext }
 
     func propose(_ action: AppAction) async throws -> ProposedAction {
-        let action = action.proposedByAssistant()
-        let preview = try ledger.preview(action)
-        return ProposedAction(id: UUID().uuidString, action: action, title: preview.title, detail: preview.detail, effects: preview.effects)
+        // The toolbox holds the ledger as it was when asked, so the basis is the one the proposal was made against.
+        try ledger.proposal(for: action.proposedByAssistant())
     }
 
     func run(read tool: String, arguments: JSONValue) async throws -> (result: JSONValue, figures: [Figure]) {
