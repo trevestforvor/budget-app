@@ -176,7 +176,8 @@ extension Ledger {
                 if let index = accounts.firstIndex(where: { $0.id == accountID }) {
                     accounts[index].balance = sourceAccount.balance
                     accounts[index].name = sourceAccount.name
-                    if let mask = sourceAccount.mask { accounts[index].mask = mask }
+                    // The last digits the person set stay; so do the kind and the nickname (never written here).
+                    if let mask = sourceAccount.mask, accounts[index].maskSetByPerson != true { accounts[index].mask = mask }
                     accounts[index].balanceAsOf = sourceAccount.balanceDate
                     if snapshot.source != .fileImport && snapshot.accountProblems[sourceAccount.externalID] == nil { accounts[index].lastSyncedAt = now }
                     report.accountsUpdated += 1

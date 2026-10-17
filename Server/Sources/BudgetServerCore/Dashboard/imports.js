@@ -1,7 +1,7 @@
 // Imports: one table for one file or a year of them (preview, then import), and the history of every
 // import and sync with its warnings and an Undo that says what it removes.
 import { fill, h, api, store, heavy, cached, pageHead, sectionHead, button, busy, armed, isArmed, callout, details, tag, icon, afterWrite,
-  reportError, toast, money, count, plural, dateShort, span, KIND, SOURCE, emptyState, loadInto } from "./core.js";
+  reportError, toast, money, count, plural, dateShort, span, KIND, SOURCE, emptyState, loadInto, accountName } from "./core.js";
 import { ordersRegion } from "./orders.js";
 
 const NEW = "__new__";
@@ -75,7 +75,7 @@ function accountSelect(item, view) {
   const select = h("select", { class: "input", "aria-label": `Account for ${item.name}`, disabled: !!item.done,
     onchange: (e) => { item.accountID = e.target.value; item.guessed = false; item.preview = null; item.error = null; view.renderTable(); } },
     h("option", { value: "" }, "Choose an account…"),
-    accounts.map((a) => h("option", { value: a.id }, `${a.institution} · ${a.name}${a.mask ? ` ••${a.mask}` : ""}`)),
+    accounts.map((a) => h("option", { value: a.id }, `${a.institution} · ${accountName(a)}`)),
     h("option", { value: NEW }, "New account…"));
   select.value = item.accountID;
   return select;

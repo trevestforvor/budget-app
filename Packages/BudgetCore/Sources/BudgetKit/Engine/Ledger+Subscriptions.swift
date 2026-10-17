@@ -40,7 +40,7 @@ extension Ledger {
             status: status, amount: last.amount, previousAmount: previous,
             monthlyCost: Money(minorUnits: Int64(monthly.rounded())), yearlyCost: Money(minorUnits: Int64((monthly * 12).rounded())),
             lastCharged: last.date, nextExpected: next, charges: billings.count, categoryID: last.rows[0].categorization?.categoryID,
-            accountName: accounts.first { $0.id == last.rows[0].accountID }.map { "\($0.institution) \($0.name)" },
+            accountName: accounts.first { $0.id == last.rows[0].accountID }.map { "\($0.institution) \($0.displayName)" },
             setByPerson: choice.map { $0.cadence != nil || $0.kind != nil },
             names: series.names.count > 1 ? series.names : nil)
     }

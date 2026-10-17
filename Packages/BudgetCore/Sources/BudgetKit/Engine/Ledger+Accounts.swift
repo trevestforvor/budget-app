@@ -40,7 +40,7 @@ extension Ledger {
 
     /// "Harbor Total Checking", or just "Keystone Mastercard" when the name already says where it is.
     static func fullName(_ account: Account) -> String {
-        account.name.localizedCaseInsensitiveContains(account.institution) ? account.name : "\(account.institution) \(account.name)"
+        account.displayName.localizedCaseInsensitiveContains(account.institution) ? account.displayName : "\(account.institution) \(account.displayName)"
     }
 
     // MARK: - [lane S] institutionLinks

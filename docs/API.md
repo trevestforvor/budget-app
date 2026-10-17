@@ -408,7 +408,11 @@ Not built yet.
 
 ### Accounts: PATCH
 
-Not built yet.
+The person's own corrections to an account (server 0.6.0, `ServerStatus.accountEditsSince`). `Account` carries three optional fields, absent until the person sets them, so older apps and stored ledgers decode unchanged: `nickname` (names the account everywhere: `displayName` is `nickname ?? name`, and `shortLabel`, rule descriptions, the CSV export, Upcoming, Net worth and the dashboard use it, while the bank's `name` keeps updating underneath), `kindSetByPerson` (a provider's guess corrected; SimpleFIN never says what kind an account is) and `maskSetByPerson` (a sync no longer replaces those last digits). A sync never changes an existing account's kind.
+
+| Method | Path | Body | Returns |
+|---|---|---|---|
+| PATCH | `/v1/accounts/{id}` | `AccountChange {kind?, nickname?, mask?}` | `AccountChangeResult {account, warning?, sentToReview}`. On both listeners: the phone with its token, the dashboard with its header. The id is one path segment, percent-encoded when it needs to be. A field left out stays as it is; an empty `nickname` or `mask` clears it (a cleared mask takes the provider's digits again from the next sync). `nickname` is trimmed, at most 60 characters; `mask` is 2 to 5 digits. Sending `kind`, even unchanged, marks it as the person's. A kind change pairs old matched transfers again (card-to-card never pairs), and making an account a card sends its money in filed as Income, but not by the person or a rule, back to review; `sentToReview` counts those rows, and they aren't sent back if the kind is changed again. `warning` says what to check: a card with a positive balance (signs are never flipped). Undo is a second PATCH with the previous values. 404 for an unknown account; 422 for a nickname or digits it won't keep, changing nothing |
 
 ### Duplicates and merges
 
