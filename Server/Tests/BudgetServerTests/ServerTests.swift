@@ -66,6 +66,13 @@ struct ServerTests {
             try await client.execute(uri: "/health", method: .get) { #expect($0.status == .ok) }
             try await client.execute(uri: "/v1/overview", method: .get) { #expect($0.status == .unauthorized) }
             try await client.execute(uri: "/v1/overview", method: .get, headers: [.authorization: "Bearer wrong"]) { #expect($0.status == .unauthorized) }
+            // The router drops empty segments, so these would reach /v1 handlers: they're refused before any route.
+            for uri in ["//v1/overview", "///v1/transactions", "//v1//links", "/v1//overview"] {
+                try await client.execute(uri: uri, method: .get) { #expect($0.status == .badRequest, "\(uri)") }
+            }
+            try await client.execute(uri: "//v1/admin/reset", method: .post, body: TestServer.body(#"{"confirm":"erase my ledger"}"#)) {
+                #expect($0.status == .badRequest)
+            }
             try await client.execute(uri: "/v1/overview", method: .get, headers: TestServer.auth) { response in
                 #expect(response.status == .ok)
                 let overview = try RemoteBudgetAPI.decoder.decode(Overview.self, from: Data(response.body.readableBytesView))
@@ -782,5 +789,23 @@ struct ServerTests {
         #expect(c.plaid?.environment == .production)
         #expect(c.timeZone.identifier == "America/New_York")
         #expect(throws: ServerConfig.ConfigError.self) { try ServerConfig.fromEnvironment(["PLAID_CLIENT_ID": "a", "PLAID_SECRET": "b", "PLAID_ENV": "development"]) }
+    }
+}
+
+@Suite("Paths the router reads differently")
+struct DoubleSlashGuardTests {
+    @Test("A dashboard write through //v1 still needs the dashboard header")
+    func dashboardWrite() async throws {
+        let (app, service) = try await TestServer.app(surface: .dashboard)
+        let before = await service.api.state.transactions.count
+        try await app.test(.router) { client in
+            for uri in ["//v1/admin/reset", "/v1//admin/reset"] {
+                try await client.execute(uri: uri, method: .post, headers: [.contentType: "text/plain", .origin: "https://evil.example"],
+                                         body: TestServer.body(#"{"confirm":"erase my ledger","removeLinks":true}"#)) {
+                    #expect($0.status == .badRequest, "\(uri)")
+                }
+            }
+        }
+        #expect(await service.api.state.transactions.count == before)
     }
 }

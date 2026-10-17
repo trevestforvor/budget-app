@@ -71,7 +71,7 @@ extension PostgresStoreTests {
                                   rawDescription: "AplPay AMC 0001 EXAMPLE", amount: Money(-23.45), categorization: nil, isPending: false, source: .fileImport),
             ]
             try await store.replaceLedger(state)
-            let api = Self.api(state, store)
+            let api = try await Self.api(state, store)
             #expect(try await api.importDuplicates(apply: true).removed == 1)
             #expect(try await Self.count(store, "SELECT count(*) FROM budget_rows") == 1)
             #expect(try await Self.count(store, "SELECT count(*) FROM budget_merges") == 1)

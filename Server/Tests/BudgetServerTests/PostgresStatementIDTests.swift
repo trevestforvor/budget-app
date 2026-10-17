@@ -14,9 +14,13 @@ extension PostgresStoreTests {
         return ids
     }
 
-    static func api(_ state: LedgerState, _ store: PostgresStore) -> LedgerBudgetAPI {
-        LedgerBudgetAPI(state: state, calendar: .current, chatModel: nil, decisions: DecisionRouting(), persistence: store,
-                        deployment: DeploymentInfo(endpoint: "t", version: "t", sources: [.fileImport], institutions: []))
+    /// Starts the API over `state` (already stored) the way `BudgetServerApp.prepare` does: loading applies the one-time
+    /// upgrades, and `persistUpgrades` writes them back once, so the API's later diffs start from what the store holds.
+    static func api(_ state: LedgerState, _ store: PostgresStore) async throws -> LedgerBudgetAPI {
+        let api = LedgerBudgetAPI(state: state, calendar: .current, chatModel: nil, decisions: DecisionRouting(), persistence: store,
+                                  deployment: DeploymentInfo(endpoint: "t", version: "t", sources: [.fileImport], institutions: []))
+        try await api.persistUpgrades(from: state)
+        return api
     }
 
     static var ids: StatementIDs { StatementIDKeys.make(sealer: try! TokenSealer(base64Key: TestServer.key), persistent: true)! }
@@ -27,7 +31,7 @@ extension PostgresStoreTests {
             let legacy = StatementIDMigrationTests.legacy()
             try await store.replaceLedger(legacy)
             let before = try await Self.rowIDs(store)
-            let api = Self.api(legacy, store)
+            let api = try await Self.api(legacy, store)
             let done = try await api.hashStatementIDs(Self.ids)
             #expect(done.report.rows == 4)
             let after = try await Self.rowIDs(store)
@@ -45,19 +49,20 @@ extension PostgresStoreTests {
         try await withStore { store in
             let legacy = StatementIDMigrationTests.legacy()
             try await store.replaceLedger(legacy)
+            let api = try await Self.api(legacy, store)
             let before = try await Self.rowIDs(store)
+            let stored = try #require(try await store.loadLedger())
             // The deletes run after every upsert in `save`; failing the first aborts the transaction there.
             try await store.client.query(PostgresQuery(unsafeSQL: """
                 CREATE OR REPLACE FUNCTION budget_test_fail() RETURNS trigger AS $$ BEGIN RAISE EXCEPTION 'injected failure'; END $$ LANGUAGE plpgsql
                 """))
             try await store.client.query("DROP TRIGGER IF EXISTS budget_test_fail ON budget_rows")
             try await store.client.query("CREATE TRIGGER budget_test_fail BEFORE DELETE ON budget_rows FOR EACH ROW EXECUTE FUNCTION budget_test_fail()")
-            let api = Self.api(legacy, store)
             await #expect(throws: (any Error).self) { try await api.hashStatementIDs(Self.ids) }
             try await store.client.query("DROP TRIGGER IF EXISTS budget_test_fail ON budget_rows")
             try await store.client.query("DROP FUNCTION IF EXISTS budget_test_fail()")
             #expect(try await Self.rowIDs(store) == before)
-            #expect(Self.sorted(try #require(try await store.loadLedger())) == Self.sorted(legacy))
+            #expect(Self.sorted(try #require(try await store.loadLedger())) == Self.sorted(stored))
             #expect(await api.statementIDAudit() == StatementIDAudit(accounts: 1, rows: 4, rules: 0))
         }
     }
