@@ -240,7 +240,7 @@ struct RuleTests {
     @Test("Matched transfers and statement rows are filed with their own tiers, not as the person's rule")
     func honestProvenance() async throws {
         let api = IncomeTransferTests.api(extra: [IncomeTransferTests.row("harbor-pay", "freedom", 19, 1250, "AUTOMATIC PAYMENT - THANK", category: "income")])
-        let report = try await api.ingest(try FileImport.parse(IncomeTransferTests.qfx), batchID: "qfx", into: "cash")
+        let report = try await api.ingest(try FileImport.parse(IncomeTransferTests.qfx, ids: .test), batchID: "qfx", into: "cash")
         #expect(report.byRule == 0 && report.byTransferMatch == 1 && report.byStatement == 2)
         let rows = try await api.transactions(TransactionFilter(limit: 50))
         let withdrawal = try #require(rows.first { $0.rawDescription == "Withdrawal" && $0.amount == Money(-1250) })
@@ -526,12 +526,12 @@ struct ReviewSettingsTests {
     @Test("Review reasons say why: money out the model called income, and a descriptor that names no merchant with no other side found")
     func honestReasons() async throws {
         let sure = IncomeTransferTests.api(DecisionRouting(local: StubDecisions(["DEPOSIT": ("income", 0.97), "WITHDRAWAL": ("income", 0.97)])))
-        _ = try await sure.ingest(try FileImport.parse(IncomeTransferTests.qfx), batchID: "q", into: "cash")
+        _ = try await sure.ingest(try FileImport.parse(IncomeTransferTests.qfx, ids: .test), batchID: "q", into: "cash")
         let held = try await sure.reviewQueue()
         #expect(held.count == 2 && held.allSatisfy { $0.reason == "The decision model called this income, but money going out is never income." })
 
         let off = IncomeTransferTests.api()
-        _ = try await off.ingest(try FileImport.parse(IncomeTransferTests.qfx), batchID: "q", into: "cash")
+        _ = try await off.ingest(try FileImport.parse(IncomeTransferTests.qfx, ids: .test), batchID: "q", into: "cash")
         let reasons = Set(try await off.reviewQueue().map(\.reason))
         #expect(reasons == ["“Deposit” doesn't name a merchant, and no matching withdrawal turned up in your other accounts within 5 days.",
                             "“Withdrawal” doesn't name a merchant, and no matching deposit turned up in your other accounts within 5 days."])

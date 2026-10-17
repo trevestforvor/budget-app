@@ -286,18 +286,18 @@ struct FileImportTests {
         </BANKTRANLIST><LEDGERBAL><BALAMT>-412.50<DTASOF>20260925</LEDGERBAL>
         </CCSTMTRS></CCSTMTTRNRS></CREDITCARDMSGSRSV1></OFX>
         """
-        let snapshot = try FileImport.parse(ofx)
+        let snapshot = try FileImport.parse(ofx, ids: .test)
         let account = try #require(snapshot.accounts.first)
         #expect(account.kind == .credit)
         #expect(account.name == "Card ••1234")
         #expect(account.balance == Money(-412.50))
         #expect(account.transactions.map(\.amount) == [Money(-23.50), Money(500)])
-        #expect(account.transactions[0].externalID == "ofx-379700001234-320260924001")
+        #expect(account.transactions[0].externalID == StatementIDs.test.rowExternalID(legacy: "ofx-379700001234-320260924001"))
     }
 
     @Test("Useful errors for unreadable files")
     func errors() {
         #expect(throws: FileImport.ParseError.self) { try FileImport.parse("Foo,Bar\n1,2\n") }
-        #expect(throws: FileImport.ParseError.self) { try FileImport.parse("<OFX><BANKMSGSRSV1></OFX>") }
+        #expect(throws: FileImport.ParseError.self) { try FileImport.parse("<OFX><BANKMSGSRSV1></OFX>", ids: .test) }
     }
 }

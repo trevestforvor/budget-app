@@ -28,3 +28,34 @@ extension LedgerBudgetAPI {
         return Set(allHidden.filter(\.value).keys)
     }
 }
+
+// MARK: Statement ids (P0.6)
+
+extension LedgerBudgetAPI {
+    /// What the statement-id upgrade would rename now, counted (no key needed, nothing changed).
+    public func statementIDAudit() -> StatementIDAudit { ledger.statementIDAudit() }
+
+    /// Takes account numbers out of statement ids, in one write: the old rows are deleted and the new ones written in
+    /// one transaction, and a failed save leaves the ledger (in memory too) as it was. Running it again changes nothing.
+    public func hashStatementIDs(_ ids: StatementIDs) async throws -> StatementIDMigration {
+        tick()
+        return try await write { ledger.hashStatementIDs(ids) }
+    }
+
+    /// Runs every kept conversation's stored JSON through `scrub` and saves those it changed (none with `dryRun`).
+    /// Returns how many it changed. The server runs it once at start, before anyone can ask anything.
+    public func rewriteChats(dryRun: Bool = false, _ scrub: @Sendable (String) -> String) async throws -> Int {
+        let encoder = JSONEncoder()
+        encoder.outputFormatting = [.sortedKeys, .withoutEscapingSlashes]
+        var changed = 0
+        for summary in try await chatStore.chatSummaries() {
+            guard let record = try await chatStore.chatRecord(id: summary.id) else { continue }
+            let text = String(decoding: try encoder.encode(record), as: UTF8.self)
+            let scrubbed = scrub(text)
+            guard scrubbed != text else { continue }
+            changed += 1
+            if !dryRun { try await chatStore.saveChatRecord(try JSONDecoder().decode(ChatSessionRecord.self, from: Data(scrubbed.utf8))) }
+        }
+        return changed
+    }
+}

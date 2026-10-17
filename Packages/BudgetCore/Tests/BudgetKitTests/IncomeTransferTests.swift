@@ -40,7 +40,7 @@ struct IncomeTransferTests {
 
     @Test("A description-less QFX gets names from its types; interest and transfers are settled by the statement")
     func typedRows() throws {
-        let rows = try FileImport.parse(Self.qfx).accounts[0].transactions
+        let rows = try FileImport.parse(Self.qfx, ids: .test).accounts[0].transactions
         #expect(rows.map(\.description) == ["Deposit", "Withdrawal", "Interest", "Transfer", "Withdrawal"])
         #expect(rows[2].providerCategory == "INCOME_INTEREST_EARNED" && rows[3].providerCategory == "TRANSFER_OUT")
     }
@@ -51,7 +51,7 @@ struct IncomeTransferTests {
             Self.row("harbor-pay", "freedom", 19, 1250, "AUTOMATIC PAYMENT - THANK", category: "income"), // mis-filed earlier
             Self.row("gold-refund", "gold", 23, 45, "SWEETGREEN NOMAD", category: "dining"),              // a refund, same amount as a withdrawal
         ])
-        let report = try await api.ingest(try FileImport.parse(Self.qfx), batchID: "qfx", into: "cash")
+        let report = try await api.ingest(try FileImport.parse(Self.qfx, ids: .test), batchID: "qfx", into: "cash")
         #expect(report.rowsAdded == 5)
         let rows = Dictionary(uniqueKeysWithValues: try await api.transactions(TransactionFilter(limit: 50)).map { ($0.rawDescription + "|\($0.amount.minorUnits)", $0) })
         #expect(rows["Withdrawal|-125000"]?.categorization?.categoryID == "transfer")
@@ -67,7 +67,7 @@ struct IncomeTransferTests {
     func incomeOnlyComesIn() async throws {
         let model = StubDecisions(["DEPOSIT": ("income", 0.97), "WITHDRAWAL": ("income", 0.97)])
         let api = Self.api(DecisionRouting(local: model))
-        _ = try await api.ingest(try FileImport.parse(Self.qfx), batchID: "qfx", into: "cash")
+        _ = try await api.ingest(try FileImport.parse(Self.qfx, ids: .test), batchID: "qfx", into: "cash")
         let rows = try await api.transactions(TransactionFilter(limit: 50))
         let deposit = try #require(rows.first { $0.rawDescription == "Deposit" })
         #expect(deposit.categorization?.categoryID == "income" && deposit.categorization?.needsReview == false)

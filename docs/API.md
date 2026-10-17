@@ -400,6 +400,12 @@ Not built yet.
 | DELETE | `/v1/imports/{batch}[?acknowledge=returning]` | — | `{removed}`. 409 with the plan's message, changing nothing, when the verdict is `refuse`, or `undoReturns` without `?acknowledge=returning`. The plan is worked out inside the same ledger write as the removal, so no sync slips in between. The record is marked `rolledBack` only on success |
 | POST | `/v1/imports/{batch}/hide` | — | `ActionResult` (with `undo`, an `editTransactions` that shows them again): hides the batch's rows from every total (balances keep them) and sets the record's `hiddenAt` whenever the batch's rows end up all hidden (so a batch already hidden gets marked, with no `undo`, and a batch with no rows left doesn't). A hidden row stays hidden when its provider sends it again |
 
+**Statement ids (server 0.6.0).** No id holds an account number. An OFX or QFX row's id is `fileImport:<account id>:ofxh1-<20 hex>`, a keyed hash (HMAC-SHA256 under a key derived from `BUDGET_TOKEN_KEY`) of the id 0.5.x made, `ofx-<ACCTID>-<FITID>`; an account an older untargeted OFX import named after its number becomes `fileImport:stmt-h1-<16 hex>`. So a statement, OFX as well as CSV, needs `accountID` or `options.accountName` (a new account; an OFX and a CSV with the same institution and name share it); without either it's a 422, "Statement files need an account". The account's `mask` is the number's last four digits. A server with Postgres and no `BUDGET_TOKEN_KEY` refuses OFX and QFX (422) and still takes CSV. While the ledger's own ids are being upgraded at start, or after that upgrade failed, an OFX or QFX import is a 503 ("try again after a restart"); CSV imports carry on. Import labels (`ImportRecord.label`, the file name) and the report's warnings and notes keep only the last four digits of any run of six or more.
+
+| Method | Path | Body | Response |
+|---|---|---|---|
+| GET | `/dash/maintenance/statement-ids` | — | Dashboard only. `{accounts, rows, rules, chats, labels, importsOpen}`: what the start-up upgrade would still rename (counts only). Non-zero only on a server started with `BUDGET_STATEMENT_ID_MIGRATION=audit` (which counts, logs and serves this but changes nothing, and keeps OFX imports off), or one whose upgrade failed; a normal start upgrades before it serves |
+
 ### Accounts: PATCH
 
 Not built yet.

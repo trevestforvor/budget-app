@@ -207,7 +207,7 @@ struct NetWorthTests {
         #expect(try await api.balanceHistory.balanceSnapshots().count == 1)
 
         let file = SourceSnapshot(source: .fileImport, accounts: [
-            SourceAccount(externalID: "stmt", institution: "Keystone", institutionDomain: nil, name: "Card", kind: .credit, balance: Money(-10),
+            SourceAccount(externalID: "csv-keystone-card", institution: "Keystone", institutionDomain: nil, name: "Card", kind: .credit, balance: Money(-10),
                           availableBalance: nil, balanceDate: EngineFixture.now, transactions: [], holdings: []),
         ], warnings: [])
         _ = try await api.ingest(file, batchID: "f1")

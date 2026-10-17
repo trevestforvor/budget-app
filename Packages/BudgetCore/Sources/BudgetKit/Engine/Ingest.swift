@@ -162,6 +162,11 @@ extension Ledger {
                 report.warnings.append("Set aside \(label): it's in \(sourceAccount.balance.currencyCode), and Budget only tracks \(Self.homeCurrency) for now, so its transactions weren't added.")
                 continue
             }
+            // No code path may make an account from a statement's own account number again (P0.6): a file names an
+            // existing account or a new one by name.
+            guard snapshot.source != .fileImport || targetAccountID != nil || sourceAccount.externalID.hasPrefix("csv-") else {
+                throw BudgetAPIError.rejected("Choose the account this statement belongs to, or name a new one.")
+            }
             let accountID: String
             if let targetAccountID {
                 guard accounts.contains(where: { $0.id == targetAccountID }) else { throw BudgetAPIError.rejected("Unknown account \(targetAccountID).") }
@@ -188,7 +193,10 @@ extension Ledger {
             // Rows already on the account from a *different* source are the only fuzzy-duplicate
             // candidates: a source's own rows are told apart by id (two identical coffees on one day
             // are two rows), and each ledger row can absorb at most one incoming row.
-            var candidates = transactions.filter { $0.accountID == accountID && $0.source != snapshot.source }
+            // Statement rows whose ids were made with an older key can't match by id, so they're candidates too.
+            var candidates = transactions.filter {
+                $0.accountID == accountID && ($0.source != snapshot.source || (snapshot.statementKeyChanged && Self.isHashedStatementRow($0)))
+            }
             var added: [LedgerTransaction] = []
             var addedIDs = Set<String>()
             // Posted rows that took over their pending row's category, by the pending row's index.

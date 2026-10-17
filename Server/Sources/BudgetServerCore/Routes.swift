@@ -463,16 +463,20 @@ func addLinkRoutes(_ router: Router<BasicRequestContext>, _ service: BudgetServi
 func addImportRoutes(_ router: Router<BasicRequestContext>, _ service: BudgetService) {
     router.get("/v1/imports") { _, _ in try HTTP.json(await ImportUndo.annotated(try await service.store.imports(), service)) }
 
-    /// CSV / OFX / QFX text. `accountID` files the rows into an existing account (needed for CSV).
-    /// A file's rows as a snapshot, with a CSV's signs read by the kind of account it's filed into.
+    /// CSV / OFX / QFX text. `accountID` files the rows into an existing account, or `options.accountName` into a new one.
+    /// A file's rows as a snapshot, with a CSV's signs read by the kind of account it's filed into. An OFX file's ids are
+    /// made unreadable (`StatementIDs`); it waits (503) while the ledger's own statement ids are being upgraded.
     @Sendable func snapshot(_ body: ImportBody) async throws -> SourceSnapshot {
         var options = body.options ?? FileImport.Options()
         if options.accountKind == nil, let id = body.accountID, let account = try await service.api.overview().accounts.first(where: { $0.id == id }) {
             options.accountKind = account.kind
         }
-        let snapshot = try FileImport.parse(body.content, options: options)
+        if FileImport.format(of: body.content, options: options) == .ofx, let ids = service.statementIDs, !ids.gate.isOpen {
+            throw BudgetAPIError.server(status: 503, message: "Statement ids are being upgraded; try again after a restart.")
+        }
+        let snapshot = try FileImport.parse(body.content, options: options, ids: service.statementIDs)
         if body.accountID == nil, snapshot.accounts.first?.externalID == "file" {
-            throw BudgetAPIError.rejected("CSV files carry no account number — pass accountID for an existing account, or options.accountName to create one.")
+            throw BudgetAPIError.rejected("Statement files need an account: choose one, or name a new one (options.accountName).")
         }
         return snapshot
     }
@@ -483,7 +487,8 @@ func addImportRoutes(_ router: Router<BasicRequestContext>, _ service: BudgetSer
         if body.preview == true { return try HTTP.json(try await service.api.previewIngest(snapshot, into: body.accountID)) }
         let batchID = "file-" + UUID().uuidString.lowercased().prefix(12)
         let report = try await service.api.ingest(snapshot, batchID: batchID, into: body.accountID)
-        let record = ImportRecord(batchID: batchID, kind: .file, linkID: nil, label: body.label ?? "File import",
+        // A file name can hold the account number ("Checking_9876543210123.qfx").
+        let record = ImportRecord(batchID: batchID, kind: .file, linkID: nil, label: StatementIDs.maskNumbers(body.label ?? "File import"),
                                   report: report, createdAt: Date(), rolledBack: false)
         try await service.store.upsertImport(record)
         return try HTTP.json(record.annotated(), status: .created)

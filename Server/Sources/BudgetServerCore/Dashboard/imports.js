@@ -13,6 +13,15 @@ let viewRef = null;
 
 const isOFX = (name, text) => /\.(ofx|qfx)$/i.test(name) || /<OFX>|OFXHEADER/i.test(text.slice(0, 4000));
 
+/// A new account for an OFX file, named from the file the way the server would ("Card ••1234"). The number stays in
+/// the browser: only the name and kind are sent.
+function ofxNewAccount(text) {
+  const acct = ((text || "").match(/<ACCTID>\s*([^<\s]+)/i) || [])[1] || "";
+  const digits = acct.replace(/\D/g, "").slice(-4), card = /<CCSTMTRS>/i.test(text || "");
+  const org = ((text || "").match(/<ORG>\s*([^<\r\n]+)/i) || [])[1] || "";
+  return { name: `${card ? "Card" : "Account"}${digits.length >= 2 ? ` ••${digits}` : ""}`, institution: org.trim(), kind: card ? "credit" : "checking", balance: "" };
+}
+
 /// Which account a statement belongs to: the last digits in its name or its OFX account number
 /// (Chase1234_Activity….CSV, "Amex Gold 22222.csv"), else a distinctive word of an account's name.
 function guessAccount(name, text) {
@@ -27,7 +36,7 @@ function guessAccount(name, text) {
 
 function ready(item) {
   if (item.done) return true;
-  if (item.ofx) return true;
+  // An OFX file needs an account too: its account number never becomes one.
   if (!item.accountID) return false;
   return item.accountID !== NEW || !!item.newAccount.name.trim();
 }
@@ -40,17 +49,18 @@ function parseBalance(raw) {
   return { minor: Math.round(n * 100), currency: "USD" };
 }
 
-/// The request body for one file, preview or not. A new account (CSV) carries its name, kind and balance.
+/// The request body for one file, preview or not. A new account carries its name and kind, and a CSV's its balance
+/// (an OFX file states its own).
 function importBody(item, preview) {
   const account = store.overview.accounts.find((a) => a.id === item.accountID);
   const options = { format: item.ofx ? "ofx" : "csv", sign: item.ofx ? "auto" : item.sign,
     institution: account ? account.institution : (item.newAccount.institution.trim() || "Import") };
   const body = { content: item.text, label: item.name, preview, options };
   if (account) body.accountID = account.id;
-  else if (!item.ofx) {
+  else {
     options.accountName = item.newAccount.name.trim();
     options.accountKind = item.newAccount.kind;
-    const balance = parseBalance(item.newAccount.balance);
+    const balance = item.ofx ? null : parseBalance(item.newAccount.balance);
     if (balance) options.balance = balance;
   }
   return body;
@@ -64,9 +74,9 @@ function accountSelect(item, view) {
   const accounts = store.overview.accounts;
   const select = h("select", { class: "input", "aria-label": `Account for ${item.name}`, disabled: !!item.done,
     onchange: (e) => { item.accountID = e.target.value; item.guessed = false; item.preview = null; item.error = null; view.renderTable(); } },
-    h("option", { value: "" }, item.ofx ? "A new account from the file" : "Choose an account…"),
+    h("option", { value: "" }, "Choose an account…"),
     accounts.map((a) => h("option", { value: a.id }, `${a.institution} · ${a.name}${a.mask ? ` ••${a.mask}` : ""}`)),
-    item.ofx ? null : h("option", { value: NEW }, "New account…"));
+    h("option", { value: NEW }, "New account…"));
   select.value = item.accountID;
   return select;
 }
@@ -91,7 +101,7 @@ function newAccountRow(item, view) {
     input("name", "New account's name", { placeholder: "Chase Checking", "aria-required": "true" }),
     input("institution", "Bank", { placeholder: "Chase" }),
     h("label", { class: "field" }, h("span", { class: "help" }, "Kind"), kind),
-    input("balance", "Balance today (optional)", { inputmode: "decimal", placeholder: "2450.18" }))));
+    item.ofx ? null : input("balance", "Balance today (optional)", { inputmode: "decimal", placeholder: "2450.18" }))));
 }
 
 function samplesRow(item) {
@@ -334,7 +344,7 @@ export default {
       const guess = guessAccount(f.name, text);
       const accountID = guess || (!ofx && this.preselect) || "";
       return { name: f.name, text, ofx, accountID, guessed: !!guess, sign: "auto", preview: null, done: null, error: null,
-        newAccount: { name: "", institution: "", kind: "checking", balance: "" } };
+        newAccount: ofx ? ofxNewAccount(text) : { name: "", institution: "", kind: "checking", balance: "" } };
     }));
     batch = items;
     this.render();
@@ -343,7 +353,7 @@ export default {
   renderTable() {
     if (!batch) return this.renderFlow();
     const wrap = this.flow.querySelector(".table-wrap");
-    const rows = batch.flatMap((item) => [fileRow(item, this), !item.ofx && item.accountID === NEW && !item.done ? newAccountRow(item, this) : null, samplesRow(item)].filter(Boolean));
+    const rows = batch.flatMap((item) => [fileRow(item, this), item.accountID === NEW && !item.done ? newAccountRow(item, this) : null, samplesRow(item)].filter(Boolean));
     fill(wrap, h("table", { class: "table stack-phone file-table" },
       h("thead", {}, h("tr", {}, h("th", {}, "File"), h("th", {}, "Into account"), h("th", {}, "Dates"), h("th", { class: "numcol" }, "New"),
         h("th", { class: "numcol" }, "Already here"), h("th", {}, "Status"))),

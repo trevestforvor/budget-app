@@ -81,6 +81,9 @@ public struct SourceSnapshot: Hashable, Sendable {
     public var connections: [SourceConnection] = []
     /// Accounts the provider couldn't bring this time, by external id.
     public var accountProblems: [String: SourceAccountProblem] = [:]
+    /// A statement whose row ids were made with a different key than the ledger's older statement rows
+    /// (`StatementIDs.Gate.keyChanged`): those rows can't match by id, so they're matched by date and amount instead.
+    public var statementKeyChanged: Bool = false
 }
 
 /// One bank sign-in behind an aggregator link.

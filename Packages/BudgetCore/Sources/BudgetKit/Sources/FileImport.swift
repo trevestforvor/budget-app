@@ -1,4 +1,5 @@
 import Foundation
+import Synchronization
 
 /// Statement files: the intent's "OFX / QFX / CSV import — always supported", for history older
 /// than an aggregator's window and for institutions no aggregator covers.
@@ -14,8 +15,9 @@ public enum FileImport {
         /// Account kind of the destination, used by `.auto` sign detection.
         public var accountKind: AccountKind?
         public var institution: String
-        /// CSV only (a CSV names no account): file the rows into an account of this name, created on
-        /// first import and reused after. Without it the caller must name an existing account.
+        /// File the rows into an account of this name, created on first import and reused after (a CSV and an OFX file
+        /// with the same institution and name land in the same account). Without it the caller must name an existing
+        /// account: a statement's own account number never becomes an account.
         public var accountName: String?
         /// CSV only: the account's balance today, so balances are real rather than relative.
         public var balance: Money?
@@ -36,12 +38,25 @@ public enum FileImport {
         public var errorDescription: String? { message }
     }
 
-    public static func parse(_ text: String, options: Options = Options()) throws -> SourceSnapshot {
-        let format = options.format == .auto ? (text.range(of: "<OFX>", options: .caseInsensitive) != nil || text.contains("OFXHEADER") ? .ofx : .csv) : options.format
-        switch format {
-        case .ofx: return try OFX.parse(text, institution: options.institution)
+    /// `ids` makes an OFX file's ids unreadable (`StatementIDs`); without it an OFX file is refused. CSV doesn't need it.
+    public static func parse(_ text: String, options: Options = Options(), ids: StatementIDs? = nil) throws -> SourceSnapshot {
+        switch format(of: text, options: options) {
+        case .ofx:
+            guard let ids else { throw ParseError(message: "Set BUDGET_TOKEN_KEY before importing OFX or QFX files.") }
+            return try OFX.parse(text, options: options, ids: ids)
         default: return try CSV.parse(text, options: options)
         }
+    }
+
+    /// The format `parse` reads `text` as.
+    public static func format(of text: String, options: Options = Options()) -> Format {
+        guard options.format == .auto else { return options.format }
+        return text.range(of: "<OFX>", options: .caseInsensitive) != nil || text.contains("OFXHEADER") ? .ofx : .csv
+    }
+
+    /// The account a statement of this institution and name files into: the same for a CSV and an OFX file.
+    static func namedAccountExternalID(institution: String, name: String) -> String {
+        "csv-" + "\(institution) \(name)".lowercased().split(whereSeparator: { !$0.isLetter && !$0.isNumber }).joined(separator: "-")
     }
 
     /// Stable id for a file row, so re-importing the same file dedupes by id.
@@ -183,7 +198,7 @@ enum CSV {
         }
         let name = options.accountName?.trimmingCharacters(in: .whitespacesAndNewlines).nonEmpty
         // A named account gets a stable id from institution + name, so the next statement lands in it too.
-        let externalID = name.map { "csv-" + "\(options.institution) \($0)".lowercased().split(whereSeparator: { !$0.isLetter && !$0.isNumber }).joined(separator: "-") } ?? "file"
+        let externalID = name.map { FileImport.namedAccountExternalID(institution: options.institution, name: $0) } ?? "file"
         let account = SourceAccount(externalID: externalID, institution: options.institution, institutionDomain: nil, name: name ?? "Imported file",
                                     kind: options.accountKind ?? .checking, balance: options.balance ?? .zero, availableBalance: nil, balanceDate: .now,
                                     transactions: transactions, holdings: [])
@@ -245,7 +260,10 @@ enum OFX {
         }
     }
 
-    static func parse(_ text: String, institution: String) throws -> SourceSnapshot {
+    /// The account number (ACCTID) is never an id: each row's id is the keyed hash of the id 0.5.x made from it, and the
+    /// account is the one `options` names (or "file", which ingest refuses without a target), showing only its last digits.
+    static func parse(_ text: String, options: FileImport.Options, ids: StatementIDs) throws -> SourceSnapshot {
+        let institution = options.institution
         let rows = blocks("STMTTRN", in: text)
         guard !rows.isEmpty else { throw FileImport.ParseError(message: "No <STMTTRN> transactions in the OFX file.") }
         let whole = Substring(text)
@@ -262,18 +280,23 @@ enum OFX {
             // Some exports (a brokerage's QFX) carry no NAME or MEMO at all; the type is the only description.
             let name = value("NAME", in: block) ?? value("MEMO", in: block) ?? typeName(type, money)
             let id = value("FITID", in: block) ?? FileImport.rowID(date, money, name, occurrence: 0)
-            return SourceTransaction(externalID: "ofx-\(accountID)-\(id)", posted: date, amount: money, description: name,
+            return SourceTransaction(externalID: ids.rowExternalID(legacy: "ofx-\(accountID)-\(id)"), posted: date, amount: money, description: name,
                                      payee: nil, isPending: false, providerCategory: typeCategory(type, money))
         }
         var balance = Money(minorUnits: 0, currencyCode: currency)
         if let ledger = blocks("LEDGERBAL", in: text).first, let amountText = value("BALAMT", in: ledger), let minor = FileImport.amount(amountText) {
             balance = Money(minorUnits: minor, currencyCode: currency)
         }
-        let masked = accountID.count > 4 ? "••" + accountID.suffix(4) : accountID
-        let account = SourceAccount(externalID: accountID, institution: org, institutionDomain: nil,
-                                    name: isCard ? "Card \(masked)" : "Account \(masked)", kind: isCard ? .credit : .checking,
+        let mask = StatementIDs.mask(accountID)
+        let named = options.accountName?.trimmingCharacters(in: .whitespacesAndNewlines).nonEmpty
+        let fallback = (isCard ? "Card" : "Account") + (mask.map { " ••\($0)" } ?? "")
+        var account = SourceAccount(externalID: named.map { FileImport.namedAccountExternalID(institution: institution, name: $0) } ?? "file",
+                                    institution: org, institutionDomain: nil, name: named ?? fallback, kind: options.accountKind ?? (isCard ? .credit : .checking),
                                     balance: balance, availableBalance: nil, balanceDate: .now, transactions: transactions, holdings: [])
-        return SourceSnapshot(source: .fileImport, accounts: [account], warnings: [])
+        account.mask = mask
+        var snapshot = SourceSnapshot(source: .fileImport, accounts: [account], warnings: [])
+        snapshot.statementKeyChanged = ids.gate.keyChanged
+        return snapshot
     }
 }
 
@@ -281,12 +304,58 @@ private extension String {
     var nonEmpty: String? { isEmpty ? nil : self }
 }
 
-/// How statement ids are made unreadable (no account number in an id). The server supplies a keyed MAC; tests supply a
-/// fake. BudgetKit has no crypto, so the MAC is injected.
+/// How statement ids are made unreadable (no account number in an id). The server supplies a keyed MAC (HMAC-SHA256 under a
+/// key derived from `BUDGET_TOKEN_KEY`); tests supply a fake. BudgetKit has no crypto, so the MAC is injected.
 public struct StatementIDs: Sendable {
     public static let scheme = "h1"
     /// Lowercase hex of the MAC of its input.
     let digest: @Sendable (String) -> String
+    /// Whether imports may make ids with this key yet, shared by every copy.
+    public let gate: Gate
 
-    public init(digest: @escaping @Sendable (String) -> String) { self.digest = digest }
+    /// `gate` starts open unless the caller closes it until the ledger's own ids are upgraded (the server does).
+    public init(digest: @escaping @Sendable (String) -> String, gate: Gate = Gate(isOpen: true)) {
+        self.digest = digest
+        self.gate = gate
+    }
+
+    /// The id 0.5.x stored ("ofx-<ACCTID>-<FITID>") → "ofxh1-<20 hex>". Hashing the whole legacy string means the
+    /// migration needs no parsing (FITIDs may contain "-") and a FITID that embeds the number is covered too.
+    public func rowExternalID(legacy: String) -> String { "ofx\(Self.scheme)-" + digest(legacy).prefix(20) }
+
+    /// ACCTID → "stmt-h1-<16 hex>": only for accounts an older import named after the number.
+    public func accountExternalID(acctID: String) -> String { "stmt-\(Self.scheme)-" + digest("acctid|" + acctID).prefix(16) }
+
+    /// What the server stores (`budget_settings` "statementIDs") to notice the key changed: ids made after that don't
+    /// match the ones made before.
+    public var checkValue: String { digest("check") }
+
+    /// Last four digits, for `Account.mask`; nil with fewer than two.
+    public static func mask(_ acctID: String) -> String? {
+        let digits = acctID.filter(\.isASCIIDigitCharacter)
+        return digits.count >= 2 ? String(digits.suffix(4)) : nil
+    }
+
+    /// Every run of six or more digits (an account number, most likely) as "••" and its last four: for labels, warnings
+    /// and notes that may quote a file name or a number.
+    public static func maskNumbers(_ text: String) -> String {
+        guard text.contains(where: \.isASCIIDigitCharacter) else { return text }
+        return text.replacing(/[0-9]{6,}/) { "••" + $0.output.suffix(4) }
+    }
+
+    /// Imports wait at a closed gate (the server's, until the ledger's ids are upgraded). `keyChanged` says ids were last
+    /// made with another key, so an older statement's rows can only be matched by date and amount.
+    public final class Gate: Sendable {
+        private let state: Mutex<(isOpen: Bool, keyChanged: Bool)>
+
+        public init(isOpen: Bool) { state = Mutex((isOpen, false)) }
+
+        public var isOpen: Bool { state.withLock { $0.isOpen } }
+        public var keyChanged: Bool { state.withLock { $0.keyChanged } }
+        public func open(keyChanged: Bool) { state.withLock { $0 = (true, keyChanged) } }
+    }
+}
+
+private extension Character {
+    var isASCIIDigitCharacter: Bool { isASCII && isNumber }
 }

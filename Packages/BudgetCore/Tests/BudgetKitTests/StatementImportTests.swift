@@ -250,9 +250,9 @@ struct StatementImportTests {
         <STMTTRN><TRNTYPE>DEBIT<DTPOSTED>20260815<TRNAMT>-1250.00<FITID>xfer-0815<NAME>Transfer to Harbor
         </BANKTRANLIST><LEDGERBAL><BALAMT>12345.67<DTASOF>20260831</LEDGERBAL></STMTRS></STMTTRNRS></BANKMSGSRSV1></OFX>
         """
-        let report = try await api.ingest(try FileImport.parse(qfx), batchID: "qfx", into: "plaid:cash")
+        let report = try await api.ingest(try FileImport.parse(qfx, ids: .test), batchID: "qfx", into: "plaid:cash")
         #expect(report.rowsAdded == 2 && report.accountsAdded == 0)
         #expect(try await api.overview().accounts.count == 1)
-        #expect(try await api.ingest(try FileImport.parse(qfx), batchID: "qfx-again", into: "plaid:cash").rowsAdded == 0)
+        #expect(try await api.ingest(try FileImport.parse(qfx, ids: .test), batchID: "qfx-again", into: "plaid:cash").rowsAdded == 0)
     }
 }

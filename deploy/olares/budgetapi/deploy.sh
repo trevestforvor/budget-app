@@ -94,6 +94,31 @@ else
   echo "    no budgetapidb in $APP_NS (in-memory ledger): nothing to back up"
 fi
 
+# Server 0.6.0 rewrites statement ids on its first start. Under a RollingUpdate (Kubernetes' default) the old pod keeps
+# serving and syncing while the new one migrates, and each of its syncs writes the old ids back. So unless the strategy
+# is Recreate, stop the old pod before the binary changes (a few seconds of API downtime), and start it again after.
+STRATEGY=$(kubectl -n "$APP_NS" get deploy budgetapi -o jsonpath='{.spec.strategy.type}')
+SCALED_DOWN=0
+if [[ $STRATEGY != Recreate ]]; then
+  REPLICAS=$(kubectl -n "$APP_NS" get deploy budgetapi -o jsonpath='{.spec.replicas}')
+  REPLICAS=${REPLICAS:-1}; [[ $REPLICAS -ge 1 ]] || REPLICAS=1
+  echo "==> stopping budgetapi before the new server starts (strategy ${STRATEGY:-RollingUpdate})"
+  # However this script ends from here on, budgetapi is started again (with the old binary if the install failed).
+  trap 'if [[ $SCALED_DOWN == 1 ]]; then kubectl -n "$APP_NS" scale deploy/budgetapi --replicas="$REPLICAS" >/dev/null; fi' EXIT
+  SCALED_DOWN=1
+  kubectl -n "$APP_NS" scale deploy/budgetapi --replicas=0 >/dev/null
+  # budgetapi's own pods (budgetapi-<replicaset>-<id>), not budgetapidb's.
+  api_pods() { kubectl -n "$APP_NS" get pods -o name | grep -E '^pod/budgetapi-[a-z0-9]+-[a-z0-9]+$' || true; }
+  for _ in $(seq 1 60); do
+    [[ -z $(api_pods) ]] && break
+    sleep 2
+  done
+  if [[ -n $(api_pods) ]]; then
+    echo "budgetapi's pod didn't stop within 2 minutes; nothing was installed" >&2
+    exit 1
+  fi
+fi
+
 echo "==> installing into $APP_NS"
 BIN_DIR=$(kubectl -n "$APP_NS" get deploy budgetapi -o jsonpath='{.spec.template.spec.volumes[?(@.name=="appdata")].hostPath.path}')/bin
 k delete pod budget-install --ignore-not-found --wait >/dev/null
@@ -116,7 +141,12 @@ k exec budget-install -- sh -c 'chmod 0755 /bin-dir/budget-api.part && { [ ! -f 
 k delete pod budget-install --wait=false >/dev/null
 
 echo "==> restarting"
-kubectl -n "$APP_NS" rollout restart deploy/budgetapi >/dev/null
+if [[ $SCALED_DOWN == 1 ]]; then
+  kubectl -n "$APP_NS" scale deploy/budgetapi --replicas="$REPLICAS" >/dev/null
+  SCALED_DOWN=0
+else
+  kubectl -n "$APP_NS" rollout restart deploy/budgetapi >/dev/null
+fi
 kubectl -n "$APP_NS" rollout status deploy/budgetapi --timeout=300s
 kubectl -n "$APP_NS" logs deploy/budgetapi -c budgetapi --tail=4
 REMOTE
