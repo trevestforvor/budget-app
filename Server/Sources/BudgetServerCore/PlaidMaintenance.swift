@@ -204,8 +204,7 @@ public actor PlaidMaintenance {
     /// that changed). Only to an https public URL (http only for a sandbox test server), compared without a trailing
     /// slash. Plaid confirms with WEBHOOK_UPDATE_ACKNOWLEDGED. A failure is logged and tried again the next day.
     nonisolated func reconcileWebhook(_ link: inout StoredLink, item: PlaidSource.Item, source: PlaidSource, sandbox: Bool) async {
-        guard await settings.plaidWebhooksEnabled, let base = await settings.providerCallbackBase(sandbox: sandbox) else { return }
-        let wanted = base + Self.webhookPath
+        guard let wanted = await Self.webhookURL(settings, sandbox: sandbox) else { return }
         if item.webhook.map(ServerConfig.withoutTrailingSlash) == wanted {
             // Already Plaid's (sent when the Item was linked): just note it.
             if link.plaid?.webhookURL != wanted { link.plaid?.webhookURL = wanted }

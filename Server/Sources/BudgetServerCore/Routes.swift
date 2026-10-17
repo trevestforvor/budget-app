@@ -383,10 +383,12 @@ func addLinkRoutes(_ router: Router<BasicRequestContext>, _ service: BudgetServi
             guard link.hasLiveItem else { throw BudgetAPIError.rejected(SyncService.itemGoneMessage(link)) }
             accessToken = try requireSealer().open(link.sealedToken)
         }
+        // WEBHOOK-002: a new Item takes this server's webhook URL from its link token.
+        let webhook = await PlaidMaintenance.webhookURL(service.settings, sandbox: plaid.environment == .sandbox)
         let token = try await PlaidSource.linkToken(environment: plaid.environment, credentials: .init(clientID: plaid.clientID, secret: plaid.secret),
                                                     userID: "owner", investments: true, redirectURI: plaid.redirectURI,
                                                     accessToken: accessToken, grantLiabilities: body.grantCardBills == true,
-                                                    transport: service.providers.transport)
+                                                    webhook: webhook, transport: service.providers.transport)
         return try HTTP.json(["linkToken": token])
     }
 

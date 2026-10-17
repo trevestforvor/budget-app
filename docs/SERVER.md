@@ -224,7 +224,18 @@ Teller stopped taking new customers in July 2026; this is for an existing Teller
 
 ### Plaid webhooks and reconnect
 
-Not built yet (server 0.6.0).
+**Webhooks (server 0.6.0).** `POST /v1/plaid/webhook` on the API port takes Plaid's webhooks with no bearer token: the signed `Plaid-Verification` JWT is its auth. It's on when `BUDGET_PLAID_WEBHOOKS` isn't `false` and `BUDGET_PUBLIC_URL` is an https address (plain http only on a sandbox test server). New Items get `<public URL>/v1/plaid/webhook` from their link token. The daily Item check moves existing Items to it with `/item/webhook/update`, and Plaid confirms the move with `WEBHOOK_UPDATE_ACKNOWLEDGED`. The dashboard shows that, and the last webhook, per link.
+
+- **Verified before anything is done:** `alg` must be exactly ES256, and the key comes from Plaid's `/webhook_verification_key/get` by `kid`. It's cached for a day and refused once Plaid retires it. `iat` must be at most 5 minutes old, and the SHA-256 of the raw body must match `request_body_sha256`.
+  - A forged request can't make the server call Plaid freely. Header and `kid` shape are checked first. An unknown `kid` is remembered for a minute. Key fetches are capped at one per 10 seconds and 30 an hour, and over the cap the answer is 503.
+  - Answers: 400 for no header or a body that isn't a webhook, 401 for a bad signature, key, time or hash, 413 above 64 KiB, and 503 when the key can't be fetched (Plaid retries a 5xx for a day).
+  - Nothing from a refused request is logged, only the reason and a count. A verified one logs its type, code and link, never its body or a token in it.
+- **A webhook is only a trigger.** The route answers 200 at once and queues the work per Item, in memory:
+  - `SYNC_UPDATES_AVAILABLE` → a sync, at most one per Item a minute. It still won't ask for a link that was revoked or has refused three sign-ins.
+  - `ITEM` `ERROR`, `PENDING_DISCONNECT`, `PENDING_EXPIRATION`, `LOGIN_REPAIRED`, `USER_PERMISSION_REVOKED`, `USER_ACCOUNT_REVOKED` and `NEW_ACCOUNTS_AVAILABLE` → `/item/get`. `PENDING_DISCONNECT` also notes the week's warning.
+  - `HOLDINGS` `DEFAULT_UPDATE` → holdings due at that check.
+  - `LIABILITIES` `DEFAULT_UPDATE` → card bills again, with Card bills on, at most every 6 hours.
+- **The schedule stays on with webhooks.** The 6-hourly sync and the daily Item check aren't polling in place of webhooks. They're the reconcile Plaid asks for: a restart empties the queue, and Plaid drops a delivery after a day of retries.
 
 ## Backfill
 

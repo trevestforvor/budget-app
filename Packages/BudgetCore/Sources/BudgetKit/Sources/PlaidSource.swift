@@ -59,9 +59,11 @@ public struct PlaidSource: TransactionSource {
     /// - Parameter grantLiabilities: with `accessToken`, update mode that asks the person to consent to liabilities on
     ///   the same Item (the card-bill grant). The Item and its access token stay as they are: nothing is exchanged after.
     ///   Only ever started by the person's own click.
+    /// - Parameter webhook: where Plaid sends the Item's webhooks (this server's `/v1/plaid/webhook`). It's baked into an
+    ///   Item when it's created; an existing Item is moved with `updateWebhook`.
     public static func linkToken(environment: Environment, credentials: Credentials, userID: String, investments: Bool,
                                  daysRequested: Int = 730, redirectURI: String? = nil, accessToken: String? = nil,
-                                 grantLiabilities: Bool = false,
+                                 grantLiabilities: Bool = false, webhook: String? = nil,
                                  transport: any HTTPTransport = URLSessionTransport()) async throws -> String {
         var body: [String: JSONValue] = [
             "client_name": .string("Budget"), "language": .string("en"), "country_codes": .array([.string("US")]),
@@ -80,6 +82,7 @@ public struct PlaidSource: TransactionSource {
             body["additional_consented_products"] = .array((investments ? ["investments"] : []).map(JSONValue.string) + [.string(liabilitiesProduct)])
         }
         if let redirectURI { body["redirect_uri"] = .string(redirectURI) }
+        if let webhook { body["webhook"] = .string(webhook) }
         let json: JSONValue
         do {
             json = try await transport.json(try request(environment, "link/token/create", body, credentials))
@@ -256,6 +259,12 @@ public struct PlaidSource: TransactionSource {
         return (try Self.parseAccounts(json, institution: institution, readAt: asOf.map { min($0, now) } ?? now), false, fallback)
     }
 
+    /// The Item's accounts with Plaid's cached balances (`/accounts/get`) and no transactions: what card bills need to
+    /// know which accounts are cards, without a sync.
+    public func accountsSnapshot(now: Date = .now) async throws -> SourceSnapshot {
+        SourceSnapshot(source: .plaid, accounts: try await accounts(.cached(asOf: nil), now: now).accounts, warnings: [])
+    }
+
     // MARK: Item
 
     /// What `/item/get` says about the Item: the ground truth for its live state.
@@ -297,6 +306,42 @@ public struct PlaidSource: TransactionSource {
         } catch let error as SourceHTTPError {
             throw PlaidAPIError(error) ?? error
         }
+    }
+
+    // MARK: Webhook keys
+
+    /// One of the public keys Plaid signs its webhooks with (`/webhook_verification_key/get`): a P-256 key as a JWK.
+    public struct WebhookKey: Hashable, Sendable {
+        public var keyID: String
+        /// The JWK's coordinates, base64url.
+        public var x: String
+        public var y: String
+        /// When Plaid retired the key; nil while it's current. A key past this is no longer valid (rotation).
+        public var expiredAt: Date?
+
+        public init(keyID: String, x: String, y: String, expiredAt: Date? = nil) {
+            self.keyID = keyID; self.x = x; self.y = y; self.expiredAt = expiredAt
+        }
+    }
+
+    /// `/webhook_verification_key/get` for the key a webhook's JWT names. Only an EC P-256 key for ES256 comes back;
+    /// anything else is refused. Plaid's errors come back as `PlaidAPIError`.
+    public static func webhookVerificationKey(keyID: String, environment: Environment, credentials: Credentials,
+                                              transport: any HTTPTransport = URLSessionTransport()) async throws -> WebhookKey {
+        let json: JSONValue
+        do {
+            json = try await transport.json(try request(environment, "webhook_verification_key/get", ["key_id": .string(keyID)], credentials))
+        } catch let error as SourceHTTPError {
+            throw PlaidAPIError(error) ?? PlaidAPIError(status: error.status)
+        }
+        return try parseWebhookKey(json)
+    }
+
+    static func parseWebhookKey(_ json: JSONValue) throws -> WebhookKey {
+        guard case let .object(o) = json, case let .object(key)? = o["key"], let kid = string(key, "kid"), let x = string(key, "x"),
+              let y = string(key, "y"), string(key, "kty") == "EC", string(key, "crv") == "P-256", string(key, "alg") ?? "ES256" == "ES256"
+        else { throw DecisionError.malformed("no usable webhook key") }
+        return WebhookKey(keyID: kid, x: x, y: y, expiredAt: number(key, "expired_at").map { Date(timeIntervalSince1970: $0) })
     }
 
     static func parseItem(_ json: JSONValue) throws -> Item {
