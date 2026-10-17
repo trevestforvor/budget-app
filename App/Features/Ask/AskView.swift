@@ -22,6 +22,10 @@ struct AskView: View {
     @State private var isAsking = false
     @State private var conversationID: String?
     @State private var phases: [String: DSActionCard.Phase] = [:]
+    /// Proposals refreshed after going stale, by id: what they would do now, and the basis to apply them with.
+    @State private var refreshed: [String: ProposedAction] = [:]
+    /// A proposal reaching more than a handful of rows, shown with its count and sample before it applies.
+    @State private var reviewing: ProposedAction?
     /// Questions asked while one is still being answered, sent in order once it's done — never dropped.
     @State private var queued: [String] = []
     /// Which conversation a reply belongs to. Starting a new one retires the old id, so a late reply
@@ -57,7 +61,8 @@ struct AskView: View {
                                 case let .user(text):
                                     DSUserBubble(text)
                                 case let .answer(reply):
-                                    AnswerView(reply: reply, phases: phases, onApply: apply, onDismiss: { phases[$0.id] = .dismissed }) { followUp in
+                                    AnswerView(reply: reply, phases: phases, refreshed: refreshed, onApply: { apply($0) },
+                                               onDismiss: { phases[$0.id] = .dismissed }, onRefresh: refresh) { followUp in
                                         if followUp == "Open the plan" { app.selectedTab = .plan } else { send(followUp) }
                                     }
                                 case let .failure(message):
@@ -114,6 +119,9 @@ struct AskView: View {
             }
             .task(id: "\(app.revision)|\(historyVersion)") { await loadHistory() }
             .dsToast($toast)
+            .sheet(item: $reviewing) { proposal in
+                ProposalReviewSheet(proposal: proposal) { apply(proposal, reviewed: true) }
+            }
             .sheet(item: $renaming) { summary in
                 RenameConversationSheet(initial: summary.title) { await rename(summary, to: $0) }
             }
@@ -145,6 +153,8 @@ struct AskView: View {
         entries = []
         conversationID = nil
         phases = [:]
+        refreshed = [:]
+        reviewing = nil
         queued = []
         isAsking = false
         isOpening = false
@@ -252,14 +262,43 @@ struct AskView: View {
         }
     }
 
-    private func apply(_ proposal: ProposedAction) {
+    /// Applies a proposal with the basis it was made against, so the server refuses it (409) if its rows changed since.
+    /// One reaching more than a handful of rows shows its count and sample first.
+    private func apply(_ proposal: ProposedAction, reviewed: Bool = false) {
+        let proposal = refreshed[proposal.id] ?? proposal
+        if proposal.needsReview, !reviewed {
+            reviewing = proposal
+            return
+        }
         phases[proposal.id] = .applying
         Task {
             do {
-                let message = try await app.perform(proposal.action)
+                let message = try await app.perform(proposal.action, basis: proposal.basis)
                 phases[proposal.id] = .applied(message)
+            } catch let BudgetAPIError.server(status, message) where status == 409 {
+                phases[proposal.id] = .stale(message ?? "Your data changed since this was proposed. Refresh it to see what it would do now.")
             } catch {
                 phases[proposal.id] = .failed(error.localizedDescription)
+            }
+        }
+    }
+
+    /// Works a stale proposal out again from the ledger as it is now — a preview, no model call — and offers it again.
+    private func refresh(_ proposal: ProposedAction) {
+        phases[proposal.id] = .applying
+        Task {
+            do {
+                let preview = try await app.api.preview(proposal.action)
+                refreshed[proposal.id] = ProposedAction(id: proposal.id, action: proposal.action, preview: preview, timeZone: .current) {
+                    app.category($0)?.name
+                }
+                phases[proposal.id] = .proposed
+            } catch BudgetAPIError.notFound {
+                phases[proposal.id] = .failed("That's no longer possible: what it changes is gone.")
+            } catch let BudgetAPIError.rejected(reason) {
+                phases[proposal.id] = .failed("That's no longer possible: \(reason)")
+            } catch {
+                phases[proposal.id] = .stale("Couldn't refresh it: \(error.localizedDescription)")
             }
         }
     }
@@ -299,8 +338,10 @@ struct AskView: View {
 struct AnswerView: View {
     let reply: AskReply
     var phases: [String: DSActionCard.Phase] = [:]
+    var refreshed: [String: ProposedAction] = [:]
     var onApply: (ProposedAction) -> Void = { _ in }
     var onDismiss: (ProposedAction) -> Void = { _ in }
+    var onRefresh: (ProposedAction) -> Void = { _ in }
     let onFollowUp: (String) -> Void
 
     var body: some View {
@@ -328,7 +369,7 @@ struct AnswerView: View {
             }
 
             ForEach(reply.proposedActions) { proposal in
-                proposalCard(proposal)
+                proposalCard(refreshed[proposal.id] ?? proposal)
             }
 
             let reads = reply.toolCalls.filter { ToolCatalog.spec(named: $0.name)?.kind == .read }
@@ -369,8 +410,9 @@ struct AnswerView: View {
             effects: effects,
             trace: (name: proposal.action.toolName, arguments: display),
             phase: phases[proposal.id] ?? .proposed,
-            applyTitle: isClient ? "Open" : "Apply",
+            applyTitle: isClient ? "Open" : proposal.needsReview ? "Review \(proposal.matchCount ?? 0)" : "Apply",
             onApply: { onApply(proposal) },
-            onDismiss: { onDismiss(proposal) })
+            onDismiss: { onDismiss(proposal) },
+            onRefresh: { onRefresh(proposal) })
     }
 }

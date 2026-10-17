@@ -7,6 +7,8 @@ public struct DSActionCard: View {
         case proposed, applying, applied(String), dismissed, failed(String)
         /// From a conversation reopened later: shown for the record, no longer offered.
         case earlier
+        /// The data it was worked out from changed before it applied; nothing changed. Refresh shows what it would do now.
+        case stale(String)
     }
 
     public struct Effect: Identifiable, Hashable, Sendable {
@@ -32,10 +34,11 @@ public struct DSActionCard: View {
     private let applyTitle: String
     private let onApply: () -> Void
     private let onDismiss: () -> Void
+    private let onRefresh: () -> Void
 
     public init(eyebrow: String = "Proposed change", title: String, detail: String? = nil, effects: [Effect] = [],
                 trace: (name: String, arguments: String)? = nil, phase: Phase, applyTitle: String = "Apply",
-                onApply: @escaping () -> Void, onDismiss: @escaping () -> Void) {
+                onApply: @escaping () -> Void, onDismiss: @escaping () -> Void, onRefresh: @escaping () -> Void = {}) {
         self.eyebrow = eyebrow
         self.title = title
         self.detail = detail
@@ -45,6 +48,7 @@ public struct DSActionCard: View {
         self.applyTitle = applyTitle
         self.onApply = onApply
         self.onDismiss = onDismiss
+        self.onRefresh = onRefresh
     }
 
     private var isPending: Bool { phase == .proposed || phase == .applying }
@@ -108,6 +112,7 @@ public struct DSActionCard: View {
         case .dismissed: DSTag("Dismissed", tint: Color.ds.inkTertiary)
         case .earlier: DSTag("Earlier", tint: Color.ds.inkTertiary)
         case .failed: DSTag("Didn't apply", systemImage: "exclamationmark", tint: Color.ds.caution)
+        case .stale: DSTag("Out of date", systemImage: "arrow.clockwise", tint: Color.ds.caution)
         }
     }
 
@@ -132,6 +137,14 @@ public struct DSActionCard: View {
             VStack(alignment: .leading, spacing: DSSpace.xs) {
                 Text(message).dsFont(.callout).foregroundStyle(Color.ds.caution)
                 Button("Try again", action: onApply).buttonStyle(.ds(.secondary))
+            }
+        case let .stale(message):
+            VStack(alignment: .leading, spacing: DSSpace.xs) {
+                Text(message).dsFont(.callout).foregroundStyle(Color.ds.inkSecondary).fixedSize(horizontal: false, vertical: true)
+                HStack(spacing: DSSpace.md) {
+                    Button("Refresh", action: onRefresh).buttonStyle(.ds(.secondary))
+                    Button("Not now", action: onDismiss).buttonStyle(.ds(.quiet))
+                }
             }
         case .dismissed:
             EmptyView()
