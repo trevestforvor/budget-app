@@ -239,10 +239,13 @@ function alreadyHere(record) {
     }
   };
   let loaded = false;
-  const merged = mergeCounts[record.batchID] || 0;
+  // What the import itself did (skipped rows, pending charges swept), from its report; otherwise every open entry for
+  // it, which counts rows merged or swept as copies since.
+  const merged = mergeCounts[record.batchID] || 0, pending = (r.pendingSettled || 0) + (r.pendingDropped || 0);
+  const said = [r.duplicatesSkipped ? `${count(r.duplicatesSkipped)} already here` : null,
+    pending ? `${plural(pending, "pending charge")} settled or dropped` : null].filter(Boolean).join(" · ");
   return h("details", { class: "disclosure", ontoggle: (e) => { if (e.currentTarget.open && !loaded) { loaded = true; load(); } } },
-    h("summary", {}, r.duplicatesSkipped ? `${count(r.duplicatesSkipped)} already here`
-      : r.pendingSettled || r.pendingDropped ? `${plural(merged, "pending charge")} settled or dropped` : `${count(merged)} merged or removed as copies`), list);
+    h("summary", {}, said || `${count(merged)} merged or removed as copies`), list);
 }
 
 /// Undo, armed by a second click. With `ask` (a SimpleFIN sync) the first click asks the server what Undo would do, and

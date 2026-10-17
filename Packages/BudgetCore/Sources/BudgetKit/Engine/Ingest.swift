@@ -372,11 +372,13 @@ extension Ledger {
     /// Carries what the person did to a pending row onto the posted row replacing it: hidden, the note, a
     /// renamed merchant — and the category, when the person settled it (their own answer, or hid the row) or it
     /// was one side of a matched transfer, which moves to the posted row. Returns whether the category came
-    /// along; if not, the posted row is categorized afresh.
+    /// along; if not, the posted row is categorized afresh. A posted row already in the ledger (the stale-pending sweep
+    /// can settle into one) keeps a category the person gave it and a transfer pairing of its own.
     static func carryOver(from pending: LedgerTransaction, to posted: inout LedgerTransaction) -> Bool {
         carryUserFields(from: pending, to: &posted)
         guard let categorization = pending.categorization,
-              categorization.tier == .user || pending.isHidden || pending.transferPeerID != nil else { return false }
+              categorization.tier == .user || pending.isHidden || pending.transferPeerID != nil,
+              posted.categorization?.tier != .user, posted.transferPeerID == nil else { return false }
         posted.categorization = categorization
         if posted.isHidden { posted.categorization?.needsReview = false }
         posted.transferPeerID = pending.transferPeerID
@@ -465,6 +467,12 @@ extension Ledger {
     /// needs a yes either way. Anything else (files) undoes.
     func rollbackPlan(batchID: String, nextWindowStart: Date?) -> RollbackPlan {
         let rows = transactions.filter { $0.batchID == batchID }
+        // Pending rows this batch's sweep settled or dropped, which undo puts back (`rollback`).
+        let ids = Set(rows.map(\.id))
+        let swept = mergeLog.filter {
+            $0.undoneAt == nil && ($0.kind == .pendingSettled || $0.kind == .pendingDropped) && ($0.batchID == batchID || $0.keptID.map(ids.contains) == true)
+        }.count
+        let sweptNote = swept == 0 ? "" : " It also puts back \(swept == 1 ? "the pending charge" : "the \(swept) pending charges") this sync settled or dropped."
         let bySource = Dictionary(grouping: rows, by: \.source.rawValue).mapValues(\.count)
         let returning = nextWindowStart.map { start in rows.filter { $0.source.syncStyle == .window && $0.postedAt >= start }.count } ?? 0
         let n = rows.count == 1 ? "this row" : "these \(rows.count) rows"
@@ -478,13 +486,31 @@ extension Ledger {
             let back = returning == 0 ? "None of them come back at the next sync, but \(source.displayName) sends \(rows.count == 1 ? "it" : "them") again if you link it again."
                 : "\(returning == rows.count ? (rows.count == 1 ? "It comes" : "All of them come") : "\(returning) of them come") back at the next sync, because \(source.displayName) sends its most recent days again."
             return RollbackPlan(batchID: batchID, rows: rows.count, bySource: bySource, returning: returning, verdict: .undoReturns,
-                                message: "Undo removes \(n). \(back) Hide \(rows.count == 1 ? "it" : "them") instead to keep \(rows.count == 1 ? "it" : "them") out of your totals for good.")
+                                message: "Undo removes \(n). \(back)\(sweptNote) Hide \(rows.count == 1 ? "it" : "them") instead to keep \(rows.count == 1 ? "it" : "them") out of your totals for good.")
+        }
+        if rows.isEmpty && swept > 0 {
+            return RollbackPlan(batchID: batchID, rows: 0, bySource: bySource, returning: 0, verdict: .undo,
+                                message: "Undo puts back \(swept == 1 ? "the pending charge" : "the \(swept) pending charges") this sync settled or dropped.")
         }
         return RollbackPlan(batchID: batchID, rows: rows.count, bySource: bySource, returning: 0, verdict: .undo,
-                            message: rows.isEmpty ? "Nothing from this batch is left to remove." : "Undo removes \(n) and nothing sends \(rows.count == 1 ? "it" : "them") again.")
+                            message: rows.isEmpty ? "Nothing from this batch is left to remove." : "Undo removes \(n) and nothing sends \(rows.count == 1 ? "it" : "them") again.\(sweptNote)")
     }
 
     mutating func rollback(batchID: String) -> Int {
+        // What the stale-pending sweep did in this batch, or into a posted row this batch added, is undone first: the
+        // pending rows come back (a settled one takes back its note, tags and category from the posted row), ready to
+        // settle again into the posted row the next sync re-sends. Their log entries go with the batch, so a row put
+        // back this way is swept again as usual, unlike one the person brought back.
+        let leaving = Set(transactions.lazy.filter { $0.batchID == batchID }.map(\.id))
+        let sweptEntries = mergeLog.filter {
+            $0.undoneAt == nil && ($0.kind == .pendingSettled || $0.kind == .pendingDropped)
+                && ($0.batchID == batchID || $0.keptID.map(leaving.contains) == true)
+        }.map(\.id)
+        if !sweptEntries.isEmpty {
+            _ = undoMerges(sweptEntries)
+            let void = Set(sweptEntries)
+            mergeLog.removeAll { void.contains($0.id) }
+        }
         let affected = Set(transactions.filter { $0.batchID == batchID }.map(\.accountID))
         let removedIDs = Set(transactions.filter { $0.batchID == batchID }.map(\.id))
         transactions.removeAll { $0.batchID == batchID }

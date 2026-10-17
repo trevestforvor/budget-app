@@ -19,6 +19,9 @@ enum PendingSweep {
     static let tipSlack = Money(minorUnits: 200)
     /// …and down to 75% of it.
     static let shrinkPercent: Int64 = 75
+    /// A hold that came down to a smaller charge (near-identical wording) settles only into one at least this share of
+    /// it: a $200 hold at a store and an unrelated $4.99 charge there a few days later aren't one charge.
+    static let shrinkFloorPercent: Int64 = 25
     /// A hold this small is a placeholder authorization (a fuel pump, a hotel): the real charge is any amount.
     static let placeholderMax = Money(minorUnits: 150)
     /// Wording at least this close is the same merchant for sure: a placeholder settles, and so does a hold that came
@@ -35,7 +38,36 @@ enum PendingSweep {
         let p = pending.magnitude.minorUnits, q = posted.magnitude.minorUnits
         if 100 * q >= shrinkPercent * p && 100 * q <= tipPercent * p + 100 * tipSlack.minorUnits { return true }
         if p <= placeholderMax.minorUnits && similarity >= sameMerchant { return true }
-        return similarity >= sameMerchant && q < p
+        return similarity >= sameMerchant && q < p && 100 * q >= shrinkFloorPercent * p
+    }
+
+    /// How alike two rows read: the best of their merchants' and descriptions' similarity, either way round.
+    static func similarity(_ a: LedgerTransaction, _ b: LedgerTransaction) -> Double {
+        [Deduplicator.similarity(a.merchant, b.merchant), Deduplicator.similarity(a.merchant, b.rawDescription),
+         Deduplicator.similarity(a.rawDescription, b.merchant), Deduplicator.similarity(a.rawDescription, b.rawDescription)].max() ?? 0
+    }
+
+    /// Pairs missing pending rows with posted rows, one to one, both given by an index of the caller's. A posted row may be
+    /// dated `before` seconds ahead of its pending row, up to `settleAfter` after, with wording that agrees and an amount
+    /// that fits. A pending row two posted rows fit, or a posted row two pending rows fit, isn't paired. Returns the pairs
+    /// (pending → posted) and every pending row anything fit.
+    static func pairs(pending: [(Int, LedgerTransaction)], posted: [(Int, LedgerTransaction)], before: TimeInterval)
+        -> (pairs: [Int: Int], fitted: Set<Int>) {
+        var fits: [Int: [Int]] = [:]
+        var claimants: [Int: Int] = [:]
+        for (i, hold) in pending {
+            for (j, row) in posted {
+                let gap = row.postedAt.timeIntervalSince(hold.postedAt)
+                guard gap >= -before, gap <= settleAfter else { continue }
+                let score = similarity(hold, row)
+                guard score >= similar, amountsFit(pending: hold.amount, posted: row.amount, similarity: score) else { continue }
+                fits[i, default: []].append(j)
+                claimants[j, default: 0] += 1
+            }
+        }
+        var pairs: [Int: Int] = [:]
+        for (i, candidates) in fits where candidates.count == 1 && claimants[candidates[0]] == 1 { pairs[i] = candidates[0] }
+        return (pairs, Set(fits.keys))
     }
 }
 
@@ -59,8 +91,11 @@ extension Ledger {
     /// Settling is strong evidence, so it's immediate: a missing pending row and a new posted row of the same sign, dated
     /// a day before to ten days after it, with wording that agrees and an amount that fits (`PendingSweep.amountsFit`),
     /// pair one to one. A pending row two posted rows fit, or a posted row two pending rows fit, isn't settled: it falls
-    /// to the miss rule. Dropping is weak evidence: a missing row is remembered in `pendingMisses` and dropped only when
-    /// it's missing again 12 hours or more later. A row the person brought back from the log isn't dropped again.
+    /// to the miss rule. A pending row nothing in `added` fits may instead settle into a posted row already in the
+    /// ledger (same account and source, dated on or up to ten days after it, not already a settled row's): a bank can
+    /// send the posted row for a pull or two while still listing the pending one. Dropping is weak evidence: a missing
+    /// row is remembered in `pendingMisses` and dropped only when it's missing again 12 hours or more later. A row the
+    /// person brought back from the log isn't dropped again, or settled again into a row already here.
     mutating func sweepPending(account accountID: String, source: SourceKind, coveredFrom: Date, seen: Set<String>,
                                added: inout [LedgerTransaction], claimed: Set<String>, claimedPending: Set<Int>,
                                batchID: String) -> PendingSweepOutcome {
@@ -74,31 +109,36 @@ extension Ledger {
         }
         guard !missing.isEmpty else { return outcome }
 
-        // Every posted row each missing pending row could be, and every pending row each posted row could be.
-        func similarity(_ a: LedgerTransaction, _ b: LedgerTransaction) -> Double {
-            [Deduplicator.similarity(a.merchant, b.merchant), Deduplicator.similarity(a.merchant, b.rawDescription),
-             Deduplicator.similarity(a.rawDescription, b.merchant), Deduplicator.similarity(a.rawDescription, b.rawDescription)].max() ?? 0
-        }
-        var fits: [Int: [Int]] = [:]
-        var claimants: [Int: Int] = [:]
-        for i in missing {
-            let pending = transactions[i]
-            for (j, posted) in added.enumerated() where !posted.isPending && !claimed.contains(posted.id) {
-                let gap = posted.postedAt.timeIntervalSince(pending.postedAt)
-                guard gap >= -PendingSweep.settleBefore, gap <= PendingSweep.settleAfter else { continue }
-                let score = similarity(pending, posted)
-                guard score >= PendingSweep.similar, PendingSweep.amountsFit(pending: pending.amount, posted: posted.amount, similarity: score) else { continue }
-                fits[i, default: []].append(j)
-                claimants[j, default: 0] += 1
-            }
-        }
-
         let broughtBack = Set(mergeLog.lazy.filter { ($0.kind == .pendingDropped || $0.kind == .pendingSettled) && $0.undoneAt != nil }.map(\.droppedID))
+        // First the posted rows this pull adds…
+        let fresh = added.enumerated().filter { !$0.element.isPending && !claimed.contains($0.element.id) }.map { ($0.offset, $0.element) }
+        let (intoAdded, fitted) = PendingSweep.pairs(pending: missing.map { ($0, transactions[$0]) }, posted: fresh, before: PendingSweep.settleBefore)
+        // …then, for a pending row none of them fit, the posted rows already here that no pending row settled into yet.
+        let settledInto = Set(mergeLog.lazy.filter { $0.kind == .pendingSettled }.compactMap(\.keptID))
+        let unfitted = missing.filter { !fitted.contains($0) && !broughtBack.contains(transactions[$0].id) }
+        let here = unfitted.isEmpty ? [] : transactions.indices.filter { k in
+            let row = transactions[k]
+            return row.accountID == accountID && row.source == source && !row.isPending && !claimed.contains(row.id) && !settledInto.contains(row.id)
+        }.map { ($0, transactions[$0]) }
+        let intoLedger = here.isEmpty ? [:] : PendingSweep.pairs(pending: unfitted.map { ($0, transactions[$0]) }, posted: here, before: 0).pairs
+
         for i in missing {
             let pending = transactions[i]
-            if let candidates = fits[i], candidates.count == 1, let j = candidates.first, claimants[j] == 1 {
+            if let j = intoAdded[i] {
                 let keptBefore = added[j]
                 if Self.carryOver(from: pending, to: &added[j]) { outcome.replaced.append((i, added[j].id)) }
+                outcome.remove.insert(pending.id)
+                outcome.log.append(RowMergeRecord(id: "", kind: .pendingSettled, at: now, batchID: batchID, keptID: keptBefore.id,
+                                                  droppedID: pending.id, dropped: pending, keptBefore: keptBefore))
+                outcome.settled += 1
+                continue
+            }
+            if let k = intoLedger[i] {
+                let keptBefore = transactions[k]
+                if Self.carryOver(from: pending, to: &transactions[k]) {
+                    outcome.replaced.append((i, keptBefore.id))
+                    if transactions[k].categorization?.needsReview != true { reviewReasons[keptBefore.id] = nil }
+                }
                 outcome.remove.insert(pending.id)
                 outcome.log.append(RowMergeRecord(id: "", kind: .pendingSettled, at: now, batchID: batchID, keptID: keptBefore.id,
                                                   droppedID: pending.id, dropped: pending, keptBefore: keptBefore))
