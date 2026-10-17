@@ -41,7 +41,7 @@ enum LiabilitiesScript {
         ScriptedProvider([
             "/item/public_token/exchange": [PlaidScript.exchange],
             "/transactions/sync": [PlaidScript.page("cursor-1")],
-            "/accounts/balance/get": [balances],
+            "/accounts/get": [balances], "/accounts/balance/get": [balances],
             "/liabilities/get": liabilities,
             "/link/token/create": [(200, #"{"link_token": "link-grant-1"}"#)],
         ])

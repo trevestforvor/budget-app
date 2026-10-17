@@ -4,14 +4,17 @@ import Foundation
 import Testing
 
 /// Pins what a sync writes on its link and in the import history, written against 0.5.5 before the 0.6.0 foundation
-/// moved the provider branches and the bookkeeping. It must keep passing unchanged: it is the evidence that the move
-/// changed no behaviour.
+/// moved the provider branches and the bookkeeping. The move changed nothing here. Three deliberate 0.6.0 changes (P1.1)
+/// are marked "0.6.0": Plaid's errors are judged by their code, not the HTTP status, so step 3 uses a real sign-in code;
+/// failed syncs are recorded too, so `imports` counts only the batches that changed rows; and a transient failure backs
+/// off, so step 9 waits it out first.
 @Suite("Link bookkeeping, as 0.5.5 did it")
 struct LinkBookkeepingCharacterizationTests {
     struct Seen: Equatable, CustomStringConvertible {
         var status: ConnectionStatus
         var lastError: String?
         var lastSync: Date?
+        /// Batches that changed rows; 0.6.0 also records failed syncs, counted apart.
         var imports: Int
         var description: String { "\(status) error=\(lastError ?? "nil") lastSync=\(lastSync.map { "\($0.timeIntervalSince1970)" } ?? "nil") imports=\(imports)" }
     }
@@ -20,7 +23,8 @@ struct LinkBookkeepingCharacterizationTests {
 
     static func seen(_ service: BudgetService, _ id: String) async throws -> Seen {
         let link = try #require(try await service.store.links().first { $0.id == id })
-        return Seen(status: link.status, lastError: link.lastError, lastSync: link.lastSync, imports: try await service.store.imports().count)
+        return Seen(status: link.status, lastError: link.lastError, lastSync: link.lastSync,
+                    imports: try await service.store.imports().filter { $0.outcome != .failed }.count)
     }
 
     static func link(_ service: BudgetService, id: String, provider: SourceKind, token: String) async throws {
@@ -35,7 +39,7 @@ struct LinkBookkeepingCharacterizationTests {
             "/transactions/sync": [
                 PlaidScript.page("c1", PlaidScript.row),                                         // 1 rows
                 PlaidScript.page("c2"),                                                          // 2 none
-                (401, #"{"error_code": "UNAUTHORIZED", "error_message": "who are you"}"#),        // 3
+                (400, #"{"error_type": "ITEM_ERROR", "error_code": "INVALID_CREDENTIALS", "error_message": "who are you"}"#), // 3 (0.6.0)
                 (403, ""),                                                                       // 5
                 PlaidScript.loginRequired,                                                       // 6
                 (400, #"{"error": {"code": "enrollment.disconnected", "message": "gone"}}"#),    // 7
@@ -43,7 +47,7 @@ struct LinkBookkeepingCharacterizationTests {
                 (500, #"{"error_code": "INTERNAL_SERVER_ERROR", "error_message": "still down"}"#),// 9
                 PlaidScript.page("c3"),                                                          // 10
             ],
-            "/accounts/balance/get": [PlaidScript.balances],
+            "/accounts/get": [PlaidScript.balances], "/accounts/balance/get": [PlaidScript.balances],
         ])
         let (_, service) = try await TestServer.app(seedDemo: false, plaid: plaid)
         try await Self.link(service, id: "plaid-item-1", provider: .plaid, token: "access-sandbox-9")
@@ -62,10 +66,10 @@ struct LinkBookkeepingCharacterizationTests {
         #expect(s2.status == .connected && s2.lastError == nil && s2.imports == 1)
         #expect(try #require(s2.lastSync) >= #require(s1.lastSync))
 
-        // 3. A 401 from the provider: needs a sign-in, says why, keeps the last good sync, no import.
+        // 3. Plaid refuses the sign-in: needs a sign-in, says why, keeps the last good sync, no import.
         let r3 = try await service.sync.sync(linkID: id)
-        #expect(!r3.ok && r3.error == "Plaid: who are you (UNAUTHORIZED)" && r3.report == nil)
-        #expect(try await Self.seen(service, id) == Seen(status: .needsReauth, lastError: "Plaid: who are you (UNAUTHORIZED)", lastSync: s2.lastSync, imports: 1))
+        #expect(!r3.ok && r3.error == "Plaid: who are you (INVALID_CREDENTIALS)" && r3.report == nil)
+        #expect(try await Self.seen(service, id) == Seen(status: .needsReauth, lastError: "Plaid: who are you (INVALID_CREDENTIALS)", lastSync: s2.lastSync, imports: 1))
 
         // 4. Sync-all leaves a link waiting for a sign-in alone, and asks the provider nothing.
         let before = plaid.count("/transactions/sync")
@@ -95,7 +99,12 @@ struct LinkBookkeepingCharacterizationTests {
         #expect(!r8.ok && r8.error?.contains("try again") == true)
         #expect(try await Self.seen(service, id) == Seen(status: .connected, lastError: r8.error, lastSync: s2.lastSync, imports: 1))
 
-        // 9. A generic failure on the schedule: stays connected, error recorded, nothing else changes.
+        // 9. (0.6.0) The schedule waits out the backoff the failure set, asking nothing.
+        let asked = plaid.count("/transactions/sync")
+        #expect(await service.sync.syncAll().isEmpty)
+        #expect(plaid.count("/transactions/sync") == asked)
+        try await service.sync.updateLink(id) { $0.nextAttemptAt = Date().addingTimeInterval(-1) }
+        //    Then a generic failure on the schedule: stays connected, error recorded, nothing else changes.
         let r9 = await service.sync.syncAll()
         #expect(r9.map(\.ok) == [false] && r9[0].error?.contains("still down") == true)
         #expect(try await Self.seen(service, id) == Seen(status: .connected, lastError: r9[0].error, lastSync: s2.lastSync, imports: 1))
@@ -108,6 +117,8 @@ struct LinkBookkeepingCharacterizationTests {
         #expect(try #require(s10.lastSync) >= #require(s2.lastSync))
         let link = try #require(try await service.store.links().first { $0.id == id })
         #expect(link.cursor == "c3")
+        // (0.6.0) Each failure, 3 and 5–9, is in the history.
+        #expect(try await service.store.imports().filter { $0.outcome == .failed }.count == 6)
     }
 
     @Test("Which failures need the person to sign in again")

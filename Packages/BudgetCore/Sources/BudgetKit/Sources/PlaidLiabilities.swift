@@ -62,6 +62,24 @@ public struct PlaidAPIError: LocalizedError, Hashable, Sendable {
     public var errorDescription: String? {
         "Plaid: \(errorMessage ?? "error \(status)")" + (errorCode.map { " (\($0))" } ?? "")
     }
+
+    /// Codes after which the person has to sign in to the bank again (update mode); retrying on a schedule can't help.
+    public static let needsSignInCodes: Set<String> = [
+        "ITEM_LOGIN_REQUIRED", "INVALID_CREDENTIALS", "INSUFFICIENT_CREDENTIALS", "ITEM_LOCKED", "USER_SETUP_REQUIRED",
+        "ACCESS_NOT_GRANTED", "NO_ACCOUNTS",
+    ]
+    /// Codes for an Item that's gone or whose access was withdrawn.
+    public static let revokedCodes: Set<String> = ["ITEM_NOT_FOUND", "USER_PERMISSION_REVOKED"]
+    /// Codes for the server's own Plaid setup being wrong: its keys, or a token from another environment.
+    public static let providerSetupCodes: Set<String> = [
+        "INVALID_API_KEYS", "INVALID_SECRET", "INVALID_CLIENT_ID", "UNAUTHORIZED_ENVIRONMENT", "INVALID_ACCESS_TOKEN",
+    ]
+
+    /// Whether this error holds for every call on the Item, so asking another endpoint instead would only fail again.
+    public var endsItemAccess: Bool {
+        guard let errorCode else { return false }
+        return Self.needsSignInCodes.contains(errorCode) || Self.revokedCodes.contains(errorCode) || Self.providerSetupCodes.contains(errorCode)
+    }
 }
 
 /// Whether an Item gives card bills, as the last `/liabilities/get` said. Each "not available" answer is a state of

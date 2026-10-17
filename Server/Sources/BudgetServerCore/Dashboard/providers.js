@@ -128,6 +128,8 @@ export function announce(outcome, where) {
 }
 
 // [lane P] linkPlaid
+import { duplicatePlaidLink } from "./linkerrors.js";
+
 /// Plaid Link. A new link trades Link's public token for an Item. `update` (a link waiting for a sign-in) opens
 /// Link in update mode for that Item instead: the person signs in again, and finishing just syncs the link, so its
 /// accounts and history carry on (there's nothing to exchange). Banks that sign in on their own site (OAuth) leave
@@ -135,6 +137,9 @@ export function announce(outcome, where) {
 /// the link being repaired are kept in sessionStorage). Resolves once Link closes and its outcome is shown.
 /// `grant` (with `update`) is the same update mode asking the person to add card-bill access (Plaid Liabilities) to
 /// that Item: same Item, same access, nothing exchanged. Only a click on "Grant card-bill access" starts it.
+/// A new link never makes a second Item at a bank that already has a working one (each is one of the Plaid Trial
+/// plan's ten, and its accounts would all come in twice): picking such a bank closes Link with a note to use Reconnect,
+/// and the server refuses the exchange too, by the same rule, before anything is exchanged.
 export async function linkPlaid({ resume = false, update = null, grant = false, where } = {}) {
   let token, linkID;
   store.pending++;
@@ -157,16 +162,25 @@ export async function linkPlaid({ resume = false, update = null, grant = false, 
   // Which link a bank's own sign-in page is repairing, for when it comes back (?oauth_state_id); none for a new link.
   if (linkID) sessionStorage.setItem("plaidUpdateLink", linkID); else sessionStorage.removeItem("plaidUpdateLink");
   if (linkID && grant) sessionStorage.setItem("plaidGrant", "1"); else sessionStorage.removeItem("plaidGrant");
+  let duplicate = null;
   await new Promise((finish) => {
-    window.Plaid.create({
+    const handler = window.Plaid.create({
       token, receivedRedirectUri: resume ? location.href : undefined,
+      onEvent: (eventName, metadata) => {
+        if (linkID || eventName !== "SELECT_INSTITUTION" || duplicate) return;
+        duplicate = duplicatePlaidLink(store.summary && store.summary.links, metadata.institution_id, metadata.institution_name);
+        if (duplicate) handler.exit({ force: true });
+      },
       onSuccess: async (publicToken, metadata) => {
         clean();
         toast(grant ? "Card-bill access granted. Checking…" : linkID ? "Signed in. Syncing…" : "Linking and syncing…");
         try {
           const result = linkID
-            ? await api(`/v1/links/${encodeURIComponent(linkID)}/sync`, { method: "POST" })
-            : await api("/v1/links/plaid/exchange", { method: "POST", body: { publicToken, institution: (metadata.institution && metadata.institution.name) || "Plaid" } });
+            // A sign-in or renewal (not the card-bill grant) tells the server update mode finished: it clears a
+            // PENDING_DISCONNECT warning and reads the new consent date at its next look.
+            ? await api(`/v1/links/${encodeURIComponent(linkID)}/sync`, { method: "POST", body: grant ? undefined : { afterUpdateMode: true } })
+            : await api("/v1/links/plaid/exchange", { method: "POST", body: { publicToken, institution: (metadata.institution && metadata.institution.name) || "Plaid",
+              institutionID: (metadata.institution && metadata.institution.institution_id) || undefined } });
           announce(grant ? granted(result) : linkID ? reconnected(result) : linked(result), where);
         } catch (error) { reportError(error, where); }
         await afterWrite();
@@ -174,10 +188,12 @@ export async function linkPlaid({ resume = false, update = null, grant = false, 
       },
       onExit: (err) => {
         clean();
-        if (err) reportError({ message: err.display_message || "The bank sign-in closed before it finished.", detail: [err.error_code, err.error_message].filter(Boolean).join(": ") }, where);
+        if (duplicate) reportError({ message: `${duplicate.institution} is already linked. Use Reconnect on it instead, so you keep its history and don't use up a Plaid Item.` }, where);
+        else if (err) reportError({ message: err.display_message || "The bank sign-in closed before it finished.", detail: [err.error_code, err.error_message].filter(Boolean).join(": ") }, where);
         finish();
       },
-    }).open();
+    });
+    handler.open();
   });
 }
 // [end lane P] linkPlaid

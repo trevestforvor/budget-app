@@ -6,5 +6,12 @@
 
 BUDGET_BUNDLE_PREFIX = com.example
 DEVELOPMENT_TEAM =
+// The host the phone reaches your server's API on (budget-api.example.com), for Plaid's sign-in to come back to the
+// app from a bank's own app (Associated Domains). Empty leaves the entitlement out.
+BUDGET_API_HOST =
 
 #include? "Local.xcconfig"
+
+// With a host, the entitlements that add applinks:$(BUDGET_API_HOST); without one, the plain ones.
+BUDGET_ENTITLEMENTS_none = App/Budget.entitlements
+BUDGET_ENTITLEMENTS = $(BUDGET_ENTITLEMENTS_$(BUDGET_API_HOST:default=none):default=App/BudgetAppLinks.entitlements)

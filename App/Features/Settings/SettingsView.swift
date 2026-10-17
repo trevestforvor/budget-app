@@ -41,6 +41,12 @@ struct SettingsView: View {
                 destination(route)
             }
             .task(id: app.revision) { await load() }
+            // A tapped connection push opens Linked accounts (and its reconnect, through `app.pendingReconnect`).
+            .onChange(of: MorningSummaryModel.shared.opensLinkedAccounts, initial: true) { _, opens in
+                guard opens else { return }
+                MorningSummaryModel.shared.opensLinkedAccounts = false
+                path = [.accounts]
+            }
         }
         .presentationBackground(Color.ds.canvas)
         // However the sheet closes — Done or a swipe — what it shows is what the app uses.
@@ -77,7 +83,9 @@ struct SettingsView: View {
                 if !signIn.isEmpty {
                     DSNoticeCard(signIn.count == 1 ? "\(signIn[0].institution) needs you to sign in again"
                                                    : "\(signIn.count) connections need you to sign in again",
-                                 message: "Nothing new is coming in from \(signIn.count == 1 ? "it" : "them"). Reconnect on your Budget dashboard — your accounts and history stay as they are.",
+                                 message: signIn.allSatisfy({ $0.reconnect == .phone })
+                                    ? "Nothing new is coming in from \(signIn.count == 1 ? "it" : "them"). Sign in again from Linked accounts — your accounts and history stay as they are."
+                                    : "Nothing new is coming in from \(signIn.count == 1 ? "it" : "them"). Reconnect on your Budget dashboard — your accounts and history stay as they are.",
                                  actionTitle: "See accounts") { path.append(.accounts) }
                         .settingsCardRow()
                 }
@@ -141,6 +149,8 @@ struct SettingsView: View {
                 DSListRow("Linked accounts", detail: accountsDetail, systemImage: "building.columns", tone: .iris) {
                     if status?.institutions.contains(where: \.needsSignIn) == true {
                         DSTag("Sign in", systemImage: "exclamationmark", tint: Color.ds.caution)
+                    } else if status?.institutions.contains(where: { $0.consentEndsSoon() }) == true {
+                        DSTag("Renew", systemImage: "clock", tint: Color.ds.amber)
                     }
                 }
             }

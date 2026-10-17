@@ -59,9 +59,13 @@ public struct PlaidSource: TransactionSource {
     /// - Parameter grantLiabilities: with `accessToken`, update mode that asks the person to consent to liabilities on
     ///   the same Item (the card-bill grant). The Item and its access token stay as they are: nothing is exchanged after.
     ///   Only ever started by the person's own click.
+    /// - Parameter webhook: where Plaid sends the Item's webhooks (this server's `/v1/plaid/webhook`). It's baked into an
+    ///   Item when it's created; an existing Item is moved with `updateWebhook`.
+    /// - Parameter reauthorization: with `accessToken`, renew the bank's consent on an Item that's still healthy (the
+    ///   dashboard's "Renew access"); ignored for a new link.
     public static func linkToken(environment: Environment, credentials: Credentials, userID: String, investments: Bool,
                                  daysRequested: Int = 730, redirectURI: String? = nil, accessToken: String? = nil,
-                                 grantLiabilities: Bool = false,
+                                 grantLiabilities: Bool = false, webhook: String? = nil, reauthorization: Bool = false,
                                  transport: any HTTPTransport = URLSessionTransport()) async throws -> String {
         var body: [String: JSONValue] = [
             "client_name": .string("Budget"), "language": .string("en"), "country_codes": .array([.string("US")]),
@@ -73,6 +77,7 @@ public struct PlaidSource: TransactionSource {
                 body["products"] = .array([])
                 body["additional_consented_products"] = .array([.string(liabilitiesProduct)])
             }
+            if reauthorization { body["update"] = .object(["reauthorization_enabled": .bool(true)]) }
         } else {
             // Never in `products`: that list is a requirement every institution must meet, so it would hide banks.
             body["products"] = .array([.string("transactions")])
@@ -80,6 +85,7 @@ public struct PlaidSource: TransactionSource {
             body["additional_consented_products"] = .array((investments ? ["investments"] : []).map(JSONValue.string) + [.string(liabilitiesProduct)])
         }
         if let redirectURI { body["redirect_uri"] = .string(redirectURI) }
+        if let webhook { body["webhook"] = .string(webhook) }
         let json: JSONValue
         do {
             json = try await transport.json(try request(environment, "link/token/create", body, credentials))
@@ -91,6 +97,119 @@ public struct PlaidSource: TransactionSource {
         }
         guard case let .object(o) = json, case let .string(token)? = o["link_token"] else { throw DecisionError.malformed("no link_token") }
         return token
+    }
+
+    // MARK: Update mode from the phone (Hosted Link)
+
+    /// Plaid's Hosted Link: Link on Plaid's own page, which the phone opens in an in-app browser session.
+    public struct HostedLinkOptions: Hashable, Sendable {
+        /// Where Plaid's page sends the browser when the person is done: the app's custom scheme, which ends the session.
+        public var completionRedirectURI: String
+        /// The page opens in an `ASWebAuthenticationSession`, and OAuth banks return through the app's Universal Link.
+        public var isMobileApp: Bool
+        /// How long the hosted page stays usable.
+        public var urlLifetimeSeconds: Int
+
+        public init(completionRedirectURI: String, isMobileApp: Bool, urlLifetimeSeconds: Int) {
+            self.completionRedirectURI = completionRedirectURI; self.isMobileApp = isMobileApp; self.urlLifetimeSeconds = urlLifetimeSeconds
+        }
+    }
+
+    /// What `/link/token/create` gave for an update-mode session. The token and the URL are secrets: never logged.
+    public struct UpdateModeLink: Sendable {
+        public var linkToken: String
+        /// Plaid's hosted page for the session; nil when Hosted Link wasn't asked for (or isn't enabled for the client).
+        public var hostedLinkURL: String?
+        public var expiresAt: Date?
+        public var requestID: String?
+    }
+
+    /// `/link/token/create` in update mode for an existing Item, and nothing else: the access token isn't optional, so
+    /// this can never start a new Item (each one uses up a Plaid Trial slot). `products` is empty, no other product's
+    /// consent is asked for (the card-bill grant is the dashboard's), and the accounts the Item shares can't change here.
+    /// - Parameter redirectURI: sent on every call (OAuth banks need it in update mode too).
+    /// - Parameter reauthorization: renew the bank's consent on an Item that's still healthy (Plaid's reauthorization flow).
+    /// Plaid's errors come back as `PlaidAPIError`. An answer that doesn't parse throws without its body, which carries
+    /// the link token and the hosted URL.
+    public static func updateModeLinkToken(accessToken: String, environment: Environment, credentials: Credentials, userID: String,
+                                           redirectURI: String?, webhook: String?, hostedLink: HostedLinkOptions?, reauthorization: Bool = false,
+                                           transport: any HTTPTransport = URLSessionTransport()) async throws -> UpdateModeLink {
+        var body: [String: JSONValue] = [
+            "client_name": .string("Budget"), "language": .string("en"), "country_codes": .array([.string("US")]),
+            "user": .object(["client_user_id": .string(userID)]),
+            "access_token": .string(accessToken), "products": .array([]),
+        ]
+        if let redirectURI { body["redirect_uri"] = .string(redirectURI) }
+        if let webhook { body["webhook"] = .string(webhook) }
+        if let hostedLink {
+            body["hosted_link"] = .object([
+                "completion_redirect_uri": .string(hostedLink.completionRedirectURI),
+                "is_mobile_app": .bool(hostedLink.isMobileApp),
+                "url_lifetime_seconds": .number(Double(hostedLink.urlLifetimeSeconds)),
+            ])
+        }
+        if reauthorization { body["update"] = .object(["reauthorization_enabled": .bool(true)]) }
+        let json = try await secretAnswer(try request(environment, "link/token/create", body, credentials), transport)
+        guard case let .object(o) = json, let token = string(o, "link_token") else { throw DecisionError.malformed("no link_token") }
+        return UpdateModeLink(linkToken: token, hostedLinkURL: string(o, "hosted_link_url"), expiresAt: string(o, "expiration").flatMap(timestamp),
+                              requestID: string(o, "request_id"))
+    }
+
+    /// How a Link session ended, as `/link/token/get` reports it.
+    public enum LinkSessionOutcome: Sendable, Equatable {
+        /// Not finished yet (or not started).
+        case pending
+        /// Finished without leaving: the person went through. For update mode, `/item/get` has the last word.
+        case finished
+        /// The person left (Plaid's exit callback), with Plaid's error code when Link hit one.
+        case exited(code: String?)
+    }
+
+    /// `/link/token/get` for a Hosted Link session. Its answer holds the session's public token, so nothing of it but the
+    /// outcome comes back, and a body that doesn't parse throws without its text. Returns Plaid's request id too.
+    public static func linkSession(linkToken: String, environment: Environment, credentials: Credentials,
+                                   transport: any HTTPTransport = URLSessionTransport()) async throws -> (outcome: LinkSessionOutcome, requestID: String?) {
+        let json = try await secretAnswer(try request(environment, "link/token/get", ["link_token": .string(linkToken)], credentials), transport)
+        guard case let .object(o) = json else { throw DecisionError.malformed("no link session") }
+        return (parseLinkSessions(o), string(o, "request_id"))
+    }
+
+    /// Success wins over an exit (a person may leave once and come back); a finished session with neither counts as
+    /// finished, for `/item/get` to confirm. Reads the current `results`/`exit` fields and the deprecated
+    /// `on_success`/`on_exit` both.
+    static func parseLinkSessions(_ o: [String: JSONValue]) -> LinkSessionOutcome {
+        guard case let .array(sessions)? = o["link_sessions"] else { return .pending }
+        var exited = false
+        var exitCode: String?
+        var finished = false
+        for case let .object(session) in sessions {
+            if case .object? = session["on_success"] { return .finished }
+            if case let .object(results)? = session["results"] {
+                for key in ["item_add_results", "item_update_results"] {
+                    if case let .array(list)? = results[key], !list.isEmpty { return .finished }
+                }
+            }
+            for key in ["exit", "on_exit"] {
+                guard case let .object(exit)? = session[key] else { continue }
+                exited = true
+                if case let .object(error)? = exit["error"], let code = string(error, "error_code") { exitCode = code }
+            }
+            if string(session, "finished_at") != nil { finished = true }
+        }
+        if exited { return .exited(code: exitCode) }
+        return finished ? .finished : .pending
+    }
+
+    /// A Plaid answer whose body holds secrets (link and public tokens, a hosted URL): Plaid's errors as `PlaidAPIError`
+    /// (an error body holds none), and a success that doesn't parse as an error that quotes nothing of it.
+    static func secretAnswer(_ request: URLRequest, _ transport: any HTTPTransport) async throws -> JSONValue {
+        do {
+            return try await transport.json(request)
+        } catch let error as SourceHTTPError {
+            throw PlaidAPIError(error) ?? PlaidAPIError(status: error.status)
+        } catch is DecodingError {
+            throw DecisionError.malformed("Plaid's answer didn't parse")
+        }
     }
 
     /// `/item/public_token/exchange` → (access token, item id). Store both server-side.
@@ -126,8 +245,25 @@ public struct PlaidSource: TransactionSource {
         return try Self.parseSync(try await transport.json(try Self.request(environment, "transactions/sync", body, credentials)))
     }
 
-    /// All pages from `cursor` to now.
+    /// How many times a pagination that Plaid changed under us starts over before the sync gives up (and tries later).
+    public static let paginationRestarts = 3
+
+    /// All pages from `cursor` to now. When Plaid's data changes mid-way (TRANSACTIONS_SYNC_MUTATION_DURING_PAGINATION),
+    /// the pages so far are thrown away and the loop starts again from the cursor it began with, up to
+    /// `paginationRestarts` times.
     public func sync(from cursor: String?) async throws -> SyncPage {
+        var restarts = 0
+        while true {
+            do {
+                return try await pages(from: cursor)
+            } catch let error as SourceHTTPError
+                where restarts < Self.paginationRestarts && PlaidAPIError(error)?.errorCode == "TRANSACTIONS_SYNC_MUTATION_DURING_PAGINATION" {
+                restarts += 1
+            }
+        }
+    }
+
+    private func pages(from cursor: String?) async throws -> SyncPage {
         var page = try await syncPage(cursor: cursor)
         var all = page
         while page.hasMore {
@@ -141,36 +277,213 @@ public struct PlaidSource: TransactionSource {
         return all
     }
 
-    /// Incremental: everything since `cursor` (nil = full history), current balances and holdings.
+    /// Incremental: everything since `cursor` (nil = full history) and the accounts' balances, read as `balances` says.
+    /// Holdings aren't part of it: they're fetched once a day per Item (HoldingsSync), never on every sync.
     /// Persist `nextCursor` only after the snapshot is applied.
-    public func snapshot(cursor: String?) async throws -> (snapshot: SourceSnapshot, nextCursor: String, removed: [String]) {
-        let page = try await sync(from: cursor)
-        let balances = try Self.parseAccounts(try await transport.json(
-            try Self.request(environment, "accounts/balance/get", ["access_token": .string(accessToken)], credentials)), institution: institution)
-        let holdings = (try? await self.holdings()) ?? [:]
+    public func snapshot(cursor: String?, balances read: BalanceRead = .cached(asOf: nil), now: Date = .now) async throws -> Pull {
+        try await pull(try await sync(from: cursor), balances: read, now: now)
+    }
+
+    /// The second half of `snapshot`: the balances, read as `balances` says, with `page`'s rows on their accounts. A caller
+    /// that counts live reads runs the halves itself, so a transactions page that fails never spends one.
+    public func pull(_ page: SyncPage, balances read: BalanceRead, now: Date = .now) async throws -> Pull {
+        let balances = try await accounts(read, now: now)
         let changed = page.added + page.modified
-        let accounts = balances.map { account -> SourceAccount in
+        let accounts = balances.accounts.map { account -> SourceAccount in
             var a = account
             a.transactions = changed.filter { $0.accountID == account.externalID }.map(\.transaction)
-            a.holdings = holdings[account.externalID] ?? []
             return a
         }
-        return (SourceSnapshot(source: .plaid, accounts: accounts, warnings: []), page.nextCursor, page.removed)
+        return Pull(snapshot: SourceSnapshot(source: .plaid, accounts: accounts, warnings: []), nextCursor: page.nextCursor,
+                    removed: page.removed, liveBalance: balances.live, balanceFallback: balances.fallback)
     }
 
     public func fetch(since: Date, includePending: Bool = true) async throws -> SourceSnapshot {
         let page = try await sync(from: nil)
-        let balances = try Self.parseAccounts(try await transport.json(
-            try Self.request(environment, "accounts/balance/get", ["access_token": .string(accessToken)], credentials)), institution: institution)
-        let holdings = (try? await self.holdings()) ?? [:]
-        let accounts = balances.map { account -> SourceAccount in
+        let balances = try await accounts(.cached(asOf: nil))
+        let accounts = balances.accounts.map { account -> SourceAccount in
             var a = account
             a.transactions = page.added.filter { $0.accountID == account.externalID && $0.transaction.posted >= since && (includePending || !$0.transaction.isPending) }
                 .map(\.transaction)
-            a.holdings = holdings[account.externalID] ?? []
             return a
         }
         return SourceSnapshot(source: .plaid, accounts: accounts, warnings: [])
+    }
+
+    /// What `snapshot` pulled.
+    public struct Pull: Sendable {
+        public var snapshot: SourceSnapshot
+        /// Store it only after the snapshot is applied.
+        public var nextCursor: String
+        /// Transaction ids Plaid removed.
+        public var removed: [String]
+        /// The balances came from a live read at the bank (false: Plaid's cached ones).
+        public var liveBalance: Bool
+        /// Why a live read that was asked for gave way to the cached balances: Plaid's code and request id when it said.
+        public var balanceFallback: PlaidAPIError?
+    }
+
+    // MARK: Balances
+
+    /// How a sync reads balances.
+    public enum BalanceRead: Sendable, Equatable {
+        /// `/accounts/get`: the balances Plaid keeps, free, and refreshed about once a day on a Transactions Item. They're
+        /// dated by Plaid's `last_updated_datetime` when it gives one, else by `asOf` (the newest time they're known to
+        /// be from), else by the time of the read.
+        case cached(asOf: Date?)
+        /// `/accounts/balance/get`: a live read at the bank. It's slow (seconds, sometimes half a minute) and Plaid limits
+        /// it per Item, so it's only for the person's own refresh, within the server's cap. When Plaid refuses it, the
+        /// cached balances are read instead, dated as `cached(asOf: fallbackAsOf)` would date them.
+        case live(fallbackAsOf: Date?)
+
+        public var isLive: Bool {
+            if case .live = self { return true }
+            return false
+        }
+    }
+
+    /// The Item's accounts and balances, read as `read` says. `live` says whether the live read is what came back.
+    public func accounts(_ read: BalanceRead, now: Date = .now) async throws -> (accounts: [SourceAccount], live: Bool, fallback: PlaidAPIError?) {
+        var asOf: Date?
+        var fallback: PlaidAPIError?
+        switch read {
+        case let .live(fallbackAsOf):
+            // Capital One (older connections) and Apple Card refuse a live read without a freshness floor; every other
+            // bank ignores it. Older data than that comes back as an error, and the cached balances are read instead.
+            let floor = now.addingTimeInterval(-86_400).formatted(.iso8601)
+            let body: [String: JSONValue] = ["access_token": .string(accessToken),
+                                             "options": .object(["min_last_updated_datetime": .string(floor)])]
+            do {
+                let json = try await transport.json(try Self.request(environment, "accounts/balance/get", body, credentials))
+                return (try Self.parseAccounts(json, institution: institution, readAt: now), true, nil)
+            } catch is CancellationError {
+                throw CancellationError()
+            } catch {
+                // A refusal the cached read can get past (a rate limit, a bank that can't answer live, a stale floor, a
+                // network failure) reads the cache instead. One that holds for the whole Item (a sign-in, an Item that's
+                // gone, the server's own keys) would only fail again there, so it ends the read as it is.
+                let http = error as? SourceHTTPError
+                let plaid = http.flatMap(PlaidAPIError.init)
+                if plaid?.endsItemAccess == true { throw error }
+                fallback = plaid ?? PlaidAPIError(status: http?.status ?? 0)
+                asOf = fallbackAsOf
+            }
+        case let .cached(date):
+            asOf = date
+        }
+        let json = try await transport.json(try Self.request(environment, "accounts/get", ["access_token": .string(accessToken)], credentials))
+        return (try Self.parseAccounts(json, institution: institution, readAt: asOf.map { min($0, now) } ?? now), false, fallback)
+    }
+
+    /// The Item's accounts with Plaid's cached balances (`/accounts/get`) and no transactions: what card bills need to
+    /// know which accounts are cards, without a sync.
+    public func accountsSnapshot(now: Date = .now) async throws -> SourceSnapshot {
+        SourceSnapshot(source: .plaid, accounts: try await accounts(.cached(asOf: nil), now: now).accounts, warnings: [])
+    }
+
+    // MARK: Item
+
+    /// What `/item/get` says about the Item: the ground truth for its live state.
+    public struct Item: Hashable, Sendable {
+        public var itemID: String?
+        public var institutionID: String?
+        /// `item.error`; nil while the Item is healthy.
+        public var error: PlaidAPIError?
+        /// When the bank's consent runs out (`consent_expiration_time`); nil at banks without an expiry.
+        public var consentExpiresAt: Date?
+        public var billedProducts: [String]
+        public var availableProducts: [String]
+        /// The webhook URL Plaid has for the Item.
+        public var webhook: String?
+        /// `status.transactions.last_successful_update`.
+        public var transactionsUpdatedAt: Date?
+        public var requestID: String?
+    }
+
+    /// `/item/get`. Plaid's errors (ITEM_NOT_FOUND above all) come back as `PlaidAPIError`.
+    public func item() async throws -> Item {
+        do {
+            return try Self.parseItem(try await transport.json(
+                try Self.request(environment, "item/get", ["access_token": .string(accessToken)], credentials)))
+        } catch let error as SourceHTTPError {
+            throw PlaidAPIError(error) ?? error
+        }
+    }
+
+    /// `/item/webhook/update`: where Plaid sends this Item's webhooks from now on. Plaid confirms with a
+    /// WEBHOOK_UPDATE_ACKNOWLEDGED webhook to the new URL. Returns Plaid's request id.
+    @discardableResult
+    public func updateWebhook(_ url: String) async throws -> String? {
+        do {
+            let json = try await transport.json(try Self.request(environment, "item/webhook/update",
+                                                                 ["access_token": .string(accessToken), "webhook": .string(url)], credentials))
+            guard case let .object(o) = json else { return nil }
+            return Self.string(o, "request_id")
+        } catch let error as SourceHTTPError {
+            throw PlaidAPIError(error) ?? error
+        }
+    }
+
+    // MARK: Webhook keys
+
+    /// One of the public keys Plaid signs its webhooks with (`/webhook_verification_key/get`): a P-256 key as a JWK.
+    public struct WebhookKey: Hashable, Sendable {
+        public var keyID: String
+        /// The JWK's coordinates, base64url.
+        public var x: String
+        public var y: String
+        /// When Plaid retired the key; nil while it's current. A key past this is no longer valid (rotation).
+        public var expiredAt: Date?
+
+        public init(keyID: String, x: String, y: String, expiredAt: Date? = nil) {
+            self.keyID = keyID; self.x = x; self.y = y; self.expiredAt = expiredAt
+        }
+    }
+
+    /// `/webhook_verification_key/get` for the key a webhook's JWT names. Only an EC P-256 key for ES256 comes back;
+    /// anything else is refused. Plaid's errors come back as `PlaidAPIError`.
+    public static func webhookVerificationKey(keyID: String, environment: Environment, credentials: Credentials,
+                                              transport: any HTTPTransport = URLSessionTransport()) async throws -> WebhookKey {
+        let json: JSONValue
+        do {
+            json = try await transport.json(try request(environment, "webhook_verification_key/get", ["key_id": .string(keyID)], credentials))
+        } catch let error as SourceHTTPError {
+            throw PlaidAPIError(error) ?? PlaidAPIError(status: error.status)
+        }
+        return try parseWebhookKey(json)
+    }
+
+    static func parseWebhookKey(_ json: JSONValue) throws -> WebhookKey {
+        guard case let .object(o) = json, case let .object(key)? = o["key"], let kid = string(key, "kid"), let x = string(key, "x"),
+              let y = string(key, "y"), string(key, "kty") == "EC", string(key, "crv") == "P-256", string(key, "alg") ?? "ES256" == "ES256"
+        else { throw DecisionError.malformed("no usable webhook key") }
+        return WebhookKey(keyID: kid, x: x, y: y, expiredAt: number(key, "expired_at").map { Date(timeIntervalSince1970: $0) })
+    }
+
+    static func parseItem(_ json: JSONValue) throws -> Item {
+        guard case let .object(o) = json, case let .object(item)? = o["item"] else { throw DecisionError.malformed("no item") }
+        func list(_ key: String) -> [String] {
+            if case let .array(a)? = item[key] { a.compactMap { if case let .string(s) = $0 { s } else { nil } } } else { [] }
+        }
+        var error: PlaidAPIError?
+        if case let .object(e)? = item["error"], string(e, "error_code") != nil || string(e, "error_type") != nil {
+            error = PlaidAPIError(status: 200, errorType: string(e, "error_type"), errorCode: string(e, "error_code"),
+                                  errorMessage: string(e, "error_message"), displayMessage: string(e, "display_message"),
+                                  requestID: string(e, "request_id"))
+        }
+        var updated: Date?
+        if case let .object(status)? = o["status"], case let .object(transactions)? = status["transactions"] {
+            updated = string(transactions, "last_successful_update").flatMap(timestamp)
+        }
+        return Item(itemID: string(item, "item_id"), institutionID: string(item, "institution_id"), error: error,
+                    consentExpiresAt: string(item, "consent_expiration_time").flatMap(timestamp), billedProducts: list("billed_products"),
+                    availableProducts: list("available_products"), webhook: string(item, "webhook").flatMap { $0.isEmpty ? nil : $0 },
+                    transactionsUpdatedAt: updated, requestID: string(o, "request_id"))
+    }
+
+    /// An ISO 8601 time, with or without fractional seconds ("2026-11-03T17:20:13Z", "…13.123Z").
+    static func timestamp(_ s: String) -> Date? {
+        (try? Date(s, strategy: Date.ISO8601FormatStyle(includingFractionalSeconds: true))) ?? (try? Date(s, strategy: .iso8601))
     }
 
     // MARK: Parsing
@@ -219,8 +532,9 @@ public struct PlaidSource: TransactionSource {
                         nextCursor: cursor, hasMore: hasMore)
     }
 
-    /// Credit and loan balances come back as amounts owed (positive); the ledger shows them negative.
-    static func parseAccounts(_ json: JSONValue, institution: String) throws -> [SourceAccount] {
+    /// Credit and loan balances come back as amounts owed (positive); the ledger shows them negative. A balance is dated
+    /// by Plaid's `last_updated_datetime` when it gives one, else by `readAt`.
+    static func parseAccounts(_ json: JSONValue, institution: String, readAt: Date = .now) throws -> [SourceAccount] {
         guard case let .object(o) = json, case let .array(accounts)? = o["accounts"] else { throw DecisionError.malformed("no accounts") }
         return accounts.compactMap { value in
             guard case let .object(a) = value, let id = string(a, "account_id"), case let .object(b)? = a["balances"] else { return nil }
@@ -234,11 +548,12 @@ public struct PlaidSource: TransactionSource {
             let currency = Self.currency(b)
             let sign: Double = kind == .credit ? -1 : 1
             let current = number(b, "current") ?? 0
+            let updated = string(b, "last_updated_datetime").flatMap(timestamp)
             return SourceAccount(externalID: id, institution: institution, institutionDomain: nil,
                                  name: displayName(a), kind: kind,
                                  balance: money(current * sign, currency),
                                  availableBalance: number(b, "available").map { money($0, currency) },
-                                 balanceDate: .now, transactions: [], holdings: [], mask: string(a, "mask"), providerType: type)
+                                 balanceDate: updated ?? readAt, transactions: [], holdings: [], mask: string(a, "mask"), providerType: type)
         }
     }
 

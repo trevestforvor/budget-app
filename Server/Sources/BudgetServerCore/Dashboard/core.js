@@ -536,23 +536,16 @@ export async function createCategory(action) {
 
 const norm = (s) => (s || "").trim().toLowerCase();
 // [lane P] syncProblem, providerDetail
-/// A link's last error in plain words; the provider's own text goes under Details.
-export function syncProblem(link) {
-  const e = link.lastError || "";
-  if (link.status === "needsReauth" || /ITEM_LOGIN_REQUIRED|enrollment\.disconnected/.test(e)) return "The bank ended this connection and needs you to sign in again.";
-  if (/\b40[13]\b/.test(e)) return "The bank turned down the saved sign-in.";
-  if (/isn't set up|not set up/i.test(e)) return "This provider's keys aren't set up on the server anymore.";
-  if (/TOKEN_KEY|can't open stored/i.test(e)) return "The server can't open its saved bank sign-ins.";
-  if (/unreachable|timed? ?out|connect|resolve|network/i.test(e)) return "Couldn't reach the bank's service. It'll try again on its own.";
-  if (/RATE_LIMIT|429/.test(e)) return "The provider asked us to slow down. It'll try again on its own.";
-  return "The last sync didn't finish. It'll try again on its own.";
-}
-/// The Plaid/Teller wording of an error, cleaned of Swift's wrapper, for a Details disclosure.
+/// A link's last error in plain words, by the server's error kind (linkerrors.js); the provider's own text goes under
+/// Details.
+export { syncProblem } from "./linkerrors.js";
+/// The provider's wording of an error for a Details disclosure, with Plaid's request id (what Plaid support asks for).
+/// An error stored before 0.6.0 may still be Swift's wrapper around Plaid's JSON; its message is picked out.
 export function providerDetail(link) {
   const e = link.lastError || "";
   const m = e.match(/error_message\\?"\s*:\s*\\?"([^"\\]+)/), c = e.match(/error_code\\?"\s*:\s*\\?"([^"\\]+)/);
   const core = m ? `${SOURCE[link.provider] || link.provider}: ${m[1]}${c ? ` (${c[1]})` : ""}` : e;
-  return core + (link.lastSync ? ` · last good sync ${dateTime(link.lastSync)}` : "");
+  return core + (link.errorRequestID ? ` · request ${link.errorRequestID}` : "") + (link.lastSync ? ` · last good sync ${dateTime(link.lastSync)}` : "");
 }
 // [end lane P] syncProblem, providerDetail
 

@@ -62,7 +62,7 @@ final class FakeBridge: HTTPTransport, @unchecked Sendable {
 }
 
 /// Keeps every log message, to show what a sync logs (and what it doesn't).
-final class CapturedLog: @unchecked Sendable {
+final class SimpleFINCapturedLog: @unchecked Sendable {
     private let lock = NSLock()
     private var _lines: [String] = []
     var lines: [String] { lock.withLock { _lines } }
@@ -73,7 +73,7 @@ final class CapturedLog: @unchecked Sendable {
     }
 
     struct Handler: LogHandler {
-        let log: CapturedLog
+        let log: SimpleFINCapturedLog
         var metadata: Logger.Metadata = [:]
         var logLevel: Logger.Level = .info
         subscript(metadataKey key: String) -> Logger.Metadata.Value? { get { metadata[key] } set { metadata[key] = newValue } }
@@ -330,7 +330,7 @@ struct SimpleFINSyncTests {
     @Test("Each request logs its count, never the access URL; the bridge's extra keys are logged by name once a day")
     func logsRequestCount() async throws {
         let (_, service) = try await TestServer.app(seedDemo: false)
-        let log = CapturedLog()
+        let log = SimpleFINCapturedLog()
         var link = StoredLink(id: "simplefin-log", provider: .simplefin, institution: "SimpleFIN Bridge", externalID: nil, sealedToken: "",
                               cursor: nil, status: .connected, lastSync: nil, lastError: nil, createdAt: Date())
         let url = URL(string: "https://user:SECRETPASS@bridge.example/simplefin")!

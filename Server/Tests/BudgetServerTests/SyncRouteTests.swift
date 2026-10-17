@@ -70,7 +70,7 @@ struct SyncRouteTests {
         let plaid = ScriptedProvider([
             "/item/public_token/exchange": [PlaidScript.exchange],
             "/transactions/sync": [PlaidScript.page("cursor-1", PlaidScript.row), PlaidScript.loginRequired, PlaidScript.page("cursor-2")],
-            "/accounts/balance/get": [PlaidScript.balances],
+            "/accounts/get": [PlaidScript.balances], "/accounts/balance/get": [PlaidScript.balances],
             "/link/token/create": [(200, #"{"link_token": "link-update-1"}"#)],
         ])
         let (dash, service) = try await TestServer.app(seedDemo: false, plaid: plaid, surface: .dashboard)
@@ -138,7 +138,7 @@ struct SyncRouteTests {
             "/item/public_token/exchange": [PlaidScript.exchange],
             "/transactions/sync": [PlaidScript.page("cursor-1"), PlaidScript.loginRequired, (500, #"{"error_code": "INTERNAL_SERVER_ERROR", "error_message": "try again"}"#),
                                    PlaidScript.page("cursor-2")],
-            "/accounts/balance/get": [PlaidScript.balances],
+            "/accounts/get": [PlaidScript.balances], "/accounts/balance/get": [PlaidScript.balances],
         ])
         let (app, service) = try await TestServer.app(seedDemo: false, plaid: plaid)
         try await app.test(.router) { client in
@@ -150,6 +150,9 @@ struct SyncRouteTests {
         let retried = try await service.sync.sync(linkID: "plaid-item-1")
         #expect(!retried.ok && retried.error?.contains("try again") == true)
         #expect(try await service.store.links().first?.status == .connected)
+        // 0.6.0: the schedule first waits out the failure's backoff, then takes the link.
+        #expect(await service.sync.syncAll().isEmpty)
+        try await service.sync.updateLink("plaid-item-1") { $0.nextAttemptAt = nil }
         #expect(await service.sync.syncAll().map(\.ok) == [true])
     }
 
@@ -158,7 +161,7 @@ struct SyncRouteTests {
         let plaid = ScriptedProvider([
             "/item/public_token/exchange": [PlaidScript.exchange],
             "/transactions/sync": [PlaidScript.page("cursor-1")],
-            "/accounts/balance/get": [PlaidScript.balances],
+            "/accounts/get": [PlaidScript.balances], "/accounts/balance/get": [PlaidScript.balances],
         ], delay: .milliseconds(150))
         let (app, service) = try await TestServer.app(seedDemo: false, plaid: plaid)
         try await app.test(.router) { client in

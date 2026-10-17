@@ -82,9 +82,9 @@ struct PlaidTests {
         #expect(transport.requests.first?.url?.host == "sandbox.plaid.com")
     }
 
-    @Test("Balances: credit shows as owed (negative); holdings attach to investment accounts")
+    @Test("Balances: credit shows as owed (negative); holdings come from their own call, not the sync")
     func snapshot() async throws {
-        let transport = FakeTransport(["/transactions/sync": [Self.page2], "/accounts/balance/get": [Self.balances], "/investments/holdings/get": [Self.holdings]])
+        let transport = FakeTransport(["/transactions/sync": [Self.page2], "/accounts/get": [Self.balances], "/investments/holdings/get": [Self.holdings]])
         let plaid = PlaidSource(environment: .production, credentials: Self.credentials, accessToken: "a", institution: "Meadow", transport: transport)
         let snapshot = try await plaid.fetch(since: PlaidSource.day("2026-09-01")!)
         let card = try #require(snapshot.accounts.first { $0.externalID == "card" })
@@ -94,8 +94,10 @@ struct PlaidTests {
         #expect(snapshot.accounts.first { $0.externalID == "cash" }?.kind == .savings)
         let inv = try #require(snapshot.accounts.first { $0.externalID == "inv" })
         #expect(inv.kind == .investment)
-        #expect(inv.holdings.first?.symbol == "VTI")
-        #expect(inv.holdings.first?.marketValue == Money(30000.5))
+        #expect(inv.holdings.isEmpty && transport.requests.allSatisfy { $0.url!.path != "/investments/holdings/get" })
+        let holdings = try await plaid.holdings()
+        #expect(holdings["inv"]?.first?.symbol == "VTI")
+        #expect(holdings["inv"]?.first?.marketValue == Money(30000.5))
     }
 
     @Test("Chase's generic \"CREDIT CARD\" gives way to the official name; the mask comes through")

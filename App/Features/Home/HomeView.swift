@@ -59,6 +59,11 @@ struct HomeView: View {
             }
         }
         .task(id: app.revision) { await load() }
+        // Plaid's sign-in returns to the app through its universal link (`/plaid/oauth-return`) after a bank's own app
+        // signs the person in. The Hosted Link page in the in-app browser is expected to carry on by itself (unproven on a
+        // device; PLAID_PLAN.md); an open reconnect sheet also asks the server at once, so it can't sit on a stuck page.
+        .onOpenURL { ReconnectReturn.shared.note($0) }
+        .onContinueUserActivity(NSUserActivityTypeBrowsingWeb) { ReconnectReturn.shared.note($0.webpageURL) }
     }
 
     @discardableResult
@@ -205,7 +210,13 @@ struct HomeView: View {
                 captionTint: overview.cashChange30Days.isNegative ? Color.ds.inkSecondary : Color.ds.inflow
             )
             if let attention = overview.attention, !attention.isEmpty {
-                DSAttentionPill(Self.attentionTitle(attention)) { showsAccounts = true }
+                DSAttentionPill(Self.attentionTitle(attention), tint: attention.allSatisfy { $0.reason == .consentExpiring } ? Color.ds.amber : Color.ds.caution) {
+                    // One connection to repair: Linked accounts opens straight on its sign-in when the phone can do it.
+                    if attention.count == 1, let item = attention.first, item.reason == .needsSignIn || item.reason == .consentExpiring {
+                        app.pendingReconnect = item.linkID
+                    }
+                    showsAccounts = true
+                }
                     .accessibilityHint("Opens your accounts")
                     .accessibilityIdentifier("attentionPill")
             }

@@ -2,7 +2,8 @@
 // Connect-a-bank drawer. Bank sign-in happens here; the phone only reads.
 import { fill, h, api, store, heavy, pageHead, sectionHead, button, busy, armed, isArmed, callout, details, glyph, statusLine,
   institutionGroups, syncProblem, providerDetail, syncNow, describeSync, afterWrite, reportError, toast, rowMoney, plural, dateShort, dateFull,
-  dateTime, KIND, SOURCE, emptyState, drawer, closeDrawer } from "./core.js";
+  dateTime, ago, KIND, SOURCE, emptyState, drawer, closeDrawer } from "./core.js";
+import { needsNewLink, consentDaysLeft, RELINK_OVERLAP } from "./linkerrors.js";
 import { connectPanes, framedNote, linkPlaid, relinkTeller, reconnected, announce } from "./providers.js";
 import { netWorthSection } from "./networth.js";
 import { accountRowExtras, linkDetailsExtras } from "./health.js";
@@ -18,13 +19,16 @@ async function syncInstitution(g, buttonEl) {
   });
 }
 
-/// What the button that repairs a connection says: SimpleFIN's sign-in lives on its own site, so here it's a retry.
-export const reconnectLabel = (link) => (link.provider === "simplefin" ? "Try again" : "Reconnect");
+/// What the button that repairs a connection says: SimpleFIN's sign-in lives on its own site, so here it's a retry; a
+/// Plaid Item that's gone (or whose access was withdrawn) can only be linked again.
+export const reconnectLabel = (link) => (link.provider === "simplefin" ? "Try again" : needsNewLink(link) ? "Link again" : "Reconnect");
 
 /// Sign in to a bank again without losing its history. Plaid opens Link in update mode for the same Item and then
-/// syncs it; Teller reopens the same enrollment in Connect and stores the new token; SimpleFIN is fixed on
-/// SimpleFIN Bridge's site, after which a sync of the link takes it back. Inside the Olares window the bank's
-/// sign-in pages misbehave, so there it points to a full tab instead.
+/// syncs it (on a working link that's "Renew access": the same update mode, renewing the bank's consent); Teller reopens
+/// the same enrollment in Connect and stores the new token; SimpleFIN is fixed on SimpleFIN Bridge's site, after which
+/// a sync of the link takes it back. A Plaid Item that's gone, or whose access was withdrawn, is the one case where a
+/// new link is the only way back: Plaid Link opens as for a new bank. Inside the Olares window the bank's sign-in pages
+/// misbehave, so there it points to a full tab instead.
 export async function reconnect(link, buttonEl, where) {
   const flash = where || document.getElementById("flash");
   if (link.provider !== "simplefin" && window.top !== window.self) {
@@ -33,6 +37,7 @@ export async function reconnect(link, buttonEl, where) {
     return;
   }
   await busy(buttonEl, link.provider === "simplefin" ? "Trying…" : "Signing in…", async () => {
+    if (needsNewLink(link)) return linkPlaid({ where: flash });
     if (link.provider === "plaid") return linkPlaid({ update: link, where: flash });
     if (link.provider === "teller") return relinkTeller(link, { where: flash });
     announce(retriedSimpleFIN(await api(`/v1/links/${encodeURIComponent(link.id)}/sync`, { method: "POST" })), flash);
@@ -53,6 +58,11 @@ function reconnectHelp(g) {
   if (link.provider === "simplefin") {
     return ["Sign in to this bank again on SimpleFIN Bridge, at ", h("a", { href: "https://beta-bridge.simplefin.org", target: "_blank", rel: "noopener" }, "https://beta-bridge.simplefin.org"),
       ", then try again here. Your history is safe; nothing new comes in until then."];
+  }
+  if (needsNewLink(link)) {
+    return link.errorCode === "ITEM_NOT_FOUND"
+      ? `Plaid no longer has this connection to ${g.name}, so signing in again can't bring it back. Linking ${g.name} again makes a new connection: its accounts come in as new ones, with up to two years of history, next to these, which keep theirs.${RELINK_OVERLAP}`
+      : `Access to ${g.name} was withdrawn, at the bank or at Plaid. Linking ${g.name} again makes a new connection: its accounts come in as new ones, with up to two years of history, next to these, which keep theirs.${RELINK_OVERLAP} Removing this old connection stops it but keeps its accounts and transactions.`;
   }
   return `${g.name} ended this connection, which banks do every so often for security. Sign in again and it carries on where it stopped: your history is safe, and nothing new comes in until then.`;
 }
@@ -110,12 +120,47 @@ function accountRow(a, g) {
     rowMoney(a.balance), accountMenuItems(a));
 }
 
+/// What Plaid says about one Item: when the bank's consent ends, the last daily check, and whether webhooks reach this
+/// server (the schedule keeps syncing either way).
+function plaidDetails(l) {
+  if (l.provider !== "plaid") return null;
+  return [
+    l.consentExpiresAt ? [h("dt", {}, "Access ends"), h("dd", {}, dateFull(l.consentExpiresAt))] : null,
+    l.lastItemCheckAt ? [h("dt", {}, "Checked with Plaid"), h("dd", {}, dateTime(l.lastItemCheckAt))] : null,
+    h("dt", {}, "Webhooks"), h("dd", {}, webhookLine(l.webhook)),
+  ];
+}
+
+/// "On · confirmed by Plaid Oct 3 · last arrived 2 hours ago (TRANSACTIONS/SYNC_UPDATES_AVAILABLE)", or why there's none.
+export function webhookLine(w) {
+  const hours = (store.summary && store.summary.settings.syncIntervalHours) || 6;
+  const last = w && w.lastReceivedAt ? `last arrived ${ago(w.lastReceivedAt)}${w.lastCode ? ` (${w.lastCode})` : ""}` : null;
+  if (!w || (!w.url && !last)) return `Off · syncs every ${plural(hours, "hour")} instead`;
+  if (w.acknowledgedAt) return ["On", `confirmed by Plaid ${dateShort(w.acknowledgedAt)}`, last].filter(Boolean).join(" · ");
+  if (last) return `On · ${last}`;
+  return "Registered · waiting for Plaid to confirm";
+}
+
+/// A working Plaid link whose bank consent ends within 14 days (or has just ended): renewing now, in update mode, keeps
+/// it from stopping. Links already waiting for a sign-in have their own banner.
+function consentBanners() {
+  const links = (store.summary && store.summary.links) || [];
+  return links.filter((l) => l.provider === "plaid" && l.status !== "needsReauth" && l.errorKind !== "needsSignIn" && l.errorKind !== "revoked")
+    .map((l) => ({ link: l, days: consentDaysLeft(l) }))
+    .filter(({ days }) => days != null && days <= 14)
+    .sort((a, b) => a.days - b.days)
+    .map(({ link, days }) => callout({ tone: "watch",
+      title: days < 0 ? `${link.institution} access has ended` : `${link.institution} access ends ${days === 0 ? "today" : days === 1 ? "tomorrow" : `in ${days} days`}`,
+      body: `The bank's consent ${days < 0 ? "ran out" : "runs out"} ${dateFull(link.consentExpiresAt)}. Renew it from the phone (Settings → Accounts) or here: it's the same connection, and your history stays.`,
+      actions: [button("Renew access", { compact: true, onclick: (e) => reconnect(link, e.currentTarget) })] }));
+}
+
 function detailsPanel(g) {
   return h("div", { class: "inst-details" }, g.links.map((l) => h("dl", { class: "kv" },
     h("dt", {}, "Connected through"), h("dd", {}, SOURCE[l.provider] || l.provider),
     h("dt", {}, "Connected since"), h("dd", {}, dateFull(l.createdAt)),
     h("dt", {}, "Last good sync"), h("dd", {}, l.lastSync ? dateTime(l.lastSync) : "Not yet"),
-    l.lastError ? [h("dt", {}, "Last problem"), h("dd", {}, syncProblem(l))] : null, linkDetailsExtras(l))),
+    l.lastError ? [h("dt", {}, "Last problem"), h("dd", {}, syncProblem(l))] : null, plaidDetails(l), linkDetailsExtras(l))),
     g.links.some((l) => l.lastError) ? details("What the provider said", g.links.filter((l) => l.lastError).map(providerDetail).join("\n")) : null,
     h("p", { class: "help" }, "Removing a connection stops syncing and signs this server out at the bank. Transactions already here stay."));
 }
@@ -217,9 +262,11 @@ export default {
     const accounts = store.overview.accounts;
     const connect = button("Connect a bank", { kind: "primary", onclick: () => openDrawer() });
     const linked = groups.filter((g) => g.kind !== "statements"), statements = groups.filter((g) => g.kind === "statements");
-    const banners = groups.filter((g) => g.state.tone === "act").map((g) => callout({ tone: "act", title: `${g.name} needs you to sign in again`,
+    const banners = groups.filter((g) => g.state.tone === "act").map((g) => callout({ tone: "act",
+      title: needsNewLink(g.state.problem) ? `${g.name} needs to be linked again` : `${g.name} needs you to sign in again`,
       body: g.state.lastSync ? `Nothing new has come in since ${dateShort(g.state.lastSync)}. Your history is safe.` : "Your history is safe.",
       actions: [button(reconnectLabel(g.state.problem), { compact: true, onclick: (e) => reconnect(g.state.problem, e.currentTarget) })] }));
+    banners.push(...consentBanners());
     if (!store.summary.settings.linkingEnabled) banners.push(callout({ tone: "watch", title: "Bank linking is off",
       body: "The server has no key to protect bank sign-ins, so it can't link or sync banks. Add BUDGET_TOKEN_KEY to the server's install settings (budget.env on a Mac, the app's settings on an Olares), then restart it.",
       detail: "Set BUDGET_TOKEN_KEY to the output of: openssl rand -base64 32" }));

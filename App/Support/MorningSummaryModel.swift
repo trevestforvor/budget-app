@@ -42,6 +42,10 @@ final class MorningSummaryModel {
     private(set) var paceUnsupported = false
     /// A tapped pace alert's payload, until there's an app to open it in.
     private var pendingPace: [String: String]?
+    /// A tapped connection push's payload, until there's an app to open it in.
+    private var pendingConnection: [String: String]?
+    /// Settings should open on Linked accounts (a tapped connection push); Settings clears it once it has.
+    var opensLinkedAccounts = false
 
     private init() {}
 
@@ -210,6 +214,7 @@ final class MorningSummaryModel {
         self.app = app
         if let pendingDay { open(day: pendingDay) }
         if let pendingPace { openPace(pendingPace) }
+        if let pendingConnection { openConnection(pendingConnection) }
     }
 
     // MARK: Pace alerts
@@ -269,6 +274,23 @@ final class MorningSummaryModel {
         case let .merchant(name): openPace(["to": "merchant", "id": name, "month": month])
         default: openPace(["to": "budget", "month": month])
         }
+    }
+
+    // MARK: Connection pushes
+
+    /// A tapped connection push ("Chase needs you to sign in again", "Amex access ends Nov 3") opens Settings → Linked
+    /// accounts; with `to: reconnect`, the reconnect flow for its link, which asks the server for a fresh session (the
+    /// push carries no link or token).
+    func openConnection(_ payload: [String: String]) {
+        guard let app else {
+            pendingConnection = payload
+            return
+        }
+        pendingConnection = nil
+        app.showsOpportunity = false
+        if payload["to"] == "reconnect", let link = payload["linkID"], !link.isEmpty { app.pendingReconnect = link }
+        opensLinkedAccounts = true
+        app.route(Navigate(screen: .settings))
     }
 
     // MARK: Background refresh

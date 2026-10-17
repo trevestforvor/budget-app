@@ -74,7 +74,7 @@ struct NetWorthRouteTests {
         let plaid = FakeProvider([
             "/item/public_token/exchange": [#"{"access_token": "access-sandbox-9", "item_id": "item-1"}"#],
             "/transactions/sync": [#"{"added": [{"transaction_id": "t1", "account_id": "chk", "amount": 12.5, "date": "2026-09-20", "name": "BLUE BOTTLE", "pending": false}], "modified": [], "removed": [], "next_cursor": "c1", "has_more": false}"#],
-            "/accounts/balance/get": [#"{"accounts": [{"account_id": "chk", "balances": {"current": 50}, "name": "Checking", "type": "depository", "subtype": "checking"}]}"#],
+            "/accounts/get": [#"{"accounts": [{"account_id": "chk", "balances": {"current": 50}, "name": "Checking", "type": "depository", "subtype": "checking"}]}"#], "/accounts/balance/get": [#"{"accounts": [{"account_id": "chk", "balances": {"current": 50}, "name": "Checking", "type": "depository", "subtype": "checking"}]}"#],
         ])
         let (dash, service) = try await TestServer.app(seedDemo: false, plaid: plaid, surface: .dashboard)
         try await dash.test(.router) { client in

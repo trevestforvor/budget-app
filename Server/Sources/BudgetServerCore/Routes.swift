@@ -203,7 +203,11 @@ struct ConfirmBody: Decodable { let categoryID: String }
 struct AskBody: Decodable { let question: String; let conversationID: String?; let sessionID: String?; let capabilities: [String]? }
 /// `scenarioID` (0.5.0) projects with a Plan scenario's changes on top; an older server ignores it.
 struct ProjectionBody: Decodable { let horizonMonths: Int; let goal: GoalQuery?; let scenarioID: String? }
-struct PlaidExchangeBody: Decodable { let publicToken: String; let institution: String }
+/// `institutionID` (0.6.0 dashboards): Link's `institution_id`, for the one-Item-per-bank check and stored on the link.
+struct PlaidExchangeBody: Decodable { let publicToken: String; let institution: String; var institutionID: String? = nil }
+/// `afterUpdateMode` (0.6.0 dashboards): Plaid Link just finished update mode on the link (`SyncService.noteUpdateMode`).
+/// No body is a plain sync.
+struct LinkSyncBody: Decodable { var afterUpdateMode: Bool? = nil }
 struct PlaidTokenBody: Decodable {
     let linkID: String?
     /// With `linkID`: update mode asking the person to consent to liabilities (the dashboard's "Grant card-bill access").
@@ -236,7 +240,8 @@ struct ResetBody: Decodable {
 /// Stops a link at its provider where that's possible (Plaid `/item/remove`); failures are logged, not fatal,
 /// so a dead or sandbox Item can always be removed locally.
 func revoke(_ link: StoredLink, _ service: BudgetService) async {
-    guard link.provider == .plaid, let sealer = service.sealer else { return }
+    // An empty token is an Item Plaid already deleted (ITEM_NOT_FOUND): there's nothing left to remove.
+    guard link.hasLiveItem, let sealer = service.sealer else { return }
     do {
         guard let plaid = try await service.providers.plaid() else { return }
         try await PlaidSource.removeItem(accessToken: try sealer.open(link.sealedToken), environment: plaid.environment,
@@ -373,27 +378,52 @@ func addLinkRoutes(_ router: Router<BasicRequestContext>, _ service: BudgetServi
         let body = (try? await HTTP.body(PlaidTokenBody.self, request)) ?? PlaidTokenBody(linkID: nil)
         if body.grantCardBills == true, body.linkID == nil { throw BudgetAPIError.rejected("Granting card-bill access needs the link it's for.") }
         var accessToken: String?
+        var renewal = false
         if let linkID = body.linkID {
             guard let link = try await service.store.links().first(where: { $0.id == linkID }) else { throw BudgetAPIError.notFound }
             guard link.provider == .plaid else { throw BudgetAPIError.rejected("\(link.institution) connects through \(link.provider.displayName), not Plaid.") }
+            // Update mode needs a live Item; one Plaid deleted can only be linked again.
+            guard link.hasLiveItem else { throw BudgetAPIError.rejected(SyncService.itemGoneMessage(link)) }
             accessToken = try requireSealer().open(link.sealedToken)
+            // A working link opened in update mode is "Renew access": Plaid's reauthorization renews the bank's consent
+            // (as the phone's renewal does); without it Link would find nothing to fix.
+            renewal = body.grantCardBills != true && !LinkHealthBook.waitsForPerson(link)
         }
+        // WEBHOOK-002: a new Item takes this server's webhook URL from its link token.
+        let webhook = await PlaidMaintenance.webhookURL(service.settings, sandbox: plaid.environment == .sandbox)
         let token = try await PlaidSource.linkToken(environment: plaid.environment, credentials: .init(clientID: plaid.clientID, secret: plaid.secret),
                                                     userID: "owner", investments: true, redirectURI: plaid.redirectURI,
                                                     accessToken: accessToken, grantLiabilities: body.grantCardBills == true,
-                                                    transport: service.providers.transport)
+                                                    webhook: webhook, reauthorization: renewal, transport: service.providers.transport)
         return try HTTP.json(["linkToken": token])
     }
 
     router.post("/v1/links/plaid/exchange") { request, _ in
         guard let plaid = try await service.providers.plaid() else { throw BudgetAPIError.rejected("Plaid isn't set up yet — add its keys on the dashboard.") }
         let body = try await HTTP.body(PlaidExchangeBody.self, request)
-        let exchanged = try await PlaidSource.exchange(publicToken: body.publicToken, environment: plaid.environment,
-                                                       credentials: .init(clientID: plaid.clientID, secret: plaid.secret), transport: service.providers.transport)
-        let link = StoredLink(id: "plaid-" + exchanged.itemID, provider: .plaid, institution: body.institution, externalID: exchanged.itemID,
-                              sealedToken: try requireSealer().seal(exchanged.accessToken), cursor: nil, status: .connected,
-                              lastSync: nil, lastError: nil, createdAt: Date())
-        try await service.store.upsertLink(link)
+        let institutionID = StoredLink.institutionID(body.institutionID)
+        // ITEM-011: one Item per bank, checked before the exchange, so a second Item never comes to exist on this server
+        // (each one uses up a Plaid Trial slot). The public token is left to expire unexchanged. The check, the exchange
+        // and the insert take one turn in the sync queue, so two exchanges for the same bank at once (two tabs) can't
+        // both pass the check.
+        let link = try await service.sync.serialized { () async throws -> StoredLink in
+            if let existing = StoredLink.duplicateItem(in: try await service.store.links(), institutionID: institutionID, institution: body.institution) {
+                service.logger.info("plaid exchange refused: \(existing.id) already holds an Item at that bank")
+                throw BudgetAPIError.server(status: 409, message: StoredLink.duplicateItemMessage(existing))
+            }
+            let exchanged = try await PlaidSource.exchange(publicToken: body.publicToken, environment: plaid.environment,
+                                                           credentials: .init(clientID: plaid.clientID, secret: plaid.secret), transport: service.providers.transport)
+            var link = StoredLink(id: "plaid-" + exchanged.itemID, provider: .plaid, institution: body.institution, externalID: exchanged.itemID,
+                                  sealedToken: try requireSealer().seal(exchanged.accessToken), cursor: nil, status: .connected,
+                                  lastSync: nil, lastError: nil, createdAt: Date())
+            if let institutionID {
+                var plaid = PlaidLinkState()
+                plaid.institutionID = institutionID
+                link.plaid = plaid
+            }
+            try await service.store.upsertLink(link)
+            return link
+        }
         let result = try await service.sync.sync(linkID: link.id, trigger: .afterLink)
         return try HTTP.json(result, status: .created)
     }
@@ -417,8 +447,10 @@ func addLinkRoutes(_ router: Router<BasicRequestContext>, _ service: BudgetServi
 
     /// Syncs one link now; for a link waiting for a sign-in, a retry. Plaid's reconnect ends here. One bank's row of a
     /// SimpleFIN link (`<linkID>~<bank>`, what an app before 0.6.0 sends back) syncs the link.
-    router.post("/v1/links/:id/sync") { _, context in
-        try HTTP.json(try await service.sync.sync(linkID: SimpleFINLinkState.linkID(fromRowID: try HTTP.rowID(context)), trigger: .personLink))
+    router.post("/v1/links/:id/sync") { request, context in
+        let afterUpdateMode = (try? await HTTP.body(LinkSyncBody.self, request))?.afterUpdateMode == true
+        let linkID = SimpleFINLinkState.linkID(fromRowID: try HTTP.rowID(context))
+        return try HTTP.json(try await service.sync.sync(linkID: linkID, trigger: .personLink, afterUpdateMode: afterUpdateMode))
     }
 
     /// A SimpleFIN link SimpleFIN stopped accepting: a new setup token, the same link (its accounts and history carry on).

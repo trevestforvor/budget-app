@@ -18,17 +18,17 @@ struct PublicRouteTests {
         let (app, _) = try await TestServer.app(seedDemo: false)
         try await app.test(.router) { client in
             try await client.execute(uri: "/v1/plaid/webhook", method: .post, headers: Self.json, body: TestServer.body("{}")) { response in
-                #expect(response.status == .serviceUnavailable)  // reached the route, which isn't built yet
+                #expect(response.status == .badRequest)  // reached the route, which refuses a request without Plaid's JWT
             }
             // A cross-site Origin doesn't stop it either: Plaid isn't a browser, and the JWT is the check.
             var withOrigin = Self.json
             withOrigin[.origin] = "https://evil.example"
             try await client.execute(uri: "/v1/plaid/webhook", method: .post, headers: withOrigin, body: TestServer.body("{}")) {
-                #expect($0.status == .serviceUnavailable)
+                #expect($0.status == .badRequest)
             }
             // The query isn't part of the path.
             try await client.execute(uri: "/v1/plaid/webhook?x=1", method: .post, headers: Self.json, body: TestServer.body("{}")) {
-                #expect($0.status == .serviceUnavailable)
+                #expect($0.status == .badRequest)
             }
             let near: [(String, HTTPRequest.Method)] = [
                 ("/v1/plaid/webhook/", .post), ("/v1/plaid/webhookx", .post),
