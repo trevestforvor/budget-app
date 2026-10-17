@@ -74,21 +74,24 @@ struct AccountEditRouteTests {
         #expect(try await dashService.api.overview().accounts.first?.nickname == "Bills")
     }
 
-    @Test("Making a card of an account with a positive balance warns, and the balance keeps its sign")
-    func remoteClient() async throws {
+    @Test("The app's client edits an account whose id holds a colon and a slash; a card with a positive balance warns, unflipped")
+    func appClientWarnsOnPositiveCard() async throws {
         let (app, service) = try await TestServer.app(seedDemo: false)
-        let id = try await Self.seed(service)
-        try await app.test(.router) { client in
-            // A positive balance on a card: warned, not flipped.
-            let json = #"{"errors": [], "accounts": [{"id": "acct-1", "name": "Everyday Rewards", "org": {"name": "Harbor Bank"}, "currency": "USD", "balance": "25.00", "balance-date": \#(Int(Date().timeIntervalSince1970)), "transactions": []}]}"#
-            _ = try await service.api.ingest(try SimpleFINSource.parse(Data(json.utf8)), batchID: "simplefin-link-1-2")
-            // As `RemoteBudgetAPI` sends it: `appending(component:)` leaves the colon as it is.
-            try await client.execute(uri: "/v1/accounts/\(id)", method: .patch, headers: TestServer.auth, body: TestServer.body(#"{"kind": "credit"}"#)) { response in
-                #expect(response.status == .ok)
-                let result = try Self.decode(AccountChangeResult.self, response)
-                #expect(result.warning?.contains("positive") == true)
-                #expect(result.account.balance == Money(25))
-            }
+        // A SimpleFIN id with a slash in it: `RemoteBudgetAPI` sends `simplefin:acct/1` as one percent-encoded segment.
+        let json = #"{"errors": [], "accounts": [{"id": "acct/1", "name": "Everyday Rewards", "org": {"name": "Harbor Bank"}, "currency": "USD", "balance": "25.00", "balance-date": \#(Int(Date().timeIntervalSince1970)), "transactions": []}]}"#
+        _ = try await service.api.ingest(try SimpleFINSource.parse(Data(json.utf8)), batchID: "simplefin-link-1-1")
+        let id = try #require(try await service.api.overview().accounts.first?.id)
+        #expect(id.contains(":") && id.contains("/"))
+        try await app.test(.live) { client in
+            let port = try #require(client.port)
+            let remote = RemoteBudgetAPI(baseURL: URL(string: "http://localhost:\(port)")!, token: TestServer.token)
+            let result = try await remote.updateAccount(id: id, AccountChange(kind: .credit, nickname: "Rewards card"))
+            #expect(result.account.id == id && result.account.nickname == "Rewards card")
+            #expect(result.warning?.contains("positive") == true)
+            #expect(result.account.balance == Money(25))
+            #expect(try await remote.overview().accounts.first { $0.id == id }?.kind == .credit)
+            // A refusal comes back to the app as what the server said.
+            await #expect(throws: BudgetAPIError.self) { try await remote.updateAccount(id: id, AccountChange(mask: "1")) }
         }
     }
 }

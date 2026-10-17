@@ -116,6 +116,26 @@ struct AccountEditTests {
 
         _ = try ledger.updateAccount(id: "card2", AccountChange(kind: .checking))
         #expect(ledger.row("out")?.transferPeerID == "in" && ledger.row("in")?.transferPeerID == "out")
+
+        // Re-pairing only adds pairs: back to a card, the pair stays (as documented on `updateAccount`).
+        _ = try ledger.updateAccount(id: "card2", AccountChange(kind: .credit))
+        #expect(ledger.row("out")?.transferPeerID == "in" && ledger.row("in")?.transferPeerID == "out")
+    }
+
+    @Test("A nickname is one line, without control characters or an account number")
+    func nicknameIsOneLine() throws {
+        var ledger = Setup.ledger(Setup.state())
+        #expect(try ledger.updateAccount(id: "chk", AccountChange(nickname: " Joint\n\tbills  account ")).account.nickname == "Joint bills account")
+        let before = ledger.state
+        #expect(throws: BudgetAPIError.rejected("A nickname can't hold control characters.")) {
+            try ledger.updateAccount(id: "chk", AccountChange(nickname: "Bills\u{0}"))
+        }
+        #expect(throws: BudgetAPIError.rejected("Leave the account number out of a nickname; its last digits go under Last digits.")) {
+            try ledger.updateAccount(id: "chk", AccountChange(nickname: "Checking 9876543210"))
+        }
+        #expect(ledger.state == before)
+        // A year or a short number is fine.
+        #expect(try ledger.updateAccount(id: "chk", AccountChange(nickname: "Trip fund 2027")).account.nickname == "Trip fund 2027")
     }
 
     @Test("Bad last digits and unknown accounts are refused")

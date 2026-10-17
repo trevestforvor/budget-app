@@ -9,15 +9,25 @@ extension Ledger {
     /// set isn't replaced by a provider's (`prepareIngest`). A kind change re-pairs old matched transfers (they depend on
     /// cash versus card) and, when the account became a card, sends its money in filed as Income back to review, as the
     /// one-time card upgrade did (`sendCardIncomeToReview`). Nothing flips a balance's sign: a card with a positive balance
-    /// is only warned about.
+    /// is only warned about. Re-pairing only adds pairs: a pair this change made card-to-card stays paired, and neither the
+    /// pairs nor the rows sent to review are undone when the kind is changed back.
+    ///
+    /// A nickname is one line: whitespace inside it (a pasted newline or tab) becomes one space, other control characters
+    /// are refused, and so is a run of six or more digits, so an account number can't be stored and exported through it.
     mutating func updateAccount(id: String, _ change: AccountChange) throws -> AccountChangeResult {
         guard let index = accounts.firstIndex(where: { $0.id == id }) else { throw BudgetAPIError.notFound }
         var account = accounts[index]
 
         if let raw = change.nickname {
-            let nickname = raw.trimmingCharacters(in: .whitespacesAndNewlines)
+            let nickname = raw.split(whereSeparator: \.isWhitespace).joined(separator: " ")
             guard nickname.count <= Self.nicknameLimit else {
                 throw BudgetAPIError.rejected("A nickname can be at most \(Self.nicknameLimit) characters.")
+            }
+            guard !nickname.unicodeScalars.contains(where: { $0.properties.generalCategory == .control }) else {
+                throw BudgetAPIError.rejected("A nickname can't hold control characters.")
+            }
+            guard nickname.firstMatch(of: /[0-9]{6,}/) == nil else {
+                throw BudgetAPIError.rejected("Leave the account number out of a nickname; its last digits go under Last digits.")
             }
             account.nickname = nickname.isEmpty ? nil : nickname
         }

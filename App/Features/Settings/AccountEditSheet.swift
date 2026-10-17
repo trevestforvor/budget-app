@@ -10,7 +10,9 @@ struct AccountEditButton: View {
     @Environment(AppModel.self) private var app
     @State private var canEdit = false
     @State private var isEditing = false
-    /// What the save says to check (a card with a positive balance) or what went back to review, after the sheet closes.
+    /// What the save says to check (a card with a positive balance) or what went back to review: held while the sheet
+    /// is up and shown once it's gone, since the row can't present an alert while it's still presenting the sheet.
+    @State private var pendingOutcome: String?
     @State private var outcome: String?
 
     var body: some View {
@@ -28,12 +30,15 @@ struct AccountEditButton: View {
             }
         }
         .task(id: app.revision) { canEdit = await app.serverSupports(ServerStatus.accountEditsSince) }
-        .sheet(isPresented: $isEditing) {
+        .sheet(isPresented: $isEditing, onDismiss: {
+            outcome = pendingOutcome
+            pendingOutcome = nil
+        }) {
             AccountEditSheet(account: account) { change in
                 do {
                     let result = try await app.api.updateAccount(id: account.id, change)
                     await app.didWrite()
-                    outcome = AccountEditSheet.outcome(result)
+                    pendingOutcome = AccountEditSheet.outcome(result)
                     return nil
                 } catch {
                     return error.localizedDescription
@@ -68,10 +73,17 @@ struct AccountEditSheet: View {
     private var trimmedNickname: String { nickname.trimmingCharacters(in: .whitespacesAndNewlines) }
     private var trimmedMask: String { mask.trimmingCharacters(in: .whitespacesAndNewlines) }
     private var tooLong: Bool { trimmedNickname.count > Self.nicknameLimit }
+    /// Six or more digits in a row is most likely an account number; the server refuses it in a nickname.
+    private var nicknameHasNumber: Bool { trimmedNickname.firstMatch(of: /[0-9]{6,}/) != nil }
+    private var nicknameError: String? {
+        tooLong ? "Keep it to \(Self.nicknameLimit) characters."
+            : nicknameHasNumber ? "Leave the account number out; its last digits go below." : nil
+    }
     private var badMask: Bool {
         !trimmedMask.isEmpty && !((2...5).contains(trimmedMask.count) && trimmedMask.allSatisfy { $0.isASCII && $0.isNumber })
     }
-    /// A SimpleFIN account's kind is a guess from its name until the person says; saving confirms it even unchanged.
+    /// A SimpleFIN account's kind is a guess from its name until the person says; saving confirms it even unchanged, which
+    /// the Kind footer says.
     private var kindIsGuess: Bool { account.source == .simplefin && account.kindSetByPerson != true }
 
     /// Only the fields that differ from the account as it is (and the kind, while it's still a guess).
@@ -90,13 +102,19 @@ struct AccountEditSheet: View {
     var body: some View {
         NavigationStack {
             List {
+                if let failure {
+                    // The server's refusal, whichever field it's about (a nickname or the digits).
+                    Section {
+                        DSNoticeCard("Couldn't save", message: failure).settingsCardRow()
+                    }
+                }
                 DSListSection("Kind", footer: kindFooter) {
                     DSSegmented("Kind", selection: $kind, options: AccountKind.allCases) { $0.shortTitle }
                         .padding(.vertical, DSSpace.xs)
                         .accessibilityIdentifier("accountKind")
                 }
                 DSListSection("Nickname", footer: bankFooter) {
-                    DSField(nil, style: .inline, error: tooLong ? "Keep it to \(Self.nicknameLimit) characters." : nil,
+                    DSField(nil, style: .inline, error: nicknameError,
                             counter: trimmedNickname.isEmpty ? nil : "\(trimmedNickname.count) / \(Self.nicknameLimit)") {
                         TextField(account.name, text: $nickname)
                             .textInputAutocapitalization(.words)
@@ -105,7 +123,7 @@ struct AccountEditSheet: View {
                     }
                 }
                 DSListSection("Last digits", footer: "2 to 5 numbers, as on the card or statement. Leave it empty to use what the bank sends.") {
-                    DSField(nil, style: .inline, error: badMask ? "Use 2 to 5 numbers, like 0909." : failure) {
+                    DSField(nil, style: .inline, error: badMask ? "Use 2 to 5 numbers, like 0909." : nil) {
                         TextField("0909", text: $mask)
                             .keyboardType(.numberPad)
                             .accessibilityIdentifier("accountMask")
@@ -119,11 +137,12 @@ struct AccountEditSheet: View {
                 ToolbarItem(placement: .cancellationAction) { Button("Cancel") { dismiss() } }
                 ToolbarItem(placement: .confirmationAction) {
                     Button(isSaving ? "Saving…" : "Save") { save() }
-                        .disabled(!hasChanges || tooLong || badMask || isSaving)
+                        .disabled(!hasChanges || nicknameError != nil || badMask || isSaving)
                         .accessibilityIdentifier("saveAccount")
                 }
             }
             .onChange(of: change) { failure = nil }
+            .announcesProblem(failure)
         }
         .presentationDetents([.large])
         .presentationBackground(Color.ds.canvas)
@@ -135,15 +154,18 @@ struct AccountEditSheet: View {
     }
 
     private var kindFooter: String {
-        switch kind {
+        let counts = switch kind {
         case .credit: "What a card owes is counted as owed, not as cash."
         case .investment: "Counted in net worth only, never as cash."
         case .checking, .savings: "Counted as cash on hand."
         }
+        let whose = kindIsGuess ? " Saving confirms the kind, even unchanged."
+            : account.kindSetByPerson == true ? " Set by you." : ""
+        return counts + whose
     }
 
     private func save() {
-        guard hasChanges, !tooLong, !badMask, !isSaving else { return }
+        guard hasChanges, nicknameError == nil, !badMask, !isSaving else { return }
         Task {
             isSaving = true
             failure = await onSave(change)

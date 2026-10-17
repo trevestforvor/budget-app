@@ -259,11 +259,11 @@ function renderCoverage(data) {
     const statements = a.source === "fileImport";
     return h("div", { class: "cov-row" },
       h("div", { class: "cov-name" },
-        h("div", { class: "title" }, a.name, a.mask ? h("span", { class: "mask" }, ` ••${a.mask}`) : null),
+        h("div", { class: "title" }, a.nickname || a.name, a.mask ? h("span", { class: "mask" }, ` ••${a.mask}`) : null),
         h("div", { class: "sub" }, `${a.institution} · ${statements ? "statements" : `via ${SOURCE[a.source] || a.source}`}`,
           gaps ? h("span", { class: "watch-text" }, ` · ${gaps === 1 ? "1 empty month" : `${gaps} empty months`}`) : null)),
-      h("div", { class: "cov-strip", role: "img", "aria-label": `${a.name}: ${described}.` }, cells),
-      h("div", { class: "cov-act" }, statements ? h("a", { class: "btn quiet", href: `#/imports?account=${encodeURIComponent(a.id)}`, "aria-label": `Import a statement into ${a.name}` }, "Import") : null));
+      h("div", { class: "cov-strip", role: "img", "aria-label": `${a.nickname || a.name}: ${described}.` }, cells),
+      h("div", { class: "cov-act" }, statements ? h("a", { class: "btn quiet", href: `#/imports?account=${encodeURIComponent(a.id)}`, "aria-label": `Import a statement into ${accountName(a)}` }, "Import") : null));
   });
   return [
     h("div", { class: "cov-grid" }, h("div", { class: "cov-row cov-head", "aria-hidden": "true" }, h("div", { class: "cov-name" }), h("div", { class: "cov-strip" }, marks), h("div", { class: "cov-act" })), rows),
