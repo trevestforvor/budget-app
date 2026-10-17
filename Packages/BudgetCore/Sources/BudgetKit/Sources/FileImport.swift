@@ -46,12 +46,7 @@ public enum FileImport {
 
     /// Stable id for a file row, so re-importing the same file dedupes by id.
     static func rowID(_ date: Date, _ amount: Money, _ description: String, occurrence: Int) -> String {
-        var hash: UInt64 = 0xcbf2_9ce4_8422_2325 // FNV-1a
-        for byte in "\(Int(date.timeIntervalSince1970))|\(amount.minorUnits)|\(description)|\(occurrence)".utf8 {
-            hash ^= UInt64(byte)
-            hash = hash &* 0x100_0000_01b3
-        }
-        return String(hash, radix: 16)
+        String(StableHash.fnv1a64("\(Int(date.timeIntervalSince1970))|\(amount.minorUnits)|\(description)|\(occurrence)"), radix: 16)
     }
 
     static var utc: Calendar {
@@ -284,4 +279,14 @@ enum OFX {
 
 private extension String {
     var nonEmpty: String? { isEmpty ? nil : self }
+}
+
+/// How statement ids are made unreadable (no account number in an id). The server supplies a keyed MAC; tests supply a
+/// fake. BudgetKit has no crypto, so the MAC is injected.
+public struct StatementIDs: Sendable {
+    public static let scheme = "h1"
+    /// Lowercase hex of the MAC of its input.
+    let digest: @Sendable (String) -> String
+
+    public init(digest: @escaping @Sendable (String) -> String) { self.digest = digest }
 }

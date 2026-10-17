@@ -165,8 +165,10 @@ extension DemoLedger {
                            detail: Self.merchantList(rows), effects: [], sample: Array(rows.prefix(Preview.sampleSize)), matchCount: rows.count,
                            changeCount: rows.filter { $0.categorization?.categoryID != category.id }.count)
 
+        // MARK: - [lane L] editTransactions preview (clears possibleDuplicates)
         case let .editTransactions(p):
             return editPreview(try editPlan(p))
+        // MARK: - [end lane L]
 
         case let .restoreTransactions(p):
             guard !p.rows.isEmpty || !(p.aliases ?? []).isEmpty || !(p.caps ?? []).isEmpty || !(p.forgotten ?? []).isEmpty else {
@@ -355,6 +357,7 @@ extension DemoLedger {
             return ActionResult(message: filed == 0 ? "Rule deleted." : "Rule deleted. The \(filed == 1 ? "transaction it filed keeps its" : "\(filed) transactions it filed keep their") category.")
 
         case let .recategorize(p):
+            // MARK: - [lane L] category arms (clear possibleDuplicates)
             let ids = Set(p.transactionIDs)
             let indices = transactions.indices.filter { ids.contains(transactions[$0].id) }
             let undo = restoring(indices)
@@ -365,6 +368,7 @@ extension DemoLedger {
         case let .editTransactions(p):
             let plan = try editPlan(p)
             return apply(plan)
+        // MARK: - [end lane L]
 
         case let .restoreTransactions(p):
             let index = Dictionary(transactions.enumerated().map { ($1.id, $0) }, uniquingKeysWith: { first, _ in first })
@@ -1054,6 +1058,7 @@ extension DemoLedger {
         let known = Set(activeCategories.map(\.id))
         let (candidate, book) = (RuleMatcher(rule, filesMoneyIn: isMoneyIn(rule.categoryID)), ruleBook(list))
         var rows: [LedgerTransaction] = [], moving = 0, settling = 0, yours = 0
+        // MARK: - [lane A] rule-match loop (ruleMatches)
         for row in transactions {
             let text = RuleText(row)
             guard candidate.applies(to: row, text) else { continue }
@@ -1068,6 +1073,7 @@ extension DemoLedger {
             case nil: break
             }
         }
+        // MARK: - [end lane A]
         let name = category(rule.categoryID)?.name ?? "its category"
         let conflicts = conflicts(of: rule)
         var notes: [String] = []

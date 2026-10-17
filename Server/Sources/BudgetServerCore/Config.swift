@@ -66,6 +66,17 @@ public struct ServerConfig: Sendable {
     public var apnsTopic: String?
     /// Card bills from Plaid Liabilities (BUDGET_PLAID_LIABILITIES). Off unless set: Plaid bills each Item once it's used.
     public var plaidLiabilities = false
+    /// Investment holdings (BUDGET_PLAID_HOLDINGS): auto, on or off; 1/true read as on, 0/false as off.
+    public var plaidHoldings = "auto"
+    /// Plaid webhooks (BUDGET_PLAID_WEBHOOKS), on unless set to 0/false/no. They also need `publicURL`.
+    public var plaidWebhooks = true
+    /// SimpleFIN pulls a day on the server's own initiative (BUDGET_SIMPLEFIN_DAILY_PULLS).
+    public var simplefinDailyPulls = 4.0
+    /// Where a bank app returns the phone after OAuth (PLAID_MOBILE_REDIRECT_URI); nil means `<publicURL>/plaid/oauth-return`,
+    /// "off" means none.
+    public var plaidMobileRedirectURI: String?
+    /// The app's id for Universal Links, `<TEAMID>.<bundle id>` (BUDGET_IOS_APP_ID).
+    public var iosAppID: String?
 
     /// Which variables were actually set (so the dashboard can tell "environment" from "default").
     public var environmentKeys: Set<String> = []
@@ -121,14 +132,42 @@ public struct ServerConfig: Sendable {
         c.allowDemo = ["1", "true", "yes"].contains(value("BUDGET_ALLOW_DEMO")?.lowercased() ?? "")
         // Seeding needs the allowance too, so the Olares app setting can't put demo money on the real server.
         c.seedDemo = c.allowDemo && ["1", "true", "yes"].contains(value("BUDGET_SEED_DEMO")?.lowercased() ?? "")
-        c.publicURL = value("BUDGET_PUBLIC_URL")
+        c.publicURL = value("BUDGET_PUBLIC_URL").map(Self.withoutTrailingSlash)
         c.dashboardURL = value("BUDGET_DASHBOARD_URL")
         c.apnsKey = value("APNS_KEY")
         c.apnsKeyID = value("APNS_KEY_ID")
         c.apnsTeamID = value("APNS_TEAM_ID")
         c.apnsTopic = value("APNS_TOPIC")
         c.plaidLiabilities = ["1", "true", "yes"].contains(value("BUDGET_PLAID_LIABILITIES")?.lowercased() ?? "")
+        if let holdings = value("BUDGET_PLAID_HOLDINGS") {
+            let mode = HoldingsMode.synonym(holdings.lowercased())
+            guard HoldingsMode(rawValue: mode) != nil else { throw ConfigError.invalid("BUDGET_PLAID_HOLDINGS must be auto, on or off") }
+            c.plaidHoldings = mode
+        }
+        c.plaidWebhooks = !["0", "false", "no"].contains(value("BUDGET_PLAID_WEBHOOKS")?.lowercased() ?? "")
+        if let pulls = value("BUDGET_SIMPLEFIN_DAILY_PULLS") {
+            guard let n = Double(pulls), (1...20).contains(n) else { throw ConfigError.invalid("BUDGET_SIMPLEFIN_DAILY_PULLS must be a number from 1 to 20") }
+            c.simplefinDailyPulls = n
+        }
+        c.plaidMobileRedirectURI = value("PLAID_MOBILE_REDIRECT_URI")
+        c.iosAppID = value("BUDGET_IOS_APP_ID")
         return c
+    }
+
+    static func withoutTrailingSlash(_ url: String) -> String {
+        var url = url
+        while url.hasSuffix("/") { url.removeLast() }
+        return url
+    }
+
+    /// `url` as a base providers call back: no trailing slash, https only (http too when `allowHTTP`, for a sandbox
+    /// test server). Nil when it isn't one.
+    static func normalizedPublicURL(_ url: String?, allowHTTP: Bool) -> String? {
+        guard let url, !url.isEmpty else { return nil }
+        let base = withoutTrailingSlash(url)
+        guard let parsed = URL(string: base), parsed.host != nil,
+              parsed.scheme == "https" || (allowHTTP && parsed.scheme == "http") else { return nil }
+        return base
     }
 
     public var calendar: Calendar {

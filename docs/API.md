@@ -374,6 +374,42 @@ Writes are the actions `{"type": "savePlanScenario", scenarioID?, name, events?:
 
 The figures are the month's everywhere else: `income` is the cash flow's (`MonthFlow.income`); `spending` and each bucket are the budget's (`BudgetMonth.groups`), each category net of its refunds and never below zero, a charge spread over the year at a twelfth, hidden rows and transfers left out. A past month is worked out as it stood at its end, as `GET /v1/budget` does. Ask reads the same figures with `monthFlow`.
 
+## Connections (server 0.6.0)
+
+Every 0.6.0 field is optional and every new enum decodes tolerantly, so 0.5.x apps and dashboards keep working. Gate new calls on `ServerStatus.connectionsSince`, `holdingsSince`, `accountEditsSince`, `actionBasisSince` and `possibleDuplicatesSince` (all "0.6.0"). `POST /v1/sync` takes an optional `{"requestedByPerson": true}` (the phone and the dashboard send it; no body is a scheduled run).
+
+### Plaid webhook
+
+Not built yet. `POST /v1/plaid/webhook` exists on the API listener only, takes no bearer token, and answers 503.
+
+### Reconnect
+
+Not built yet.
+
+### Sync health and SimpleFIN
+
+Not built yet.
+
+### Imports: undo and hide
+
+`GET /v1/imports` records carry `undo: {mode: allowed | warn | refused, message?}`, worked out on every read. Until undo rules ship, every batch that isn't rolled back or failed is `allowed`.
+
+### Accounts: PATCH
+
+Not built yet.
+
+### Duplicates and merges
+
+Not built yet.
+
+### Holdings
+
+Not built yet.
+
+### Actions: basis
+
+Not built yet.
+
 ## Rules the server owns
 
 - **All math.** Totals, comparisons, percentages in insight text, and projections are computed by the ledger. `AskReply.figures` must be tool outputs, never model-generated numbers.

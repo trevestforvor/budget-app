@@ -157,6 +157,8 @@ public actor LedgerBudgetAPI: BudgetAPI {
     }
 
     public func setInstitutions(_ institutions: [InstitutionLink]) { deployment.institutions = institutions }
+    /// The ledger's accounts as they are, without working out an overview.
+    public func accountList() -> [Account] { ledger.accounts }
     public func setSources(_ sources: [SourceKind]) { deployment.sources = sources }
     public func setEndpoint(_ endpoint: String) { deployment.endpoint = endpoint }
     public func setDashboardURL(_ url: String?) { deployment.dashboardURL = url }
@@ -248,7 +250,9 @@ public actor LedgerBudgetAPI: BudgetAPI {
     public func preview(_ action: AppAction) async throws -> ActionPreview {
         tick(); await pause(0.3)
         try checkAvailable(action)
-        return try ledger.preview(action)
+        var preview = try ledger.preview(action)
+        preview.basis = try ledger.basis(for: action)?.fingerprint
+        return preview
     }
 
     public func spending(_ range: SpendingRange) async throws -> SpendingSummary {
@@ -388,12 +392,21 @@ public actor LedgerBudgetAPI: BudgetAPI {
         }
     }
 
-    public func perform(_ action: AppAction) async throws -> ActionResult {
+    public func perform(_ action: AppAction) async throws -> ActionResult { try await perform(action, basis: nil) }
+
+    /// With a basis (the fingerprint an Ask proposal was made against), the action is refused with a 409 when the rows it
+    /// reaches changed since — checked inside the same write as the change, so nothing slips in between.
+    public func perform(_ action: AppAction, basis: String?) async throws -> ActionResult {
         tick(); await pause(0.5)
         try checkAvailable(action)
         // The change is saved before any model is asked. A re-run that can't reach the model used to throw with the policy
         // changed in memory but never saved, so a restart quietly undid it.
-        var result = try await write { try ledger.perform(action) }
+        var result = try await write {
+            if let basis, let current = try ledger.basis(for: action), current.fingerprint != basis {
+                throw BudgetAPIError.server(status: 409, message: "Your data changed since this was proposed (\(current.rowCount) transaction\(current.rowCount == 1 ? "" : "s") now). Refresh it to see what it would do now.")
+            }
+            return try ledger.perform(action)
+        }
         if case let .updateDecisionPolicy(update) = action, ledger.decisionPolicy.isActive, update.reruns {
             escalatedAccepts = 0
             escalationNote = nil
@@ -411,6 +424,12 @@ public actor LedgerBudgetAPI: BudgetAPI {
             }
         }
         return result
+    }
+
+    /// Changes an account's kind, nickname or last digits (`PATCH /v1/accounts/:id`).
+    public func updateAccount(id: String, _ change: AccountChange) async throws -> AccountChangeResult {
+        tick()
+        return try await write { try ledger.updateAccount(id: id, change) }
     }
 
     public func subscriptions() async throws -> SubscriptionSummary {
@@ -498,6 +517,7 @@ public actor LedgerBudgetAPI: BudgetAPI {
 
     // MARK: Ingest (server)
 
+    // MARK: - [lane L] ingest flagging
     /// Adds a source snapshot to the ledger: accounts upserted, rows deduplicated and tagged with
     /// `batchID`, then categorized (rules → merchant memory → decision model → review).
     public func ingest(_ snapshot: SourceSnapshot, batchID: String, into targetAccountID: String? = nil) async throws -> IngestReport {
@@ -541,6 +561,7 @@ public actor LedgerBudgetAPI: BudgetAPI {
         await recordBalances(from: snapshot, into: targetAccountID)
         return written
     }
+    // MARK: - [end lane L] ingest flagging
 
     /// At most this many waiting rows are asked about again per ingest.
     static let awaitingLimit = 200
@@ -581,6 +602,7 @@ public actor LedgerBudgetAPI: BudgetAPI {
         return try files.enumerated().map { index, file in try copy.prepareIngest(file.snapshot, batchID: "preview-\(index)", into: file.into) }
     }
 
+    // MARK: - [lane L] importDuplicates
     /// Imported rows a synced row also has. With `apply`, the imported copies are removed (the synced
     /// rows stay); without, it only lists them.
     public func importDuplicates(apply: Bool) async throws -> DuplicateSweep {
@@ -593,6 +615,7 @@ public actor LedgerBudgetAPI: BudgetAPI {
         let removed = try await write { ledger.removeDuplicates(ledger.crossSourceDuplicates()) }
         return DuplicateSweep(applied: true, pairs: listed, removed: removed)
     }
+    // MARK: - [end lane L] importDuplicates
 
     /// Removes rows the provider deleted (Plaid `removed`), by provider row id.
     @discardableResult
@@ -639,12 +662,14 @@ public actor LedgerBudgetAPI: BudgetAPI {
         try await write { ledger = Ledger(state: state, now: clock?() ?? ledger.now, calendar: ledger.calendar) }
     }
 
+    // MARK: - [lane L] rollback
     /// Removes every row a batch added and re-anchors the affected accounts. Returns the rows removed.
     @discardableResult
     public func rollback(batchID: String) async throws -> Int {
         tick()
         return try await write { ledger.rollback(batchID: batchID) }
     }
+    // MARK: - [end lane L] rollback
 
     // MARK: Decisions over the review queue
 

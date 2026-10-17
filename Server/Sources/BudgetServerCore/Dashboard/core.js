@@ -455,10 +455,12 @@ export const categoryOptions = (list) => [
 export const swatch = (id) => h("span", { class: `sw tone-${(category(id) || {}).color || "amber"}`, "aria-hidden": "true" });
 /// DSTag-like label for a category: its swatch and name.
 export const categoryTag = (id) => h("span", { class: "cat" }, swatch(id), categoryName(id));
+// [lane L] accountName
 export const accountName = (id) => {
   const a = ((store.overview && store.overview.accounts) || []).find((x) => x.id === id);
   return a ? a.name + (a.mask ? ` ••${a.mask}` : "") : "";
 };
+// [end lane L] accountName
 
 // MARK: New categories (Categories & rules, and a rule's "New category…")
 
@@ -530,6 +532,7 @@ export async function createCategory(action) {
 // MARK: Institutions (Overview tiles and the Accounts view share this)
 
 const norm = (s) => (s || "").trim().toLowerCase();
+// [lane P] syncProblem, providerDetail
 /// A link's last error in plain words; the provider's own text goes under Details.
 export function syncProblem(link) {
   const e = link.lastError || "";
@@ -548,6 +551,7 @@ export function providerDetail(link) {
   const core = m ? `${SOURCE[link.provider] || link.provider}: ${m[1]}${c ? ` (${c[1]})` : ""}` : e;
   return core + (link.lastSync ? ` · last good sync ${dateTime(link.lastSync)}` : "");
 }
+// [end lane P] syncProblem, providerDetail
 
 /// Accounts grouped by institution name (as the app's AccountsView does), each with the links that serve it
 /// and one status. Problem banks first, then by name.
@@ -561,6 +565,7 @@ export function institutionGroups() {
     if (!groups.has(k)) groups.set(k, { key: k, name: a.institution || "Other", accounts: [], links: [] });
     groups.get(k).accounts.push(a);
   }
+  // [lane S] grouping
   const loose = [];
   for (const l of links) { const g = groups.get(norm(l.institution)); if (g) g.links.push(l); else loose.push(l); }
   // SimpleFIN Bridge is one link for several banks, whose accounts carry the banks' own names.
@@ -570,6 +575,7 @@ export function institutionGroups() {
     if (claimed.length) { claimed.forEach((g) => g.links.push(bridges[0])); loose.splice(loose.indexOf(bridges[0]), 1); }
   }
   for (const l of loose) groups.set("link:" + l.id, { key: "link:" + l.id, name: l.institution, accounts: [], links: [l] });
+  // [end lane S] grouping
 
   const RANK = { act: 0, watch: 1, ok: 2, neutral: 3 };
   const list = [...groups.values()].map((g) => {
@@ -583,6 +589,7 @@ export function institutionGroups() {
   return list.sort((a, b) => RANK[a.state.tone] - RANK[b.state.tone] || a.name.localeCompare(b.name));
 }
 
+// [lane S] groupState
 function groupState(g, hours) {
   const via = [...new Set(g.links.map((l) => SOURCE[l.provider] || l.provider))].join(" and ");
   const lastSync = g.links.map((l) => l.lastSync).filter(Boolean).sort().pop();
@@ -599,6 +606,7 @@ function groupState(g, hours) {
   if (g.kind === "demo") return { tone: "neutral", label: "Demo data", detail: ["not a real connection"] };
   return { tone: "neutral", label: "Not linked", detail: [] };
 }
+// [end lane S] groupState
 
 /// "Updated 2 hours ago · via Plaid" with the colored part first; never color alone (the words say it).
 export function statusLine(state, extra) {
@@ -614,7 +622,7 @@ export async function syncNow(links) {
     results = [];
     for (const l of links) results.push(await api(`/v1/links/${encodeURIComponent(l.id)}/sync`, { method: "POST" }));
   } else {
-    results = await api("/v1/sync", { method: "POST" });
+    results = await api("/v1/sync", { method: "POST", body: { requestedByPerson: true } });
   }
   store.syncResults = { at: Date.now(), byLink: Object.fromEntries(results.map((r) => [r.linkID, r])) };
   const mine = links ? results.filter((r) => links.some((l) => l.id === r.linkID)) : results;

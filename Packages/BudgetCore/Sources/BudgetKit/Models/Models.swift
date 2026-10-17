@@ -14,6 +14,19 @@ public enum SourceKind: String, Codable, Sendable, CaseIterable {
         case .fileImport: "OFX / CSV import"
         }
     }
+
+    /// How a source delivers rows, which decides what Undo may do with a batch and what may be swept as stale:
+    /// a cursor never sends a row twice, a window re-sends its last days, a file is the person's own.
+    public enum SyncStyle: String, Sendable { case cursor, window, file, device }
+
+    public var syncStyle: SyncStyle {
+        switch self {
+        case .plaid: .cursor
+        case .simplefin, .teller: .window
+        case .fileImport: .file
+        case .financekit: .device
+        }
+    }
 }
 
 public enum AccountKind: String, Codable, Sendable, CaseIterable {
@@ -31,14 +44,31 @@ public struct Account: Identifiable, Hashable, Codable, Sendable {
     public var source: SourceKind
     /// Last digits of the account number as the bank shows them ("0909"), for matching statement files.
     public var mask: String?
+    /// When the provider said `balance` was true (its balance date); nil from older servers and for statements.
+    public var balanceAsOf: Date? = nil
+    /// The last sync that brought this account without a problem; nil for statements and older servers.
+    public var lastSyncedAt: Date? = nil
+    /// The person's own name for the account; the bank's `name` keeps updating underneath.
+    public var nickname: String? = nil
+    /// The person set `kind` (a provider's guess corrected).
+    public var kindSetByPerson: Bool? = nil
+    /// The person set `mask`; a provider's mask no longer replaces it.
+    public var maskSetByPerson: Bool? = nil
 
-    public init(id: String, name: String, institution: String, kind: AccountKind, balance: Money, source: SourceKind, mask: String? = nil) {
+    public init(id: String, name: String, institution: String, kind: AccountKind, balance: Money, source: SourceKind, mask: String? = nil,
+                balanceAsOf: Date? = nil, lastSyncedAt: Date? = nil, nickname: String? = nil, kindSetByPerson: Bool? = nil,
+                maskSetByPerson: Bool? = nil) {
         self.id = id; self.name = name; self.institution = institution; self.kind = kind; self.balance = balance; self.source = source; self.mask = mask
+        self.balanceAsOf = balanceAsOf; self.lastSyncedAt = lastSyncedAt; self.nickname = nickname
+        self.kindSetByPerson = kindSetByPerson; self.maskSetByPerson = maskSetByPerson
     }
+
+    /// The nickname when the person gave one, else the bank's name.
+    public var displayName: String { nickname ?? name }
 
     /// "Gold Card ••1008", or just the name when the bank gave no digits. The one way the app, the dashboard and the
     /// engine's own sentences (rule descriptions) name an account.
-    public var shortLabel: String { mask.map { "\(name) ••\($0)" } ?? name }
+    public var shortLabel: String { mask.map { "\(displayName) ••\($0)" } ?? displayName }
 }
 
 /// How a category behaves month to month — the basis of "how much can I save".
@@ -560,6 +590,8 @@ public struct Overview: Hashable, Codable, Sendable {
     public var reviewDecisions: Int? = nil
     /// The queue in a sentence (`ReviewGroup.headline`), for the dashboard. Nil when nothing waits.
     public var reviewHeadline: String? = nil
+    /// How fresh each synced account is (`Ledger.accountHealth`). Nil from servers before 0.6.0, and until it's built.
+    public var accountHealth: [AccountHealth]? = nil
 }
 
 /// Something that keeps the ledger from being current, and what to do about it.
@@ -572,6 +604,20 @@ public struct DataAttention: Identifiable, Hashable, Codable, Sendable {
         case stale
         /// No transactions at all yet.
         case emptyLedger
+
+        /// Tolerant: a kind this build doesn't know reads as `stale`, so a newer server never breaks the overview.
+        public init(from decoder: any Decoder) throws {
+            self = Self(rawValue: try decoder.singleValueContainer().decode(String.self)) ?? .stale
+        }
+    }
+
+    /// Why, finer than `kind` (which stays one of the three old apps know). Tolerant: unknown reads as `quiet`.
+    public enum Reason: String, Hashable, Codable, Sendable {
+        case needsSignIn, revoked, consentExpiring, bankNeedsSignIn, syncStale, quiet, providerSetup
+
+        public init(from decoder: any Decoder) throws {
+            self = Self(rawValue: try decoder.singleValueContainer().decode(String.self)) ?? .quiet
+        }
     }
 
     /// Stable across calls: "reauth-<link id>", "stale-<account id>", "no-data" (the checkup's finding ids).
@@ -582,9 +628,17 @@ public struct DataAttention: Identifiable, Hashable, Codable, Sendable {
     public var institution: String?
     /// The account, for `stale`.
     public var accountID: String?
+    /// Nil from servers before 0.6.0.
+    public var reason: Reason? = nil
+    /// The link to repair, when there is one.
+    public var linkID: String? = nil
+    /// When it stops working unless the person acts (a consent that expires).
+    public var dueBy: Date? = nil
 
-    public init(id: String, kind: Kind, title: String, detail: String, institution: String? = nil, accountID: String? = nil) {
+    public init(id: String, kind: Kind, title: String, detail: String, institution: String? = nil, accountID: String? = nil,
+                reason: Reason? = nil, linkID: String? = nil, dueBy: Date? = nil) {
         self.id = id; self.kind = kind; self.title = title; self.detail = detail; self.institution = institution; self.accountID = accountID
+        self.reason = reason; self.linkID = linkID; self.dueBy = dueBy
     }
 }
 
@@ -861,13 +915,34 @@ public struct InstitutionLink: Identifiable, Hashable, Sendable, Codable {
     public var accountIDs: [String]?
     /// The newest transaction on those accounts — how far the data reaches.
     public var coversThrough: Date?
+    // 0.6.0: why it stopped and how to repair it. All nil from older servers.
+    public var errorKind: LinkErrorKind? = nil
+    /// When the current run of failures began.
+    public var failingSince: Date? = nil
+    /// When the server tries again on its own.
+    public var nextRetryAt: Date? = nil
+    /// When the bank's consent runs out (Plaid), so the phone can warn ahead.
+    public var consentExpiresAt: Date? = nil
+    /// What the phone's repair button does.
+    public var reconnect: ReconnectMethod? = nil
+    /// `.providerSite` only: where the person signs in (SimpleFIN Bridge).
+    public var reconnectURL: String? = nil
+    /// The link to sync for "Try again" when this row is one bank of a bigger link (SimpleFIN); nil means `id`.
+    public var syncLinkID: String? = nil
+    /// The last few syncs, newest first.
+    public var recentSyncs: [SyncOutcome]? = nil
 
     public init(id: String, institution: String, priority: InstitutionPriority? = nil, primary: SourceKind?, fallback: SourceKind?,
                 accountKinds: [AccountKind], status: ConnectionStatus, note: String, lastSync: Date? = nil, lastError: String? = nil,
-                accountIDs: [String]? = nil, coversThrough: Date? = nil) {
+                accountIDs: [String]? = nil, coversThrough: Date? = nil, errorKind: LinkErrorKind? = nil, failingSince: Date? = nil,
+                nextRetryAt: Date? = nil, consentExpiresAt: Date? = nil, reconnect: ReconnectMethod? = nil, reconnectURL: String? = nil,
+                syncLinkID: String? = nil, recentSyncs: [SyncOutcome]? = nil) {
         self.id = id; self.institution = institution; self.priority = priority; self.primary = primary
         self.fallback = fallback; self.accountKinds = accountKinds; self.status = status; self.note = note
         self.lastSync = lastSync; self.lastError = lastError; self.accountIDs = accountIDs; self.coversThrough = coversThrough
+        self.errorKind = errorKind; self.failingSince = failingSince; self.nextRetryAt = nextRetryAt
+        self.consentExpiresAt = consentExpiresAt; self.reconnect = reconnect; self.reconnectURL = reconnectURL
+        self.syncLinkID = syncLinkID; self.recentSyncs = recentSyncs
     }
 }
 
@@ -882,8 +957,14 @@ public struct LinkSyncResult: Codable, Hashable, Sendable {
     public var removed: Int
     /// Why it failed, in the provider's words.
     public var error: String?
+    /// What kind of failure, for the phone's repair button. Nil when it worked, and from older servers.
+    public var errorKind: LinkErrorKind? = nil
+    /// Why the server didn't ask the provider this time (a daily request budget reached), in a sentence.
+    public var skipped: String? = nil
 
-    public init(linkID: String, institution: String, ok: Bool, report: IngestReport? = nil, removed: Int = 0, error: String? = nil) {
+    public init(linkID: String, institution: String, ok: Bool, report: IngestReport? = nil, removed: Int = 0, error: String? = nil,
+                errorKind: LinkErrorKind? = nil, skipped: String? = nil) {
         self.linkID = linkID; self.institution = institution; self.ok = ok; self.report = report; self.removed = removed; self.error = error
+        self.errorKind = errorKind; self.skipped = skipped
     }
 }

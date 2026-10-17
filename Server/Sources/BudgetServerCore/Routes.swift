@@ -21,6 +21,14 @@ public struct BudgetService: Sendable {
     /// Models, sync, time zone, public URL — dashboard over environment over defaults.
     public let settings: ServerSettings
     public let logger: Logger
+    /// Pushes about bank connections (a sign-in needed, consent running out, an account gone quiet).
+    public let alerts: ConnectionAlertSender
+    /// Signing in to a bank again from the phone.
+    public let reconnects: ReconnectSessions
+    /// The daily Plaid Item check.
+    public let plaidMaintenance: PlaidMaintenance
+    /// How statement ids are made unreadable; nil until that's built, or without BUDGET_TOKEN_KEY.
+    public let statementIDs: StatementIDs?
     /// Swaps the models in as settings change, never an older snapshot over a newer one (`BudgetServerApp.apply`).
     let modelApplier = ModelApplier()
 
@@ -136,12 +144,23 @@ struct AuthMiddleware<Context: RequestContext>: RouterMiddleware {
     let token: String?
     let allowedOrigins: [String]
 
+    /// Routes on the API surface that take no bearer token and no Origin check, as "METHOD /path". Plaid's webhook
+    /// carries its own auth (a signed JWT the route verifies).
+    static var publicRoutes: Set<String> { ["POST /v1/plaid/webhook"] }
+
+    /// Exactly a public route: the method and the path as sent, with no prefix match, case folding or trailing-slash
+    /// tidying, so anything else (`/v1/plaid/webhook/`, `/V1/…`, `…/../admin/reset`) still needs the token.
+    static func isPublic(_ request: Request) -> Bool {
+        publicRoutes.contains("\(request.method.rawValue) \(request.uri.path)")
+    }
+
     func handle(_ request: Request, context: Context, next: (Request, Context) async throws -> Response) async throws -> Response {
         let path = request.uri.path
         guard path.hasPrefix("/v1") || path.hasPrefix("/dash") else { return try await next(request, context) }
         let isWrite = request.method != .get && request.method != .head
         switch surface {
         case .api:
+            if Self.isPublic(request) { return try await next(request, context) }
             if let token {
                 guard request.headers[.authorization] == "Bearer \(token)" else { return HTTP.error(.unauthorized, "Missing or wrong API token.") }
             }
@@ -214,6 +233,8 @@ struct ResetBody: Decodable {
     let keepLedger: Bool?
 }
 
+// MARK: - [lane P] revoke
+
 /// Stops a link at its provider where that's possible (Plaid `/item/remove`); failures are logged, not fatal,
 /// so a dead or sandbox Item can always be removed locally.
 func revoke(_ link: StoredLink, _ service: BudgetService) async {
@@ -227,6 +248,8 @@ func revoke(_ link: StoredLink, _ service: BudgetService) async {
         service.logger.warning("couldn't revoke \(link.institution) at Plaid (removed here anyway): \(error)")
     }
 }
+
+// MARK: - [end lane P] revoke
 
 // MARK: - Router
 
@@ -287,6 +310,7 @@ public func buildRouter(_ service: BudgetService, surface: Surface = .api) -> Ro
         return try HTTP.json(try await api.projection(horizonMonths: body.horizonMonths, goal: body.goal, scenarioID: body.scenarioID))
     }
     router.get("/v1/status") { _, _ in try HTTP.json(try await api.serverStatus()) }
+    // MARK: - [lane A] actions
     router.post("/v1/actions") { request, _ in
         let action = try await HTTP.body(AppAction.self, request)
         return try HTTP.json(try await api.perform(action))
@@ -297,6 +321,7 @@ public func buildRouter(_ service: BudgetService, surface: Surface = .api) -> Ro
         guard !action.isClientOnly else { throw BudgetAPIError.rejected("\(action.toolName) is handled on the device.") }
         return try HTTP.json(try await api.preview(action))
     }
+    // MARK: - [end lane A] actions
     router.get("/v1/assistant") { _, _ in try HTTP.json(try await api.assistantConfig()) }
     router.get("/v1/checkup") { _, _ in try HTTP.json(try await api.checkup()) }
     router.get("/v1/subscriptions") { _, _ in try HTTP.json(try await api.subscriptions()) }
@@ -320,6 +345,12 @@ public func buildRouter(_ service: BudgetService, surface: Surface = .api) -> Ro
     addNetWorthRoutes(router, service)
     addPlanRoutes(router, service)
     addRecapRoutes(router, service)
+    addReconnectRoutes(router, service)
+    addLedgerSafetyRoutes(router, service, surface: surface)
+    if surface == .api {
+        addPlaidWebhookRoutes(router, service)
+        addAppLinkRoutes(router, service)
+    }
     return router
 }
 
@@ -338,6 +369,7 @@ func addLinkRoutes(_ router: Router<BasicRequestContext>, _ service: BudgetServi
     /// `POST /v1/links/:id/sync`. An unknown or non-Plaid `linkID` is refused rather than starting a second Item.
     /// `grantCardBills` with a `linkID` opens the same update mode to add liabilities consent (card bills) to that Item;
     /// only the person's click on the dashboard asks for it.
+    // MARK: - [lane P] Plaid link routes
     router.post("/v1/links/plaid/token") { request, _ in
         guard let plaid = try await service.providers.plaid() else { throw BudgetAPIError.rejected("Plaid isn't set up yet — add its keys on the dashboard (Connect a bank → Plaid).") }
         let body = (try? await HTTP.body(PlaidTokenBody.self, request)) ?? PlaidTokenBody(linkID: nil)
@@ -364,9 +396,12 @@ func addLinkRoutes(_ router: Router<BasicRequestContext>, _ service: BudgetServi
                               sealedToken: try requireSealer().seal(exchanged.accessToken), cursor: nil, status: .connected,
                               lastSync: nil, lastError: nil, createdAt: Date())
         try await service.store.upsertLink(link)
-        let result = try await service.sync.sync(linkID: link.id)
+        let result = try await service.sync.sync(linkID: link.id, trigger: .afterLink)
         return try HTTP.json(result, status: .created)
     }
+    // MARK: - [end lane P] Plaid link routes
+
+    // MARK: - [lane S] SimpleFIN and Teller link routes
 
     router.post("/v1/links/teller") { request, _ in
         guard await service.providers.teller() != nil else { throw BudgetAPIError.rejected("Teller isn't set up yet — add its application ID on the dashboard (Connect a bank → Teller).") }
@@ -376,7 +411,7 @@ func addLinkRoutes(_ router: Router<BasicRequestContext>, _ service: BudgetServi
                               sealedToken: try requireSealer().seal(body.accessToken), cursor: nil, status: .connected,
                               lastSync: nil, lastError: nil, createdAt: Date())
         try await service.store.upsertLink(link)
-        return try HTTP.json(try await service.sync.sync(linkID: id), status: .created)
+        return try HTTP.json(try await service.sync.sync(linkID: id, trigger: .afterLink), status: .created)
     }
 
     router.post("/v1/links/simplefin") { request, _ in
@@ -387,20 +422,23 @@ func addLinkRoutes(_ router: Router<BasicRequestContext>, _ service: BudgetServi
                               sealedToken: try requireSealer().seal(accessURL.absoluteString), cursor: nil, status: .connected,
                               lastSync: nil, lastError: nil, createdAt: Date())
         try await service.store.upsertLink(link)
-        return try HTTP.json(try await service.sync.sync(linkID: id), status: .created)
+        return try HTTP.json(try await service.sync.sync(linkID: id, trigger: .afterLink), status: .created)
     }
 
     // A link id is never "plaid", "teller" or "simplefin" (it's "<provider>-<id>"), so these parameter routes never
     // meet the static segments above — the router takes a matching static segment and doesn't fall back.
 
     /// Syncs one link now; for a link waiting for a sign-in, a retry. Plaid's reconnect ends here.
-    router.post("/v1/links/:id/sync") { _, context in try HTTP.json(try await service.sync.sync(linkID: try HTTP.rowID(context))) }
+    router.post("/v1/links/:id/sync") { _, context in
+        try HTTP.json(try await service.sync.sync(linkID: try HTTP.rowID(context), trigger: .personLink))
+    }
 
     /// Teller's reconnect: the new access token for the enrollment replaces the stored one, then the link syncs.
     router.put("/v1/links/:id/token") { request, context in
         let body = try await HTTP.body(TellerTokenBody.self, request)
         return try HTTP.json(try await service.sync.replaceToken(linkID: try HTTP.rowID(context), accessToken: body.accessToken, enrollmentID: body.enrollmentID))
     }
+    // MARK: - [end lane S] SimpleFIN and Teller link routes
 
     /// Removes the link (stops syncing). Its rows stay; roll back its batches to remove them.
     router.delete("/v1/links/:id") { _, context in
@@ -411,13 +449,19 @@ func addLinkRoutes(_ router: Router<BasicRequestContext>, _ service: BudgetServi
         return Response(status: .noContent)
     }
 
-    router.post("/v1/sync") { _, _ in try HTTP.json(await service.sync.syncAll()) }
+    /// Every link now. `{"requestedByPerson": true}` is the person asking; no body (older phones, scripts) is a
+    /// scheduled run.
+    router.post("/v1/sync") { request, _ in
+        let body = try? await HTTP.body(SyncRequest.self, request, limit: 64 * 1024)
+        return try HTTP.json(await service.sync.syncAll(trigger: body?.requestedByPerson == true ? .person : .schedule))
+    }
 }
 
 // MARK: - File imports and rollback
 
+// MARK: - [lane L] addImportRoutes
 func addImportRoutes(_ router: Router<BasicRequestContext>, _ service: BudgetService) {
-    router.get("/v1/imports") { _, _ in try HTTP.json(try await service.store.imports()) }
+    router.get("/v1/imports") { _, _ in try HTTP.json(try await service.store.imports().map { $0.annotated() }) }
 
     /// CSV / OFX / QFX text. `accountID` files the rows into an existing account (needed for CSV).
     /// A file's rows as a snapshot, with a CSV's signs read by the kind of account it's filed into.
@@ -467,6 +511,7 @@ func addImportRoutes(_ router: Router<BasicRequestContext>, _ service: BudgetSer
         try await service.store.upsertImport(record)
         return try HTTP.json(["removed": removed])
     }
+    // MARK: - [end lane L] addImportRoutes
 
     /// Erases the ledger (links and import history are kept). Guarded by a confirm phrase.
     router.post("/v1/admin/reset") { request, _ in

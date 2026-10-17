@@ -59,11 +59,21 @@ public protocol BudgetAPI: Sendable {
     /// What's expected from today through `days` ahead: paychecks, bills, subscriptions and card bills, day by day
     /// (`GET /v1/upcoming`). Servers before `ServerStatus.upcomingSince` answer `.notFound`.
     func upcoming(days: Int) async throws -> Upcoming
+    /// `perform(action)`, refused with a 409 when `basis` (the fingerprint an Ask proposal was made against) no longer
+    /// matches the ledger. Nil checks nothing.
+    func perform(_ action: AppAction, basis: String?) async throws -> ActionResult
+    /// Changes an account's kind, nickname or last digits (`PATCH /v1/accounts/:id`). Servers before
+    /// `ServerStatus.accountEditsSince` answer `.notFound`.
+    func updateAccount(id: String, _ change: AccountChange) async throws -> AccountChangeResult
 }
 
 extension BudgetAPI {
     /// A client with no upcoming view (an older stub) has nothing to say.
     public func upcoming(days: Int) async throws -> Upcoming { throw BudgetAPIError.notFound }
+    /// A client that can't check a basis applies the action as it is.
+    public func perform(_ action: AppAction, basis: String?) async throws -> ActionResult { try await perform(action) }
+    /// A client with no account editing (an older stub) has none.
+    public func updateAccount(id: String, _ change: AccountChange) async throws -> AccountChangeResult { throw BudgetAPIError.notFound }
 }
 
 public enum BudgetAPIError: LocalizedError, Equatable {

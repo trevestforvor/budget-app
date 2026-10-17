@@ -538,9 +538,17 @@ public struct ProposedAction: Identifiable, Hashable, Sendable, Codable {
     public var detail: String?
     /// Before/after figures computed by the ledger for the preview.
     public var effects: [Figure]
+    /// The fingerprint of the rows it reaches when it was proposed (`Budget-Basis` on apply); nil checks nothing.
+    public var basis: String? = nil
+    /// How many rows it reaches.
+    public var matchCount: Int? = nil
+    /// A few of them, in words, when there are more than a handful.
+    public var sample: [String]? = nil
 
-    public init(id: String, action: AppAction, title: String, detail: String? = nil, effects: [Figure] = []) {
+    public init(id: String, action: AppAction, title: String, detail: String? = nil, effects: [Figure] = [], basis: String? = nil,
+                matchCount: Int? = nil, sample: [String]? = nil) {
         self.id = id; self.action = action; self.title = title; self.detail = detail; self.effects = effects
+        self.basis = basis; self.matchCount = matchCount; self.sample = sample
     }
 }
 
@@ -571,6 +579,8 @@ public struct ActionPreview: Hashable, Sendable, Codable {
     public var changeCount: Int?
     /// For a rule being made or changed: the rules that would disagree with it (ids, as `rules()` lists them).
     public var conflicts: [String]
+    /// The fingerprint of the rows it reaches now, to send back with the action; nil when there's nothing to check.
+    public var basis: String? = nil
 
     public static let sampleSize = 8
 

@@ -36,6 +36,16 @@ public struct SourceHolding: Hashable, Sendable {
     public var symbol: String?
     public var description: String
     public var marketValue: Money
+    /// The provider's security id, for a stable holding id; never shown.
+    public var securityID: String? = nil
+    public var quantity: Decimal? = nil
+    public var price: Money? = nil
+    public var priceAsOf: Date? = nil
+    /// The whole position's cost, not per share.
+    public var costBasis: Money? = nil
+    /// The provider's security type: equity, etf, mutual fund, fixed income, cash, cryptocurrency, derivative, other.
+    public var type: String? = nil
+    public var isCash: Bool = false
 }
 
 public struct SourceAccount: Hashable, Sendable {
@@ -54,6 +64,10 @@ public struct SourceAccount: Hashable, Sendable {
     /// The provider's own account type, when it gives one (Plaid: "credit" for cards, "loan" for loans — both `.credit`
     /// here). Card bills are asked for only on Items with a "credit" one.
     public var providerType: String? = nil
+    /// The aggregator connection (one bank's sign-in) this account comes through: SimpleFIN's `conn_id`.
+    public var connectionID: String? = nil
+    /// The oldest day this pull covers for the account; rows older than it weren't asked for.
+    public var coveredFrom: Date? = nil
 }
 
 public struct SourceSnapshot: Hashable, Sendable {
@@ -61,6 +75,27 @@ public struct SourceSnapshot: Hashable, Sendable {
     public var accounts: [SourceAccount]
     /// Provider messages worth showing (e.g. "Chase needs re-authentication").
     public var warnings: [String]
+    /// Whether pending rows were asked for, so a pending row missing from the pull really is gone.
+    public var includesPending: Bool = false
+    /// The aggregator's connections (one per bank sign-in), when it names them.
+    public var connections: [SourceConnection] = []
+    /// Accounts the provider couldn't bring this time, by external id.
+    public var accountProblems: [String: SourceAccountProblem] = [:]
+}
+
+/// One bank sign-in behind an aggregator link.
+public struct SourceConnection: Hashable, Codable, Sendable, Identifiable {
+    public var id: String
+    public var name: String
+    public var orgURL: String?
+
+    public init(id: String, name: String, orgURL: String? = nil) { self.id = id; self.name = name; self.orgURL = orgURL }
+}
+
+/// Why one account didn't come through a pull.
+public enum SourceAccountProblem: Hashable, Codable, Sendable {
+    case needsSignIn(code: String?)
+    case failed(code: String?)
 }
 
 public protocol TransactionSource: Sendable {

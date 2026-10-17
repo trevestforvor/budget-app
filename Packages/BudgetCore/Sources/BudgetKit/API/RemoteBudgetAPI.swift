@@ -83,9 +83,9 @@ public struct RemoteBudgetAPI: BudgetAPI, MorningSummaryAPI, PaceAlertsAPI {
 
     public func serverStatus() async throws -> ServerStatus { try await get("v1/status") }
 
+    /// The person asked, so the server may spend a live balance call (a server before 0.6.0 ignores the body).
     public func syncNow() async throws -> [LinkSyncResult] {
-        struct Empty: Encodable {}
-        return try await send("POST", "v1/sync", body: Empty())
+        try await send("POST", "v1/sync", body: SyncRequest(requestedByPerson: true))
     }
 
     public func savingsPlan() async throws -> SavingsPlan { try await get("v1/savings") }
@@ -100,6 +100,18 @@ public struct RemoteBudgetAPI: BudgetAPI, MorningSummaryAPI, PaceAlertsAPI {
     public func perform(_ action: AppAction) async throws -> ActionResult {
         guard !action.isClientOnly else { throw BudgetAPIError.rejected("\(action.toolName) is handled on the device.") }
         return try await send("POST", "v1/actions", body: action)
+    }
+
+    /// With a basis, the server refuses (409) an action whose rows changed since Ask proposed it. A server before
+    /// `ServerStatus.actionBasisSince` ignores the header.
+    public func perform(_ action: AppAction, basis: String?) async throws -> ActionResult {
+        guard let basis else { return try await perform(action) }
+        guard !action.isClientOnly else { throw BudgetAPIError.rejected("\(action.toolName) is handled on the device.") }
+        return try await send("POST", "v1/actions", body: action, headers: ["Budget-Basis": basis])
+    }
+
+    public func updateAccount(id: String, _ change: AccountChange) async throws -> AccountChangeResult {
+        try await send("PATCH", "v1/accounts", id: id, body: change)
     }
 
     public func preview(_ action: AppAction) async throws -> ActionPreview {
@@ -136,14 +148,17 @@ public struct RemoteBudgetAPI: BudgetAPI, MorningSummaryAPI, PaceAlertsAPI {
         return try decode(try await load(URLRequest(url: components.url!)))
     }
 
-    func send<T: Decodable>(_ method: String, _ path: String, body: some Encodable, timeout: TimeInterval = timeout) async throws -> T {
-        try decode(try await load(try request(method, path, body: body), timeout: timeout))
+    func send<T: Decodable>(_ method: String, _ path: String, id: String? = nil, then tail: String? = nil, body: some Encodable,
+                            headers: [String: String] = [:], timeout: TimeInterval = timeout) async throws -> T {
+        try decode(try await load(try request(method, path, id: id, then: tail, body: body, headers: headers), timeout: timeout))
     }
 
-    func request(_ method: String, _ path: String, id: String? = nil, body: some Encodable) throws -> URLRequest {
-        var request = URLRequest(url: endpoint(path, id: id))
+    func request(_ method: String, _ path: String, id: String? = nil, then tail: String? = nil, body: some Encodable,
+                 headers: [String: String] = [:]) throws -> URLRequest {
+        var request = URLRequest(url: endpoint(path, id: id, then: tail))
         request.httpMethod = method
         request.setValue("application/json", forHTTPHeaderField: "Content-Type")
+        for (name, value) in headers { request.setValue(value, forHTTPHeaderField: name) }
         request.httpBody = try Self.encoder.encode(body)
         return request
     }

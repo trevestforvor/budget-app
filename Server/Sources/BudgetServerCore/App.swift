@@ -48,8 +48,13 @@ public enum BudgetServerApp {
         let push = PushSender(settings: settings, transport: pushTransport ?? AHCTransport.shared)
         let morning = MorningSummary(api: api, store: store, sync: sync, settings: settings, push: push, logger: logger, clock: clock)
         let pace = PaceAlertSender(api: api, store: store, morning: morning, push: push, logger: logger, clock: clock)
+        let alerts = ConnectionAlertSender(api: api, store: store, sync: sync, morning: morning, push: push, settings: settings, logger: logger, clock: clock)
+        let reconnects = ReconnectSessions(store: store, sync: sync, providers: providers, sealer: sealer, settings: settings, logger: logger, clock: clock)
+        let maintenance = PlaidMaintenance(api: api, store: store, sync: sync, providers: providers, sealer: sealer, settings: settings,
+                                           logger: logger, clock: clock)
         return (BudgetService(api: api, store: store, sync: sync, morning: morning, pace: pace, config: config, sealer: sealer, providers: providers,
-                              settings: settings, logger: logger), postgres)
+                              settings: settings, logger: logger, alerts: alerts, reconnects: reconnects, plaidMaintenance: maintenance,
+                              statementIDs: StatementIDKeys.make(sealer: sealer, persistent: config.database != nil)), postgres)
     }
 
     /// The chat model and decision providers one snapshot of the settings describes.
@@ -86,11 +91,16 @@ public enum BudgetServerApp {
         }
         // Until they load, saving settings or models is refused rather than written over rows that weren't read.
         do { try await service.settings.load() } catch { service.logger.error("server settings didn't load, so they can't be changed until a restart: \(error)") }
+        // Whether memory and the store hold the same ledger after loading; a migration over one that doesn't is skipped.
+        var ledgerInSync = true
         if let state = try await service.store.loadLedger() {
             await service.api.load(state)
             service.logger.info("loaded ledger: \(state.transactions.count) rows, \(state.accounts.count) accounts")
             // What loading filled in (transfer pairs for older matches, new default categories) is written once.
-            do { try await service.api.persistUpgrades(from: state) } catch { service.logger.error("couldn't save the upgraded ledger: \(error)") }
+            do { try await service.api.persistUpgrades(from: state) } catch {
+                ledgerInSync = false
+                service.logger.error("couldn't save the upgraded ledger: \(error)")
+            }
         } else {
             let fresh = await service.freshState(seedDemo: service.config.seedDemo)
             try await service.store.replaceLedger(fresh)
@@ -98,6 +108,8 @@ public enum BudgetServerApp {
             if service.config.seedDemo { try await service.api.resetBalanceHistory(seedDemo: true) }
             service.logger.info(service.config.seedDemo ? "seeded the demo ledger (BUDGET_SEED_DEMO)" : "new empty ledger — link an account or import a file")
         }
+        // Before anything syncs, checks an Item or pushes; never throws, so it can't keep the server from starting.
+        await LedgerMigrations.run(service, ledgerInSync: ledgerInSync)
         await apply(service)
         await service.sync.publishInstitutions()
     }
@@ -122,6 +134,9 @@ public enum BudgetServerApp {
             Task { await service.sync.runScheduler() }
             Task { await service.morning.runScheduler() }
             Task { await service.pace.runScheduler() }
+            // After prepare, so the ledger migrations have run first.
+            Task { await service.alerts.runScheduler() }
+            Task { await service.plaidMaintenance.runScheduler() }
         }
         try await app.runService()
     }

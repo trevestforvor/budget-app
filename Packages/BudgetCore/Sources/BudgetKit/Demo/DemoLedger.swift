@@ -51,6 +51,14 @@ public struct LedgerState: Hashable, Codable, Sendable {
     public var recurringReviews: [String: RecurringReviewMark]
     /// Each credit card's latest statement from its issuer (Plaid Liabilities), keyed by account id.
     public var cardBills: [String: CardBill]
+    /// Each investment account's positions at the last holdings check, keyed by account id.
+    public var holdings: [String: AccountHoldings]
+    /// Rows held for the person to say whether they're duplicates: row id → the ids it may duplicate.
+    public var possibleDuplicates: [String: [String]]
+    /// Rows merged away, skipped or dropped, newest last, with copies for undo.
+    public var mergeLog: [RowMergeRecord]
+    /// Pending rows a window source stopped sending, by row id → when first missed.
+    public var pendingMisses: [String: Date]
 
     public init(categories: [BudgetCategory], monthlyTargets: [String: Money] = [:], rules: [BudgetRule] = [],
                 decisionPolicy: DecisionPolicy = .default, merchantTargets: [String: Money] = [:], monthlySavings: Money? = nil,
@@ -61,7 +69,11 @@ public struct LedgerState: Hashable, Codable, Sendable {
                 manualAssets: [ManualAsset] = [],
                 planScenarios: [PlanScenario] = [],
                 recurringReviews: [String: RecurringReviewMark] = [:],
-                cardBills: [String: CardBill] = [:]) {
+                cardBills: [String: CardBill] = [:],
+                holdings: [String: AccountHoldings] = [:],
+                possibleDuplicates: [String: [String]] = [:],
+                mergeLog: [RowMergeRecord] = [],
+                pendingMisses: [String: Date] = [:]) {
         self.categories = categories; self.monthlyTargets = monthlyTargets; self.rules = rules; self.decisionPolicy = decisionPolicy
         self.merchantTargets = merchantTargets; self.monthlySavings = monthlySavings; self.accounts = accounts
         self.openingBalances = openingBalances; self.transactions = transactions; self.suggestions = suggestions; self.reviewReasons = reviewReasons
@@ -72,9 +84,14 @@ public struct LedgerState: Hashable, Codable, Sendable {
         self.planScenarios = planScenarios
         self.recurringReviews = recurringReviews
         self.cardBills = cardBills
+        self.holdings = holdings
+        self.possibleDuplicates = possibleDuplicates
+        self.mergeLog = mergeLog
+        self.pendingMisses = pendingMisses
     }
 
-    enum CodingKeys: String, CodingKey {
+    /// `CaseIterable` so a test can insist every field is classified as holding ids or not.
+    enum CodingKeys: String, CodingKey, CaseIterable {
         case categories, monthlyTargets, rules, decisionPolicy, merchantTargets, monthlySavings, accounts, openingBalances, transactions
         case suggestions, reviewReasons, merchantAliases, forgottenMerchants, upgrades, recurringChoices
         case assistantMemories
@@ -82,6 +99,10 @@ public struct LedgerState: Hashable, Codable, Sendable {
         case planScenarios
         case recurringReviews
         case cardBills
+        case holdings
+        case possibleDuplicates
+        case mergeLog
+        case pendingMisses
     }
 
     /// Fields added after a ledger was first saved decode as empty; rules saved before they had ids get them.
@@ -106,7 +127,11 @@ public struct LedgerState: Hashable, Codable, Sendable {
                   manualAssets: try c.decodeIfPresent([ManualAsset].self, forKey: .manualAssets) ?? [],
                   planScenarios: try c.decodeIfPresent([PlanScenario].self, forKey: .planScenarios) ?? [],
                   recurringReviews: try c.decodeIfPresent([String: RecurringReviewMark].self, forKey: .recurringReviews) ?? [:],
-                  cardBills: try c.decodeIfPresent([String: CardBill].self, forKey: .cardBills) ?? [:])
+                  cardBills: try c.decodeIfPresent([String: CardBill].self, forKey: .cardBills) ?? [:],
+                  holdings: try c.decodeIfPresent([String: AccountHoldings].self, forKey: .holdings) ?? [:],
+                  possibleDuplicates: try c.decodeIfPresent([String: [String]].self, forKey: .possibleDuplicates) ?? [:],
+                  mergeLog: try c.decodeIfPresent([RowMergeRecord].self, forKey: .mergeLog) ?? [],
+                  pendingMisses: try c.decodeIfPresent([String: Date].self, forKey: .pendingMisses) ?? [:])
     }
 
     /// A fresh ledger for a new install: the standard categories, no targets, no data. It lists no upgrades: the server
@@ -167,6 +192,14 @@ public struct Ledger: Sendable {
     var recurringReviews: [String: RecurringReviewMark] = [:] { didSet { rowsToken = RowsToken.next() } }
     /// Each card's latest statement from its issuer (`LedgerState.cardBills`).
     var cardBills: [String: CardBill] = [:]
+    /// Each investment account's positions (`LedgerState.holdings`).
+    var holdings: [String: AccountHoldings] = [:]
+    /// Rows waiting for the person's say on a possible duplicate (`LedgerState.possibleDuplicates`).
+    var possibleDuplicates: [String: [String]] = [:]
+    /// Rows merged away, with copies for undo (`LedgerState.mergeLog`).
+    var mergeLog: [RowMergeRecord] = []
+    /// Pending rows a window source stopped sending (`LedgerState.pendingMisses`).
+    var pendingMisses: [String: Date] = [:]
 
     public init(state: LedgerState, now: Date, calendar: Calendar = .current) {
         self.now = now
@@ -191,6 +224,10 @@ public struct Ledger: Sendable {
         planScenarios = state.planScenarios
         recurringReviews = state.recurringReviews
         cardBills = state.cardBills
+        holdings = state.holdings
+        possibleDuplicates = state.possibleDuplicates
+        mergeLog = state.mergeLog
+        pendingMisses = state.pendingMisses
         pairLegacyTransfers()
         upgradeLegacyProvenance()
         applyOneTimeUpgrades()
@@ -212,7 +249,8 @@ public struct Ledger: Sendable {
                     merchantAliases: merchantAliases, forgottenMerchants: forgottenMerchants.sorted(), upgrades: upgrades.sorted(),
                     recurringChoices: recurringChoices, assistantMemories: assistantMemories,
                     manualAssets: manualAssets, planScenarios: planScenarios,
-                    recurringReviews: recurringReviews, cardBills: cardBills)
+                    recurringReviews: recurringReviews, cardBills: cardBills, holdings: holdings,
+                    possibleDuplicates: possibleDuplicates, mergeLog: mergeLog, pendingMisses: pendingMisses)
     }
 
     /// Makes an account's replayed balance end at its reported balance (providers report the
@@ -908,7 +946,8 @@ public struct Ledger: Sendable {
             recent: Array(transactions.prefix(8)), accounts: accounts,
             attention: dataHealth(institutions: institutions), balances: balances(), lastSevenDays: week,
             lastSevenDaysSpent: week.first.map { everydaySpent(from: $0.date, to: now) }, reviewDecisions: decisions,
-            reviewHeadline: waiting.isEmpty ? nil : ReviewGroup.headline(decisions: decisions, transactions: waiting.count))
+            reviewHeadline: waiting.isEmpty ? nil : ReviewGroup.headline(decisions: decisions, transactions: waiting.count),
+            accountHealth: accountHealth(institutions: institutions))
     }
 
     /// Everyday spending on each of the last seven days, oldest first, today so far last. Each day stands on its own

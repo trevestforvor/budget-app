@@ -159,6 +159,7 @@ export function announce(outcome, where) {
   else reportError({ message: outcome.message, detail: outcome.detail }, where);
 }
 
+// [lane P] linkPlaid
 /// Plaid Link. A new link trades Link's public token for an Item. `update` (a link waiting for a sign-in) opens
 /// Link in update mode for that Item instead: the person signs in again, and finishing just syncs the link, so its
 /// accounts and history carry on (there's nothing to exchange). Banks that sign in on their own site (OAuth) leave
@@ -211,6 +212,7 @@ export async function linkPlaid({ resume = false, update = null, grant = false, 
     }).open();
   });
 }
+// [end lane P] linkPlaid
 
 /// Teller's reconnect: Connect reopens the same enrollment, and the access token it hands back replaces the stored
 /// one (PUT /v1/links/:id/token), which syncs the link. Resolves once Connect closes and its outcome is shown.

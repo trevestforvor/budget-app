@@ -39,6 +39,8 @@ final class AppModel {
     private(set) var updating: Set<UUID> = []
     /// Bumped after any write so screens reload.
     private(set) var revision = 0
+    /// A link a connection push asked to sign in to again (its id); Linked accounts opens the reconnect flow for it.
+    var pendingReconnect: String?
     var selectedTab: AppTab = .home
     var showsSettings = false
     var showsCheckup = false
@@ -183,13 +185,14 @@ final class AppModel {
 
     /// The one way the app changes anything — the app's own editors and applied proposals both land here.
     @discardableResult
-    func perform(_ action: AppAction) async throws -> String {
+    /// `basis` is the fingerprint an Ask proposal was made against: the server refuses (409) when the rows changed since.
+    func perform(_ action: AppAction, basis: String? = nil) async throws -> String {
         if case let .navigate(destination) = action {
             route(destination)
             return "Opened."
         }
         try await checkServer(for: action)
-        let result = try await api.perform(action)
+        let result = try await api.perform(action, basis: basis)
         await didWrite()
         return result.message
     }

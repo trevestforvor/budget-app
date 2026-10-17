@@ -222,6 +222,10 @@ Teller stopped taking new customers in July 2026; this is for an existing Teller
 
 **Suggested order:** SimpleFIN (paste a setup token, real data in minutes) or Plaid Sandbox, then the Plaid Trial plan and OAuth.
 
+### Plaid webhooks and reconnect
+
+Not built yet (server 0.6.0).
+
 ## Backfill
 
 Measured on the Olares: Qwen `/v1/decision` batched runs at **15.6 decisions/s**. Merchant memory collapses repeats: the demo's 345 rows are 36 unique descriptors (10%); real households are likely higher, maybe 20–30% (an estimate). Two years at about 200 transactions a month is about 4,800 rows, or roughly 1,000–1,500 first decisions:

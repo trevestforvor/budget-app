@@ -15,6 +15,8 @@ let dashboardAssets = [
     "assistant.js",
     "networth.js",
     "flow.js",
+    // One hook module per lane of the 0.6.0 connections work, so their edits don't meet in shared files.
+    "linkerrors.js", "health.js", "accounts-edit.js", "holdings.js",
     "icon-64.png", "icon-180.png",
 ]
 
@@ -31,6 +33,8 @@ let package = Package(
         .package(url: "https://github.com/apple/swift-nio.git", from: "2.65.0"),
         .package(url: "https://github.com/apple/swift-nio-ssl.git", from: "2.27.0"),
         .package(url: "https://github.com/apple/swift-log.git", from: "1.5.0"),
+        // Verifies Plaid's signed webhooks (ES256 JWTs): a vetted library, not a hand-rolled verifier.
+        .package(url: "https://github.com/vapor/jwt-kit.git", from: "5.7.1"),
     ],
     targets: [
         .target(name: "BudgetServerCore", dependencies: [
@@ -44,6 +48,7 @@ let package = Package(
             .product(name: "NIOFoundationCompat", package: "swift-nio"),
             .product(name: "NIOSSL", package: "swift-nio-ssl"),
             .product(name: "Logging", package: "swift-log"),
+            .product(name: "JWTKit", package: "jwt-kit"),
         ], resources: dashboardAssets.map { .embedInCode("Dashboard/" + $0) }),
         .executableTarget(name: "BudgetServer", dependencies: ["BudgetServerCore"]),
         .testTarget(name: "BudgetServerTests", dependencies: [

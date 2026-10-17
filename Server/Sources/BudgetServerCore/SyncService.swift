@@ -2,19 +2,64 @@ import BudgetKit
 import Foundation
 import Logging
 
+/// What started a sync. It decides whether a link waiting for a sign-in is tried, and whether the person asked (which
+/// may spend a live balance call).
+public enum SyncTrigger: Sendable, Equatable {
+    /// The interval schedule.
+    case schedule
+    /// The morning summary catching up before it counts yesterday.
+    case morningCatchUp
+    /// The person's "Sync now" for everything (`POST /v1/sync` with `requestedByPerson`).
+    case person
+    /// The person's sync of one link (`POST /v1/links/:id/sync`).
+    case personLink
+    /// The end of signing in again (update mode).
+    case reconnect
+    /// The first sync of a new link.
+    case afterLink
+    /// A provider webhook, by its code.
+    case webhook(String)
+
+    /// Only the person's own asks: never a schedule, an app open, a webhook or a first sync.
+    public var requestedByPerson: Bool {
+        switch self {
+        case .person, .personLink: true
+        default: false
+        }
+    }
+
+    /// A link waiting for a sign-in is tried again (the person may just have signed in).
+    public var retriesSignIn: Bool {
+        switch self {
+        case .personLink, .reconnect, .afterLink: true
+        default: false
+        }
+    }
+}
+
+/// What one provider's pull did, for the shared bookkeeping.
+struct ProviderSyncOutcome: Sendable {
+    /// What the ingest did; nil when the provider wasn't asked this time (`skipped` says why).
+    var report: IngestReport?
+    /// Rows the provider deleted and the ledger dropped.
+    var removed: Int = 0
+    var skipped: String? = nil
+}
+
 /// Pulls every linked provider into the ledger: Plaid incrementally by cursor, Teller and
 /// SimpleFIN by date window (two years on first sync). Each run is one rollback-able batch.
 ///
 /// Runs happen one at a time — the schedule, "sync everything", one bank's "Sync now" and a reconnect — so two never
 /// pull the same link (and write its cursor) at once.
 public actor SyncService {
-    private let api: LedgerBudgetAPI
-    private let store: any ServerStore
-    private let config: ServerConfig
-    private let sealer: TokenSealer?
-    private let providers: Providers
-    private let settings: ServerSettings
-    private let logger: Logger
+    // Internal, not private: the provider extensions in other files (SyncService+SimpleFIN.swift, …) use them.
+    let api: LedgerBudgetAPI
+    let store: any ServerStore
+    let config: ServerConfig
+    let sealer: TokenSealer?
+    let providers: Providers
+    let settings: ServerSettings
+    let logger: Logger
     /// The "sync everything" in progress, which a second request joins instead of starting another.
     private var allRun: Task<[LinkSyncResult], Never>?
     /// The last run started; each waits for the one before it.
@@ -36,18 +81,19 @@ public actor SyncService {
     /// Syncs every link, one at a time. A link waiting for the person to sign in again is left out — it would only be
     /// refused again — until a reconnect or a sync of that link marks it connected. A call while a run is under way
     /// waits for that run and returns its results.
-    public func syncAll() async -> [LinkSyncResult] {
+    public func syncAll(trigger: SyncTrigger = .schedule) async -> [LinkSyncResult] {
         if let allRun { return await allRun.value }
-        let run = Task { (try? await serialized { await self.runAll() }) ?? [] }
+        let run = Task { (try? await serialized { await self.runAll(trigger: trigger) }) ?? [] }
         allRun = run
         defer { allRun = nil }
         return await run.value
     }
 
-    private func runAll() async -> [LinkSyncResult] {
+    private func runAll(trigger: SyncTrigger) async -> [LinkSyncResult] {
         var results: [LinkSyncResult] = []
-        for link in (try? await store.links()) ?? [] where link.status != .needsReauth {
-            results.append(await sync(link, retrying: false))
+        let now = Date()
+        for link in (try? await store.links()) ?? [] where LinkHealthBook.isDue(link, trigger: trigger, now: now) {
+            results.append(await sync(link, trigger: trigger))
         }
         await publishInstitutions()
         return results
@@ -56,10 +102,27 @@ public actor SyncService {
     /// Syncs one link now, whatever its state. Asking for it is a retry: a link waiting for a sign-in is tried again
     /// (the person may just have signed in — Plaid's update mode ends with this call, not a token exchange), and it's
     /// marked as needing one only if the bank still refuses. Any other failure leaves it for the next scheduled sync.
-    public func sync(linkID: String) async throws -> LinkSyncResult {
+    public func sync(linkID: String, trigger: SyncTrigger = .personLink) async throws -> LinkSyncResult {
         try await serialized {
             guard let link = try await self.store.links().first(where: { $0.id == linkID }) else { throw BudgetAPIError.notFound }
-            return await self.syncAndPublish(link)
+            return await self.syncAndPublish(link, trigger: trigger)
+        }
+    }
+
+    /// Asks for a sync of one link without waiting for it (a webhook's trigger). Several asks may share one run later;
+    /// for now each is its own.
+    public func requestSync(linkID: String, trigger: SyncTrigger) async {
+        Task { _ = try? await self.sync(linkID: linkID, trigger: trigger) }
+    }
+
+    /// Changes a stored link in its turn, between syncs, so a sync that read the link earlier can't write over the
+    /// change. Every link write outside a sync goes through here. Never call it from inside a sync or another
+    /// `serialized` block: the queue isn't re-entrant, and that waits forever.
+    public func updateLink(_ id: String, _ change: @escaping @Sendable (inout StoredLink) async throws -> Void) async throws {
+        try await serialized {
+            guard var link = try await self.store.links().first(where: { $0.id == id }) else { throw BudgetAPIError.notFound }
+            try await change(&link)
+            try await self.store.upsertLink(link)
         }
     }
 
@@ -79,18 +142,20 @@ public actor SyncService {
             link.status = .connected
             link.lastError = nil
             try await self.store.upsertLink(link)
-            return await self.syncAndPublish(link)
+            return await self.syncAndPublish(link, trigger: .reconnect)
         }
     }
 
-    private func syncAndPublish(_ link: StoredLink) async -> LinkSyncResult {
-        let result = await sync(link, retrying: true)
+    private func syncAndPublish(_ link: StoredLink, trigger: SyncTrigger) async -> LinkSyncResult {
+        let result = await sync(link, trigger: trigger)
         await publishInstitutions()
         return result
     }
 
-    /// Runs `work` after every run already started.
-    private func serialized<T: Sendable>(_ work: @escaping @Sendable () async throws -> T) async throws -> T {
+    /// Runs `work` after every run already started. Not re-entrant: `work` must never call `serialized` again
+    /// (`updateLink`, `sync(linkID:)`, `syncAll`), directly or through anything it calls, or both wait forever. Inside a
+    /// sync, change the `inout` link instead.
+    func serialized<T: Sendable>(_ work: @escaping @Sendable () async throws -> T) async throws -> T {
         let previous = tail
         let task = Task { () async throws -> T in
             await previous?.value
@@ -100,59 +165,65 @@ public actor SyncService {
         return try await task.value
     }
 
-    private func sync(_ original: StoredLink, retrying: Bool) async -> LinkSyncResult {
+    private func sync(_ original: StoredLink, trigger: SyncTrigger) async -> LinkSyncResult {
         var link = original
-        if retrying, link.status == .needsReauth { link.status = .connected }
+        if trigger.retriesSignIn, link.status == .needsReauth { link.status = .connected }
         let batchID = "\(link.provider.rawValue)-\(link.id)-\(Int(Date().timeIntervalSince1970))"
         do {
             guard let sealer else { throw BudgetAPIError.rejected("BUDGET_TOKEN_KEY isn't set; can't open stored tokens.") }
             let token = try sealer.open(link.sealedToken)
-            var removed = 0
-            let report: IngestReport
+            let outcome: ProviderSyncOutcome
             switch link.provider {
-            case .plaid:
-                guard let plaid = try await providers.plaid() else { throw BudgetAPIError.rejected("Plaid isn't set up on the server.") }
-                let source = PlaidSource(environment: plaid.environment, credentials: .init(clientID: plaid.clientID, secret: plaid.secret),
-                                         accessToken: token, institution: link.institution, transport: providers.transport)
-                let (snapshot, next, deleted) = try await source.snapshot(cursor: link.cursor)
-                report = try await api.ingest(snapshot, batchID: batchID)
-                removed = try await api.removeSourceRows(.plaid, externalIDs: deleted)
-                link.cursor = next
-                // Best effort, after the rows are in: never fails the sync (CardBills.swift).
-                link.cardBills = await CardBillSync.refresh(enabled: await settings.cardBillsEnabled, source: source, snapshot: snapshot,
-                                                            previous: link.cardBills, requestedByPerson: retrying, api: api, now: Date(),
-                                                            institution: link.institution, logger: logger)
-            case .teller:
-                guard let teller = await providers.teller() else { throw BudgetAPIError.rejected("Teller isn't set up on the server.") }
-                let snapshot = try await TellerSource(accessToken: token, transport: teller.transport).fetch(since: window(link))
-                report = try await api.ingest(snapshot, batchID: batchID)
-            case .simplefin:
-                guard let url = URL(string: token) else { throw BudgetAPIError.rejected("Stored SimpleFIN access URL is invalid.") }
-                let snapshot = try await SimpleFINSource(accessURL: url).fetch(since: window(link))
-                report = try await api.ingest(snapshot, batchID: batchID)
+            case .plaid: outcome = try await syncPlaid(&link, token: token, batchID: batchID, trigger: trigger)
+            case .teller: outcome = try await syncTeller(&link, token: token, batchID: batchID, trigger: trigger)
+            case .simplefin: outcome = try await syncSimpleFIN(&link, token: token, batchID: batchID, trigger: trigger)
             default:
                 throw BudgetAPIError.rejected("\(link.provider.displayName) links don't sync.")
             }
-            link.status = .connected
-            link.lastSync = Date()
-            link.lastError = nil
+            guard let report = outcome.report else {
+                // The provider wasn't asked this time: nothing synced, so nothing is stamped.
+                try await store.upsertLink(link)
+                return LinkSyncResult(linkID: link.id, institution: link.institution, ok: true, report: nil, removed: 0, error: nil, skipped: outcome.skipped)
+            }
+            let removed = outcome.removed
+            LinkHealthBook.recordSuccess(&link, now: Date())
             try await store.upsertLink(link)
-            if report.rowsAdded + report.rowsUpdated > 0 {
+            if LinkHealthBook.shouldRecordImport(report, failure: nil) {
                 try await store.upsertImport(ImportRecord(batchID: batchID, kind: .sync, linkID: link.id, label: "\(link.institution) sync",
                                                           report: report, createdAt: Date(), rolledBack: false))
             }
             logger.info("synced \(link.institution): +\(report.rowsAdded) rows, \(report.needsReview) to review, \(report.modelCalls) model calls in \(report.modelMilliseconds ?? 0) ms\(report.warnings.isEmpty ? "" : " — " + report.warnings.joined(separator: " "))\((report.notes ?? []).isEmpty ? "" : " — " + (report.notes ?? []).joined(separator: " "))")
             return LinkSyncResult(linkID: link.id, institution: link.institution, ok: true, report: report, removed: removed, error: nil)
         } catch {
-            let message = Self.describe(error)
-            link.lastError = message
             // Provider auth failures need the person to reconnect; everything else retries next run.
-            if Self.needsSignIn(error) { link.status = .needsReauth }
+            let failure = LinkFailureClassifier.classify(error, provider: link.provider)
+            LinkHealthBook.recordFailure(&link, failure, now: Date())
             try? await store.upsertLink(link)
             logger.error("sync failed for \(link.institution): \(String(describing: error))")
-            return LinkSyncResult(linkID: link.id, institution: link.institution, ok: false, report: nil, removed: 0, error: message)
+            return LinkSyncResult(linkID: link.id, institution: link.institution, ok: false, report: nil, removed: 0, error: failure.message,
+                                  errorKind: failure.kind)
         }
     }
+
+    // MARK: - [lane P] Plaid
+
+    /// Plaid: incrementally by cursor, then card bills (best effort).
+    private func syncPlaid(_ link: inout StoredLink, token: String, batchID: String, trigger: SyncTrigger) async throws -> ProviderSyncOutcome {
+        guard let plaid = try await providers.plaid() else { throw BudgetAPIError.rejected("Plaid isn't set up on the server.") }
+        let source = PlaidSource(environment: plaid.environment, credentials: .init(clientID: plaid.clientID, secret: plaid.secret),
+                                 accessToken: token, institution: link.institution, transport: providers.transport)
+        let (snapshot, next, deleted) = try await source.snapshot(cursor: link.cursor)
+        let report = try await api.ingest(snapshot, batchID: batchID)
+        let removed = try await api.removeSourceRows(.plaid, externalIDs: deleted)
+        link.cursor = next
+        // Best effort, after the rows are in: never fails the sync (CardBills.swift).
+        link.cardBills = await CardBillSync.refresh(enabled: await settings.cardBillsEnabled, source: source, snapshot: snapshot,
+                                                    previous: link.cardBills, requestedByPerson: trigger.requestedByPerson, api: api, now: Date(),
+                                                    institution: link.institution, logger: logger)
+        return ProviderSyncOutcome(report: report, removed: removed)
+    }
+
+    // MARK: - [end lane P]
 
     /// A failure as the person can read it: the provider's own message when it gave one.
     static func describe(_ error: any Error) -> String {
@@ -172,9 +243,12 @@ public actor SyncService {
         return codes.contains { text.contains($0) }
     }
 
+    /// How far a window source's later syncs reach back before the last one, to catch late-posting rows.
+    static let overlapDays = 10
+
     /// First sync reaches back two years; later syncs overlap ten days to catch late-posting rows.
-    private func window(_ link: StoredLink) -> Date {
-        if let last = link.lastSync { return last.addingTimeInterval(-10 * 86_400) }
+    func window(_ link: StoredLink) -> Date {
+        if let last = link.lastSync { return last.addingTimeInterval(-Double(Self.overlapDays) * 86_400) }
         return Date().addingTimeInterval(-Double(Self.historyDays) * 86_400)
     }
 
@@ -184,9 +258,13 @@ public actor SyncService {
         let links = (try? await store.links()) ?? []
         var style = Date.FormatStyle(date: .abbreviated, time: .shortened)
         style.timeZone = await settings.timeZone
-        let rows = links.map { link in
-            InstitutionLink(id: link.id, institution: link.institution, primary: link.provider, fallback: nil, accountKinds: [],
-                            status: link.status, note: Self.note(link, style), lastSync: link.lastSync, lastError: link.lastError)
+        let accounts = await api.accountList()
+        let rows = links.flatMap { link in
+            let base = InstitutionLink(id: link.id, institution: link.institution, primary: link.provider, fallback: nil, accountKinds: [],
+                                       status: link.status, note: Self.note(link, style), lastSync: link.lastSync, lastError: link.lastError,
+                                       errorKind: link.errorKind, failingSince: link.firstFailedAt, nextRetryAt: link.nextAttemptAt,
+                                       consentExpiresAt: link.plaid?.consentExpiresAt)
+            return link.provider == .simplefin ? SimpleFINLinkState.institutionRows(link, base: base, accounts: accounts) : [base]
         }
         await api.setInstitutions(rows)
     }
@@ -206,7 +284,7 @@ public actor SyncService {
                                   linked: !links.isEmpty, now: Date())
         while !Task.isCancelled {
             try? await Task.sleep(for: .seconds(wait))
-            _ = await syncAll()
+            _ = await syncAll(trigger: .schedule)
             // Read each cycle, so a new interval from the dashboard applies after the current wait.
             wait = await settings.syncIntervalHours * 3600
         }

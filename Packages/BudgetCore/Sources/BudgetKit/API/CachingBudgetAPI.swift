@@ -37,6 +37,9 @@ public actor ResponseCache {
 
     func load(_ key: String) -> Data? { try? Data(contentsOf: url(for: key)) }
 
+    /// Forgets one read's copy, after a write that changed it.
+    func remove(_ key: String) { try? FileManager.default.removeItem(at: url(for: key)) }
+
     public func clear() {
         try? FileManager.default.removeItem(at: directory)
         try? FileManager.default.createDirectory(at: directory, withIntermediateDirectories: true)
@@ -69,6 +72,8 @@ public enum SavedRead: Hashable, Sendable {
     case cashFlowSankey(month: String?)
     case monthlyRecap(month: String?)
     case upcoming(days: Int)
+    /// `GET /v1/holdings` (server 0.6.0).
+    case holdings
 
     var key: String {
         switch self {
@@ -92,6 +97,7 @@ public enum SavedRead: Hashable, Sendable {
         case let .cashFlowSankey(month): "flow-\(month ?? "current")"
         case let .monthlyRecap(month): "monthly-recap-\(month ?? "last")"
         case let .upcoming(days): "upcoming-\(days)"
+        case .holdings: "holdings"
         }
     }
 }
@@ -189,6 +195,14 @@ public struct CachingBudgetAPI: BudgetAPI {
     /// A sync is a write: it always goes to the server.
     public func syncNow() async throws -> [LinkSyncResult] { try await upstream.syncNow() }
     public func perform(_ action: AppAction) async throws -> ActionResult { try await upstream.perform(action) }
+    public func perform(_ action: AppAction, basis: String?) async throws -> ActionResult { try await upstream.perform(action, basis: basis) }
+    /// A write: the saved overview and status name the account the old way, so they're dropped.
+    public func updateAccount(id: String, _ change: AccountChange) async throws -> AccountChangeResult {
+        let result = try await upstream.updateAccount(id: id, change)
+        await cache.remove(SavedRead.overview.key)
+        await cache.remove(SavedRead.status.key)
+        return result
+    }
     /// A preview is worked out on the ledger as it is now, so it's never served from the offline copy.
     public func preview(_ action: AppAction) async throws -> ActionPreview { try await upstream.preview(action) }
     public func savingsPlan() async throws -> SavingsPlan { try await read(.savings) { try await upstream.savingsPlan() } }

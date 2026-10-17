@@ -18,6 +18,8 @@ struct StoredDevice: Codable, Hashable, Sendable {
     var updatedAt: Date
     /// The pace alerts this phone asked for; nil for none (an app before them never asks).
     var paceAlerts: PaceAlertPreferences?
+    /// Pushes about bank connections; nil (any phone that registered) means on, only false turns them off.
+    var connectionAlerts: Bool? = nil
 }
 
 /// Yesterday's spending, sent to each phone at 9:30 in whatever time zone it last reported — so it follows a trip. The
@@ -104,6 +106,7 @@ public actor MorningSummary {
         (device.hour, device.minute) = (r.hour, r.minute)
         // An app that doesn't send a choice (one from before pace alerts) leaves the last one standing.
         if let pace = r.paceAlerts { device.paceAlerts = pace }
+        if let connections = r.connectionAlerts { device.connectionAlerts = connections }
         device.updatedAt = clock()
         all.removeAll { $0.token == token }
         all.append(device)
@@ -113,7 +116,8 @@ public actor MorningSummary {
 
     func status(_ d: StoredDevice) async -> DeviceStatus {
         DeviceStatus(enabled: d.enabled, timeZone: d.timeZone, hour: d.hour, minute: d.minute, lastSentDay: d.lastSentDay, lastError: d.lastError,
-                     pushConfigured: await credentials() != nil, paceAlerts: d.paceAlerts)
+                     pushConfigured: await credentials() != nil, paceAlerts: d.paceAlerts,
+                     connectionAlerts: d.connectionAlerts)
     }
 
     // MARK: Schedule
@@ -243,7 +247,7 @@ public actor MorningSummary {
         let links = ((try? await store.links()) ?? []).filter { $0.status != .needsReauth }
         guard !links.isEmpty else { return }
         let last = links.compactMap(\.lastSync).max() ?? .distantPast
-        if now.timeIntervalSince(last) > Self.freshSync { _ = await sync.syncAll() }
+        if now.timeIntervalSince(last) > Self.freshSync { _ = await sync.syncAll(trigger: .morningCatchUp) }
     }
 
     // MARK: Digests

@@ -224,7 +224,8 @@ public struct ModelList: Encodable, Sendable {
 
 /// One editable setting as the dashboard shows it. A secret's value is never included.
 public struct SettingField: Codable, Sendable {
-    public enum Kind: String, Codable, Sendable { case url, text, number, secret, bool, timeZone }
+    /// `choice` takes one of `choices`; a dashboard that doesn't know it shows a text box.
+    public enum Kind: String, Codable, Sendable { case url, text, number, secret, bool, timeZone, choice }
     public enum Origin: String, Codable, Sendable { case `default`, environment, dashboard }
     public var key: String
     public var group: String
@@ -236,6 +237,8 @@ public struct SettingField: Codable, Sendable {
     public var defaultValue: String?
     public var environmentVariable: String
     public var help: String
+    /// The values a `choice` takes.
+    public var choices: [String]? = nil
 }
 
 /// The effective server settings, rebuilt whenever the dashboard saves. Applying them swaps the
@@ -254,6 +257,10 @@ public actor ServerSettings {
         /// The value from the environment (or the built-in default) as parsed into `ServerConfig`.
         var configValue: @Sendable (ServerConfig) -> String?
         var builtInDefault: String?
+        /// A `choice`'s values.
+        var choices: [String]? = nil
+        /// A `number`'s bounds, when not the sync interval's 0.25…168.
+        var range: ClosedRange<Double>? = nil
     }
 
     /// The two jobs a saved model can do.
@@ -274,6 +281,15 @@ public actor ServerSettings {
         .init(key: "cardBills", group: "Sync", label: "Card bills (Plaid Liabilities)", kind: .bool, environmentVariable: "BUDGET_PLAID_LIABILITIES",
               help: "Reads each Plaid-linked credit card's statement balance, minimum payment and due date, about once a day, for Upcoming and the morning summary. Plaid bills Liabilities per bank login once it's used, so it's off until you turn it on. A bank linked before needs one \"Grant card-bill access\" sign-in on Accounts; nothing is relinked or removed.",
               configValue: { $0.plaidLiabilities ? "true" : "false" }, builtInDefault: "false"),
+        .init(key: "holdings", group: "Sync", label: "Investment holdings", kind: .choice, environmentVariable: "BUDGET_PLAID_HOLDINGS",
+              help: "Positions in investment accounts, once a day per bank login with investments. auto: only for logins Plaid already bills for Investments. on: every login with investments (Plaid bills Investments per login once it's used). off: none.",
+              configValue: { $0.plaidHoldings }, builtInDefault: "auto", choices: ["auto", "on", "off"]),
+        .init(key: "plaidWebhooks", group: "Sync", label: "Plaid webhooks", kind: .bool, environmentVariable: "BUDGET_PLAID_WEBHOOKS",
+              help: "Lets Plaid tell this server when there's news (new transactions, a bank asking for a sign-in), at the server URL for the phone. Does nothing without one.",
+              configValue: { $0.plaidWebhooks ? "true" : "false" }, builtInDefault: "true"),
+        .init(key: "simplefinDailyPulls", group: "Sync", label: "SimpleFIN pulls a day", kind: .number, environmentVariable: "BUDGET_SIMPLEFIN_DAILY_PULLS",
+              help: "How many times a day the server asks SimpleFIN Bridge on its own. Its banks update about once a day.",
+              configValue: { String($0.simplefinDailyPulls) }, builtInDefault: "4.0", range: 1...20),
         .init(key: "timeZone", group: "Sync", label: "Time zone", kind: .timeZone, environmentVariable: "BUDGET_TIMEZONE",
               help: "Where months begin and end (e.g. America/Los_Angeles).", configValue: { $0.timeZone.identifier }, builtInDefault: "America/Los_Angeles"),
         .init(key: "publicURL", group: "Phone", label: "Server URL for the phone", kind: .url, environmentVariable: "BUDGET_PUBLIC_URL",
@@ -415,6 +431,25 @@ public actor ServerSettings {
     public var dashboardURL: String? { value("dashboardURL") }
     /// Whether to read card bills from Plaid Liabilities (billed per Item once used): off unless turned on.
     public var cardBillsEnabled: Bool { value("cardBills") == "true" }
+    /// Which Items get holdings: `auto` (only those already billed for Investments), `on` or `off`.
+    public var holdingsMode: HoldingsMode { HoldingsMode(setting: value("holdings")) }
+    /// Whether to register Plaid webhooks; they also need the public URL.
+    public var plaidWebhooksEnabled: Bool { value("plaidWebhooks") != "false" }
+    /// SimpleFIN pulls a day on the server's own initiative (the hard stop stays in code).
+    public var simplefinDailyPulls: Int { Int(min(max(Double(value("simplefinDailyPulls") ?? "") ?? 4, 1), 20)) }
+
+    /// The public URL a provider calls back (webhooks, the phone's OAuth return): without a trailing slash, and only
+    /// https — plain http only for a Plaid sandbox test server. Nil when there's none to use.
+    public func providerCallbackBase(sandbox: Bool) -> String? {
+        ServerConfig.normalizedPublicURL(publicURL, allowHTTP: sandbox)
+    }
+
+    /// Where a bank app returns the phone after an OAuth sign-in (`PLAID_MOBILE_REDIRECT_URI`): that value, or
+    /// `<public URL>/plaid/oauth-return`; nil when it's `off` or there's no public URL.
+    public func plaidMobileRedirectURI(sandbox: Bool) -> String? {
+        if let raw = config.plaidMobileRedirectURI { return raw.lowercased() == "off" ? nil : raw }
+        return providerCallbackBase(sandbox: sandbox).map { $0 + "/plaid/oauth-return" }
+    }
 
     public var calendar: Calendar {
         var calendar = Calendar(identifier: .gregorian)
@@ -443,7 +478,7 @@ public actor ServerSettings {
             let current = value(d.key)
             return SettingField(key: d.key, group: d.group, label: d.label, kind: d.kind,
                                 value: d.kind == .secret ? nil : current, isSet: current != nil, origin: origin(d, in: saved),
-                                defaultValue: d.builtInDefault, environmentVariable: d.environmentVariable, help: d.help)
+                                defaultValue: d.builtInDefault, environmentVariable: d.environmentVariable, help: d.help, choices: d.choices)
         }
     }
 
@@ -488,8 +523,17 @@ public actor ServerSettings {
             guard !raw.isEmpty else { throw BudgetAPIError.rejected("\(d.label) can't be empty.") }
             return raw
         case .number:
-            guard let number = Double(raw), number >= 0.25, number <= 24 * 7 else { throw BudgetAPIError.rejected("\(d.label) must be a number between 0.25 and 168.") }
+            let range = d.range ?? 0.25...(24 * 7)
+            guard let number = Double(raw), range.contains(number) else {
+                throw BudgetAPIError.rejected("\(d.label) must be a number between \(range.lowerBound.formatted()) and \(range.upperBound.formatted()).")
+            }
             return String(number)
+        case .choice:
+            let choice = HoldingsMode.synonym(raw.lowercased())
+            guard d.choices?.contains(choice) == true else {
+                throw BudgetAPIError.rejected("\(d.label) must be one of \((d.choices ?? []).joined(separator: ", ")).")
+            }
+            return choice
         case .bool:
             guard ["true", "false"].contains(raw) else { throw BudgetAPIError.rejected("\(d.label) must be true or false.") }
             return raw
@@ -956,6 +1000,25 @@ public actor ServerSettings {
             throw BudgetAPIError.server(status: 503, message: loadAttempted
                 ? "Server settings didn't load, so nothing was changed. Restart the server; its log says why."
                 : "The server is still starting. Try again in a moment.")
+        }
+    }
+}
+
+/// Which Plaid Items get investment holdings.
+public enum HoldingsMode: String, Sendable {
+    /// Only Items Plaid already bills for Investments: no new cost.
+    case auto
+    case on
+    case off
+
+    init(setting: String?) { self = Self(rawValue: Self.synonym(setting?.lowercased() ?? "")) ?? .auto }
+
+    /// `1`/`true`/`yes` read as on, `0`/`false`/`no` as off; anything else as given.
+    static func synonym(_ raw: String) -> String {
+        switch raw {
+        case "1", "true", "yes": "on"
+        case "0", "false", "no": "off"
+        default: raw
         }
     }
 }

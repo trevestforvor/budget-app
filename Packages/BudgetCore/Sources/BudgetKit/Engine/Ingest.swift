@@ -144,10 +144,14 @@ extension Ledger {
                     accounts[index].balance = sourceAccount.balance
                     accounts[index].name = sourceAccount.name
                     if let mask = sourceAccount.mask { accounts[index].mask = mask }
+                    accounts[index].balanceAsOf = sourceAccount.balanceDate
+                    if snapshot.source != .fileImport && snapshot.accountProblems[sourceAccount.externalID] == nil { accounts[index].lastSyncedAt = now }
                     report.accountsUpdated += 1
                 } else {
+                    let synced = snapshot.source != .fileImport && snapshot.accountProblems[sourceAccount.externalID] == nil
                     accounts.append(Account(id: accountID, name: sourceAccount.name, institution: sourceAccount.institution,
-                                            kind: sourceAccount.kind, balance: sourceAccount.balance, source: snapshot.source, mask: sourceAccount.mask))
+                                            kind: sourceAccount.kind, balance: sourceAccount.balance, source: snapshot.source, mask: sourceAccount.mask,
+                                            balanceAsOf: sourceAccount.balanceDate, lastSyncedAt: synced ? now : nil))
                     report.accountsAdded += 1
                 }
             }

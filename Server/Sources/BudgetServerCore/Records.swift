@@ -22,6 +22,12 @@ public struct TokenSealer: Sendable {
         guard let data = Data(base64Encoded: sealed) else { throw ServerConfig.ConfigError.invalid("sealed token is not base64") }
         return String(decoding: try AES.GCM.open(try AES.GCM.SealedBox(combined: data), using: key), as: UTF8.self)
     }
+
+    /// A 32-byte key for one purpose (`info` names it), derived from the sealing key with HKDF-SHA256, so the sealing key
+    /// itself never leaves this type and each purpose gets a key of its own.
+    public func derivedKey(info: String) -> SymmetricKey {
+        HKDF<SHA256>.deriveKey(inputKeyMaterial: key, info: Data(info.utf8), outputByteCount: 32)
+    }
 }
 
 /// A connection to a provider: a Plaid Item, a Teller enrollment, a SimpleFIN access URL.
@@ -41,11 +47,42 @@ public struct StoredLink: Codable, Hashable, Sendable {
     public var createdAt: Date
     /// The last card-bill check (Plaid Liabilities) on this Item; nil until one ran.
     public var cardBills: CardBillCheck? = nil
+    // 0.6.0. Every new field is optional: links are stored whole as JSON, and a stored doc without a key must decode.
+    /// What the last failure was, provider-agnostic; nil while healthy.
+    public var errorKind: LinkErrorKind? = nil
+    /// The provider's code: "ITEM_LOCKED", "con.auth", "http-403".
+    public var errorCode: String? = nil
+    /// Plaid's request_id for the failing call; safe to log and show.
+    public var errorRequestID: String? = nil
+    /// The start of the current run of failures.
+    public var firstFailedAt: Date? = nil
+    /// Failures in a row; nil or 0 while healthy.
+    public var failureCount: Int? = nil
+    public var lastAttemptAt: Date? = nil
+    /// Scheduled and webhook runs wait until then; the person asking doesn't.
+    public var nextAttemptAt: Date? = nil
+    /// Plaid's own state for this Item (`PlaidLinkState.swift`).
+    public var plaid: PlaidLinkState? = nil
+    /// SimpleFIN's own state for this link (`SimpleFINLinkState.swift`).
+    public var simplefin: SimpleFINLinkState? = nil
+    /// The last holdings check on this Item; nil until one ran.
+    public var holdings: HoldingsCheck? = nil
 
     /// What clients may see — never the token.
     public var summary: LinkSummary {
-        LinkSummary(id: id, provider: provider, institution: institution, status: status, lastSync: lastSync, lastError: lastError, createdAt: createdAt,
-                    externalID: externalID, cardBills: cardBills)
+        var summary = LinkSummary(id: id, provider: provider, institution: institution, status: status, lastSync: lastSync, lastError: lastError,
+                                  createdAt: createdAt, externalID: externalID, cardBills: cardBills)
+        summary.errorKind = errorKind
+        summary.errorCode = errorCode
+        summary.errorRequestID = errorRequestID
+        summary.firstFailedAt = firstFailedAt
+        summary.failureCount = failureCount
+        summary.lastAttemptAt = lastAttemptAt
+        summary.nextAttemptAt = nextAttemptAt
+        summary.holdings = holdings
+        plaid?.summaryFields(into: &summary)
+        summary.banks = simplefin?.banksSummary()
+        return summary
     }
 }
 
@@ -63,6 +100,39 @@ public struct LinkSummary: Codable, Hashable, Sendable {
     public var externalID: String?
     /// Whether this Item gives card bills, as last checked; nil until checked (or for links that aren't Plaid's).
     public var cardBills: CardBillCheck? = nil
+    // 0.6.0, so the dashboard never parses `lastError` again. All nil from older servers.
+    public var errorKind: LinkErrorKind? = nil
+    public var errorCode: String? = nil
+    public var errorRequestID: String? = nil
+    public var firstFailedAt: Date? = nil
+    public var failureCount: Int? = nil
+    public var lastAttemptAt: Date? = nil
+    public var nextAttemptAt: Date? = nil
+    /// When the bank's consent runs out (Plaid).
+    public var consentExpiresAt: Date? = nil
+    /// The last daily Item check (Plaid `/item/get`).
+    public var lastItemCheckAt: Date? = nil
+    public var webhook: LinkWebhookStatus? = nil
+    /// Each bank behind an aggregator link (SimpleFIN).
+    public var banks: [LinkBank]? = nil
+    public var reconnect: ReconnectMethod? = nil
+    /// Provider requests in the last 24 hours (SimpleFIN's daily budget).
+    public var requestsToday: Int? = nil
+    public var holdings: HoldingsCheck? = nil
+}
+
+/// Whether Plaid's webhooks reach this server for an Item.
+public struct LinkWebhookStatus: Codable, Hashable, Sendable {
+    /// The URL last registered with Plaid.
+    public var url: String?
+    public var acknowledgedAt: Date?
+    public var lastReceivedAt: Date?
+    /// Type and code only ("TRANSACTIONS/SYNC_UPDATES_AVAILABLE"), never the payload.
+    public var lastCode: String?
+
+    public init(url: String? = nil, acknowledgedAt: Date? = nil, lastReceivedAt: Date? = nil, lastCode: String? = nil) {
+        self.url = url; self.acknowledgedAt = acknowledgedAt; self.lastReceivedAt = lastReceivedAt; self.lastCode = lastCode
+    }
 }
 
 /// One ingest (sync or file) — the unit of rollback.
@@ -75,6 +145,49 @@ public struct ImportRecord: Codable, Hashable, Sendable {
     public var report: IngestReport
     public var createdAt: Date
     public var rolledBack: Bool
+    /// Nil (an older record) reads as `.ok`.
+    public var outcome: ImportOutcome? = nil
+    /// A failed sync, in words the person can read.
+    public var error: String? = nil
+    public var errorKind: LinkErrorKind? = nil
+    /// What Undo may do with this batch. Never trusted from storage: `annotated()` sets it on every read.
+    public var undo: UndoPolicy? = nil
+    /// When the person hid the batch's rows instead of undoing it.
+    public var hiddenAt: Date? = nil
+
+    /// The record as read routes return it, with `undo` worked out now.
+    public func annotated() -> ImportRecord {
+        var record = self
+        record.undo = ImportUndo.policy(for: self)
+        return record
+    }
+}
+
+/// How an ingest went. Tolerant: unknown reads as `.ok`.
+public enum ImportOutcome: String, Codable, Hashable, Sendable {
+    case ok, warning, failed
+
+    public init(from decoder: any Decoder) throws {
+        self = Self(rawValue: try decoder.singleValueContainer().decode(String.self)) ?? .ok
+    }
+}
+
+/// What Undo may do with a batch, and why.
+public struct UndoPolicy: Codable, Hashable, Sendable {
+    /// Tolerant: unknown reads as `.refused`, the safe answer.
+    public enum Mode: String, Codable, Hashable, Sendable {
+        case allowed, warn, refused
+
+        public init(from decoder: any Decoder) throws {
+            self = Self(rawValue: try decoder.singleValueContainer().decode(String.self)) ?? .refused
+        }
+    }
+
+    public var mode: Mode
+    /// The reason (refused), or what to warn about (warn).
+    public var message: String?
+
+    public init(mode: Mode, message: String? = nil) { self.mode = mode; self.message = message }
 }
 
 /// Persistence for everything the server keeps.

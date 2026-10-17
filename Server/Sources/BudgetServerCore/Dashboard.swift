@@ -100,7 +100,7 @@ func addDashboardRoutes(_ router: Router<BasicRequestContext>, _ service: Budget
             modelName: await live.modelName, plaid: (try? await service.providers.plaid())?.environment.rawValue, teller: await service.providers.teller() != nil,
             jev: await live.openRouterKey != nil, linkingEnabled: service.sealer != nil, demoAllowed: config.allowDemo,
             syncIntervalHours: await live.syncIntervalHours, timeZone: await live.timeZone.identifier, apiURL: await live.publicURL, cardBills: await live.cardBillsEnabled)
-        let imports = try await service.store.imports().sorted { $0.createdAt > $1.createdAt }
+        let imports = try await service.store.imports().sorted { $0.createdAt > $1.createdAt }.map { $0.annotated() }
         return try HTTP.json(DashboardSummary(
             version: BudgetServerVersion.current, startedAt: serverStartedAt, now: Date(), stats: await service.api.stats(),
             links: try await service.store.links().map(\.summary), imports: Array(imports.prefix(50)), settings: settings,
@@ -375,6 +375,10 @@ enum DashboardAssets {
         "orders.js": Asset(PackageResources.orders_js, "text/javascript; charset=utf-8"),
         "assistant.js": Asset(PackageResources.assistant_js, "text/javascript; charset=utf-8"),
         "networth.js": Asset(PackageResources.networth_js, "text/javascript; charset=utf-8"),
+        "linkerrors.js": Asset(PackageResources.linkerrors_js, "text/javascript; charset=utf-8"),
+        "health.js": Asset(PackageResources.health_js, "text/javascript; charset=utf-8"),
+        "accounts-edit.js": Asset(PackageResources.accounts_edit_js, "text/javascript; charset=utf-8"),
+        "holdings.js": Asset(PackageResources.holdings_js, "text/javascript; charset=utf-8"),
         "icon-64.png": Asset(PackageResources.icon_64_png, "image/png"),
         "icon-180.png": Asset(PackageResources.icon_180_png, "image/png"),
     ]

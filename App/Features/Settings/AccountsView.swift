@@ -9,6 +9,8 @@ struct AccountsView: View {
     @Environment(\.openURL) private var openURL
     @State private var state: LoadState<ServerStatus> = .loading
     @State private var accounts: [Account] = []
+    /// Each account's freshness by id (`Overview.accountHealth`); empty from servers before 0.6.0.
+    @State private var health: [String: AccountHealth] = [:]
     @State private var isSyncing = false
     @State private var toast: DSToastMessage?
     @State private var showsAdd = false
@@ -61,11 +63,7 @@ struct AccountsView: View {
         return List {
             if !signIn.isEmpty {
                 Section {
-                    DSNoticeCard(signIn.count == 1 ? "\(signIn[0].institution) needs you to sign in again"
-                                                   : "\(signIn.count) connections need you to sign in again",
-                                 message: "The bank ended the connection, so nothing new is coming in. Reconnect on your Budget dashboard — it keeps your accounts and history.",
-                                 actionTitle: dashboardURL(status) == nil ? nil : "Open dashboard") { openDashboard(status) }
-                        .settingsCardRow()
+                    LinkRepairControls(links: signIn, status: status)
                 }
             }
             ForEach(ordered) { link in
@@ -76,6 +74,7 @@ struct AccountsView: View {
                         SettingsNote(text: link.fromStatements ? "No statements imported yet." : "No accounts from it yet.")
                     }
                     ForEach(held) { accountRow($0) }
+                    LinkHealthSection(link: link)
                 }
             }
             // Accounts no connection claims (one whose bank was unlinked, say), still grouped by institution.
@@ -86,7 +85,7 @@ struct AccountsView: View {
                 }
             }
             Section {
-                Text("Investment balances count toward what you're worth, never as cash to spend. Link banks and import statements on your Budget dashboard.")
+                Text(AccountsFooter.text(status: status))
                     .dsFont(.caption)
                     .foregroundStyle(Color.ds.inkTertiary)
                     .fixedSize(horizontal: false, vertical: true)
@@ -122,8 +121,14 @@ struct AccountsView: View {
     }
 
     private func accountRow(_ account: Account) -> some View {
-        DSListRow(account.shortLabel, detail: account.kindLabel) {
-            DSAmountText(account.balance.decimal, currencyCode: account.balance.currencyCode)
+        VStack(alignment: .leading, spacing: 0) {
+            DSListRow(account.shortLabel, detail: account.kindLabel) {
+                HStack(spacing: DSSpace.xs) {
+                    DSAmountText(account.balance.decimal, currencyCode: account.balance.currencyCode)
+                    AccountEditButton(account: account)
+                }
+            }
+            AccountHealthLabel(account: account, health: health[account.id])
         }
     }
 
@@ -157,7 +162,9 @@ struct AccountsView: View {
         let api = app.api
         async let overview = try? api.overview()
         state = await state.refreshed { try await api.serverStatus() }
-        accounts = await overview?.accounts ?? accounts
+        let loaded = await overview
+        accounts = loaded?.accounts ?? accounts
+        if let list = loaded?.accountHealth { health = Dictionary(list.map { ($0.id, $0) }, uniquingKeysWith: { first, _ in first }) }
     }
 
     /// Pulls every connected bank now, then says what came in.

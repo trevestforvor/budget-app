@@ -5,6 +5,8 @@ import { fill, h, api, store, heavy, pageHead, sectionHead, button, busy, armed,
   dateTime, KIND, SOURCE, emptyState, drawer, closeDrawer } from "./core.js";
 import { connectPanes, framedNote, linkPlaid, relinkTeller, reconnected, announce } from "./providers.js";
 import { netWorthSection } from "./networth.js";
+import { accountRowExtras, linkDetailsExtras } from "./health.js";
+import { accountMenuItems } from "./accounts-edit.js";
 
 // MARK: Actions on one institution
 
@@ -104,8 +106,9 @@ function accountRow(a, g) {
   const sub = [KIND[a.kind] || a.kind, a.kind === "investment" ? "balance only" : null,
     stale && g.state.lastSync ? `balance as of ${dateShort(g.state.lastSync)}` : null].filter(Boolean).join(" · ");
   return h("div", { class: "row" },
-    h("div", { class: "grow" }, h("div", { class: "title" }, a.name, a.mask ? h("span", { class: "mask" }, ` ••${a.mask}`) : null), h("div", { class: "sub" }, sub)),
-    rowMoney(a.balance));
+    h("div", { class: "grow" }, h("div", { class: "title" }, a.name, a.mask ? h("span", { class: "mask" }, ` ••${a.mask}`) : null), h("div", { class: "sub" }, sub),
+      accountRowExtras(a, g)),
+    rowMoney(a.balance), accountMenuItems(a));
 }
 
 function detailsPanel(g) {
@@ -113,7 +116,7 @@ function detailsPanel(g) {
     h("dt", {}, "Connected through"), h("dd", {}, SOURCE[l.provider] || l.provider),
     h("dt", {}, "Connected since"), h("dd", {}, dateFull(l.createdAt)),
     h("dt", {}, "Last good sync"), h("dd", {}, l.lastSync ? dateTime(l.lastSync) : "Not yet"),
-    l.lastError ? [h("dt", {}, "Last problem"), h("dd", {}, syncProblem(l))] : null)),
+    l.lastError ? [h("dt", {}, "Last problem"), h("dd", {}, syncProblem(l))] : null, linkDetailsExtras(l))),
     g.links.some((l) => l.lastError) ? details("What the provider said", g.links.filter((l) => l.lastError).map(providerDetail).join("\n")) : null,
     h("p", { class: "help" }, "Removing a connection stops syncing and signs this server out at the bank. Transactions already here stay."));
 }

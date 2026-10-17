@@ -361,7 +361,7 @@ struct ModelSettingsTests {
             try await client.execute(uri: "/v1/status", method: .get) { response in
                 let status = try RemoteBudgetAPI.decoder.decode(ServerStatus.self, from: Data(response.body.readableBytesView))
                 #expect(status.roles.first { $0.role == .chat }?.model == "anthropic/claude")
-                #expect(status.version == "0.5.4")
+                #expect(status.version == BudgetServerVersion.current)
             }
             try await client.execute(uri: "/dash/models/use", method: .post, headers: ModelFixtures.write, body: TestServer.body(#"{"chat":"nope"}"#)) { response in
                 #expect(response.status == .unprocessableContent)

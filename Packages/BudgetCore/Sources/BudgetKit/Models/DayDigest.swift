@@ -130,9 +130,12 @@ public struct DeviceRegistration: Codable, Hashable, Sendable {
     /// Which pace alerts this phone wants (server 0.5.0). Nil leaves what the server has as it is; an older server
     /// ignores it. `enabled` is the morning summary alone: a phone can have pace alerts with the summary off.
     public var paceAlerts: PaceAlertPreferences?
+    /// Whether this phone wants pushes about bank connections (server 0.6.0). Nil leaves what the server has; a phone
+    /// that registered for notifications gets them unless it says false.
+    public var connectionAlerts: Bool? = nil
 
     public init(token: String, environment: Environment, timeZone: String, enabled: Bool, hour: Int = 9, minute: Int = 30,
-                paceAlerts: PaceAlertPreferences? = nil) {
+                paceAlerts: PaceAlertPreferences? = nil, connectionAlerts: Bool? = nil) {
         self.token = token
         self.environment = environment
         self.timeZone = timeZone
@@ -140,6 +143,7 @@ public struct DeviceRegistration: Codable, Hashable, Sendable {
         self.hour = hour
         self.minute = minute
         self.paceAlerts = paceAlerts
+        self.connectionAlerts = connectionAlerts
     }
 }
 
@@ -157,9 +161,11 @@ public struct DeviceStatus: Codable, Hashable, Sendable {
     public var pushConfigured: Bool
     /// The pace alerts the server will send this phone; nil for none, and from servers before 0.5.0.
     public var paceAlerts: PaceAlertPreferences?
+    /// Whether the server sends this phone connection pushes; nil from servers before 0.6.0.
+    public var connectionAlerts: Bool? = nil
 
     public init(enabled: Bool, timeZone: String, hour: Int, minute: Int, lastSentDay: String?, lastError: String?, pushConfigured: Bool,
-                paceAlerts: PaceAlertPreferences? = nil) {
+                paceAlerts: PaceAlertPreferences? = nil, connectionAlerts: Bool? = nil) {
         self.enabled = enabled
         self.timeZone = timeZone
         self.hour = hour
@@ -168,6 +174,7 @@ public struct DeviceStatus: Codable, Hashable, Sendable {
         self.lastError = lastError
         self.pushConfigured = pushConfigured
         self.paceAlerts = paceAlerts
+        self.connectionAlerts = connectionAlerts
     }
 }
 
