@@ -194,6 +194,9 @@ extension Ledger {
             // candidates: a source's own rows are told apart by id (two identical coffees on one day
             // are two rows), and each ledger row can absorb at most one incoming row.
             // Statement rows whose ids were made with an older key can't match by id, so they're candidates too.
+            // Known limit: the scheme stays "h1" across a key change and no change date is kept, so once the key differs
+            // every hashed row is a candidate, new-key rows included. Two real rows on one day for one amount, one already
+            // here and one in a later overlapping file, can then be taken for one.
             var candidates = transactions.filter {
                 $0.accountID == accountID && ($0.source != snapshot.source || (snapshot.statementKeyChanged && Self.isHashedStatementRow($0)))
             }

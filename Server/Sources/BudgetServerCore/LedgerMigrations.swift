@@ -29,27 +29,34 @@ enum LedgerMigrations {
     static func statementIDs(_ service: BudgetService, ledgerInSync: Bool, mode: StatementIDMode) async {
         let log = service.logger
         let audit = await service.api.statementIDAudit()
+        let (chats, labels) = await outsideCounts(service)
+        let counts = "\(audit.accounts) accounts, \(audit.rows) rows, \(audit.rules) rules, \(chats) chats, \(labels) labels"
         guard let ids = service.statementIDs else {
             if !audit.isClean {
                 log.warning("statement ids: \(audit.accounts) accounts, \(audit.rows) rows hold account numbers; set BUDGET_TOKEN_KEY to upgrade them")
             }
+            // Masking labels, warnings, notes and the numbers in chats needs no key. OFX is refused without one, so
+            // there's no gate to hold.
+            if mode == .migrate, chats > 0 || labels > 0 {
+                log.notice("statement ids: \(chats) chats, \(labels) labels to mask")
+                await scrubOutside(service, accounts: [:], rows: [:])
+            }
             return
         }
-        let keyChanged = await checkKey(ids, service, save: mode == .migrate)
         guard ledgerInSync else {
             log.error("statement ids: skipped, the upgraded ledger wasn't saved; OFX and QFX imports are off until a restart")
             return
         }
-        let (chats, labels) = await outsideCounts(service)
-        let counts = "\(audit.accounts) accounts, \(audit.rows) rows, \(audit.rules) rules, \(chats) chats, \(labels) labels"
         if mode == .audit {
+            _ = await checkKey(ids, service, save: false)
             log.notice("statement ids: \(counts) to rename (audit only: nothing changed; OFX and QFX imports are off)")
             return
         }
+        // The backup a deploy takes is the rollback; this line says what's about to change, before anything is written.
+        if !audit.isClean || chats > 0 || labels > 0 { log.notice("statement ids: \(counts) to rename") }
+        let keyChanged = await checkKey(ids, service, save: true)
         var migration: StatementIDMigration?
         if !audit.isClean {
-            // The backup a deploy takes is the rollback; this line says what it's about to change.
-            log.notice("statement ids: \(counts) to rename")
             do {
                 migration = try await service.api.hashStatementIDs(ids)
             } catch {
@@ -61,10 +68,16 @@ enum LedgerMigrations {
             }
         }
         // The ledger is safe from here, so a scrub that fails is retried at the next start and doesn't keep imports off.
+        await scrubOutside(service, accounts: migration?.accountMap ?? [:], rows: migration?.rowMap ?? [:])
+        ids.gate.open(keyChanged: keyChanged)
+    }
+
+    /// Chats (old ids swapped for new with the maps, any number left masked) and import records (labels, warnings and
+    /// notes masked). Each logs its own failure and is tried again at the next start.
+    static func scrubOutside(_ service: BudgetService, accounts: [String: String], rows: [String: String]) async {
+        let log = service.logger
         do {
-            let scrubbed = try await service.api.rewriteChats { [accounts = migration?.accountMap ?? [:], rows = migration?.rowMap ?? [:]] in
-                StatementIDKeys.scrubChat($0, accounts: accounts, rows: rows)
-            }
+            let scrubbed = try await service.api.rewriteChats { StatementIDKeys.scrubChat($0, accounts: accounts, rows: rows) }
             if scrubbed > 0 { log.notice("statement ids: \(scrubbed) chats scrubbed") }
             if try await service.store.setting(chatsScrubbed) == nil { try await service.store.saveSetting(chatsScrubbed, Data("true".utf8)) }
         } catch {
@@ -82,7 +95,6 @@ enum LedgerMigrations {
         } catch {
             log.error("statement ids: import labels weren't masked; tried again at the next start: \(error)")
         }
-        ids.gate.open(keyChanged: keyChanged)
     }
 
     /// The `budget_settings` marker set once chats have been scrubbed. Scrubbing runs at every start anyway (it's

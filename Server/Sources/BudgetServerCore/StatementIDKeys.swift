@@ -39,23 +39,27 @@ enum StatementIDKeys {
         let prefixes = accounts.keys.sorted { $0.count > $1.count }
         let rowPrefix = SourceKind.fileImport.rawValue + ":"
         return text.replacing(/(?:fileImport:|ofx-)[^\s"\\,]*/) { match -> String in
+            // Prose and markdown put punctuation right after an id ("…0123.", "(…0123)", a backtick); it isn't the id's.
             var token = String(match.output)
+            let trailing = String(token.reversed().prefix { ".;:)]}'`!?".contains($0) }.reversed())
+            token.removeLast(trailing.count)
             if let new = rows[token] ?? accounts[token] {
                 token = new
             } else if let old = prefixes.first(where: { token.hasPrefix(rowPrefix + $0 + ":") }), let new = accounts[old] {
                 // A row of a renamed account that isn't in the ledger any more ("fileImport:<account>:…").
                 token = rowPrefix + new + token.dropFirst(rowPrefix.count + old.count)
             }
-            return maskLegacySegments(token)
+            return maskLegacySegments(token) + trailing
         }
     }
 
-    /// In "fileImport:fileImport:9876543210123:ofx-9876543210123-F1", the number segment and the "ofx-" segment.
+    /// In "fileImport:fileImport:9876543210123:ofx-9876543210123-F1", the number segment and the "ofx-" segment. A
+    /// segment that starts with 6 or more digits is masked whatever follows them, so stray punctuation can't keep a number.
     static func maskLegacySegments(_ token: String) -> String {
         token.split(separator: ":", omittingEmptySubsequences: false).map { segment -> String in
             let s = String(segment)
             if s.hasPrefix("ofx-") { return StatementIDs.maskNumbers(s) }
-            if s.count >= 6, s.allSatisfy({ $0.isASCII && $0.isNumber }) { return StatementIDs.maskNumbers(s) }
+            if s.prefix(while: { $0.isASCII && $0.isNumber }).count >= 6 { return StatementIDs.maskNumbers(s) }
             return s
         }.joined(separator: ":")
     }

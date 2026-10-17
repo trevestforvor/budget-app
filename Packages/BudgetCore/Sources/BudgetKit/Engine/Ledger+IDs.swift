@@ -30,6 +30,7 @@ public struct StatementIDMigration: Hashable, Sendable {
 
 /// What the statement-id upgrade would rename now, counted without changing anything.
 public struct StatementIDAudit: Hashable, Codable, Sendable {
+    /// Account ids named after a number, wherever the ledger holds one (an account, a row, a rule, a keyed field).
     public var accounts: Int
     public var rows: Int
     public var rules: Int
@@ -62,20 +63,41 @@ extension Ledger {
     /// every other account. Named statement accounts ("csv-…"), upgraded ones ("stmt-…") and the "file" sentinel are
     /// left alone. Only untargeted OFX ever made any other `fileImport:` account id.
     static func legacyStatementNumber(_ account: Account) -> String? {
+        account.source == .fileImport ? legacyStatementNumber(accountID: account.id) : nil
+    }
+
+    /// The same, from an account id alone, wherever it turns up (a row, a rule, a key) even with no account behind it.
+    static func legacyStatementNumber(accountID id: String) -> String? {
         let prefix = SourceKind.fileImport.rawValue + ":"
-        guard account.source == .fileImport, account.id.hasPrefix(prefix) else { return nil }
-        let rest = String(account.id.dropFirst(prefix.count))
+        guard id.hasPrefix(prefix) else { return nil }
+        let rest = String(id.dropFirst(prefix.count))
         guard !rest.isEmpty, rest != "file", !rest.hasPrefix("csv-"), !rest.hasPrefix("stmt-") else { return nil }
         return rest
+    }
+
+    /// Every account id the ledger refers to: accounts, rows, rules, keyed fields and the copies kept for undo. An older
+    /// server can write back a row or a rule without the account it names, and that id still holds the number.
+    var referencedAccountIDs: Set<String> {
+        var ids = Set(accounts.map(\.id))
+        ids.formUnion(transactions.map(\.accountID))
+        ids.formUnion(rules.compactMap(\.match.accountID))
+        ids.formUnion(openingBalances.keys)
+        ids.formUnion(cardBills.keys)
+        ids.formUnion(cardBills.values.map(\.accountID))
+        ids.formUnion(holdings.keys)
+        ids.formUnion(holdings.values.map(\.id))
+        for record in mergeLog { ids.insert(record.dropped.accountID); if let kept = record.keptBefore { ids.insert(kept.accountID) } }
+        return ids
     }
 
     /// The renames the statement-id upgrade makes: accounts named after a number, and every statement row whose id
     /// holds a legacy OFX id or a renamed account. Empty once upgraded.
     func statementIDMaps(_ ids: StatementIDs) -> (accounts: [String: String], rows: [String: String]) {
+        // The target depends on the number alone, so an id maps the same wherever it turns up.
         var accountMap: [String: String] = [:]
-        for account in accounts {
-            guard let number = Self.legacyStatementNumber(account) else { continue }
-            accountMap[account.id] = Self.accountID(.fileImport, ids.accountExternalID(acctID: number))
+        for id in referencedAccountIDs {
+            guard let number = Self.legacyStatementNumber(accountID: id) else { continue }
+            accountMap[id] = Self.accountID(.fileImport, ids.accountExternalID(acctID: number))
         }
         func newID(_ row: LedgerTransaction) -> String? {
             guard let external = Self.statementExternalPart(row) else { return nil }
@@ -108,7 +130,7 @@ extension Ledger {
                                 rules: rules.filter { $0.match.accountID.map { accountMap[$0] != nil } ?? false }.count)
     }
 
-    /// Accounts named after an OFX number, and every OFX row id, rewritten with `ids` (P0.6). Running it again changes
+    /// Account ids named after an OFX number (with or without the account itself), and every OFX row id, rewritten with `ids` (P0.6). Running it again changes
     /// nothing; the marker is added either way.
     mutating func hashStatementIDs(_ ids: StatementIDs) -> StatementIDMigration {
         let (accountMap, rowMap) = statementIDMaps(ids)

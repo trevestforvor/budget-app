@@ -342,7 +342,7 @@ export default {
     const items = await Promise.all(files.sort((a, b) => a.name.localeCompare(b.name)).map(async (f) => {
       const text = await f.text(), ofx = isOFX(f.name, text);
       const guess = guessAccount(f.name, text);
-      const accountID = guess || (!ofx && this.preselect) || "";
+      const accountID = guess || this.preselect || "";
       return { name: f.name, text, ofx, accountID, guessed: !!guess, sign: "auto", preview: null, done: null, error: null,
         newAccount: ofx ? ofxNewAccount(text) : { name: "", institution: "", kind: "checking", balance: "" } };
     }));
