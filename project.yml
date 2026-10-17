@@ -17,12 +17,10 @@ targets:
     platform: iOS
     sources:
       - App
-    # The morning summary: APNs (Xcode's automatic signing turns development into production for TestFlight and the
-    # App Store), and a background refresh that tells the server the phone's time zone after a trip.
-    entitlements:
-      path: App/Budget.entitlements
-      properties:
-        aps-environment: development
+    # The morning summary: APNs (aps-environment in App/Budget.entitlements; Xcode's automatic signing turns development
+    # into production for TestFlight and the App Store), and a background refresh that tells the server the phone's time
+    # zone after a trip. The entitlements file is chosen in settings below, not generated, so it can depend on
+    # BUDGET_API_HOST.
     info:
       path: App/Info.plist
       properties:
@@ -58,6 +56,9 @@ targets:
         TARGETED_DEVICE_FAMILY: "1"
         CODE_SIGN_STYLE: Automatic
         ENABLE_PREVIEWS: YES
+        # App/Budget.entitlements, or App/BudgetAppLinks.entitlements (the same plus Associated Domains, so Plaid's sign-in
+        # comes back to the app from a bank's own app) when Local.xcconfig sets BUDGET_API_HOST: Config/Budget.xcconfig picks.
+        CODE_SIGN_ENTITLEMENTS: $(BUDGET_ENTITLEMENTS)
   BudgetUITests:
     type: bundle.ui-testing
     platform: iOS

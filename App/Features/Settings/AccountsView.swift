@@ -3,7 +3,8 @@ import DesignSystem
 import SwiftUI
 
 /// Settings → Linked accounts: each institution with its accounts and balances, how its data arrives and when it
-/// last did, and what to do when a bank ends a connection. Linking and reconnecting happen on the dashboard.
+/// last did, and what to do when a bank ends a connection or its access runs out. Linking happens on the dashboard;
+/// a Plaid link signs in again from here when the server can (0.6.0, `LinkRepairControls`).
 struct AccountsView: View {
     @Environment(AppModel.self) private var app
     @Environment(\.openURL) private var openURL
@@ -14,6 +15,10 @@ struct AccountsView: View {
     @State private var isSyncing = false
     @State private var toast: DSToastMessage?
     @State private var showsAdd = false
+    /// The server can start a reconnect from the phone: 0.6.0 or newer, and an API that speaks `LinkRepairAPI`.
+    @State private var repairAPI: (any LinkRepairAPI)?
+    /// The link whose reconnect sheet is up.
+    @State private var repairing: InstitutionLink?
 
     var body: some View {
         Group {
@@ -52,18 +57,24 @@ struct AccountsView: View {
         }
         .task(id: app.revision) { await load() }
         .sheet(isPresented: $showsAdd) { AddAccountSheet(dashboardURL: state.value.flatMap(dashboardURL)) }
+        .sheet(item: $repairing) { link in
+            if let repairAPI { ReconnectSheet(link: link, api: repairAPI, dashboardURL: state.value.flatMap(dashboardURL)) }
+        }
+        // A connection push tapped while this page is already showing.
+        .onChange(of: app.pendingReconnect) { openPendingReconnect() }
         .dsToast($toast)
     }
 
     private func list(_ status: ServerStatus) -> some View {
         let signIn = status.institutions.filter(\.needsSignIn)
+        let expiring = status.institutions.filter { $0.consentEndsSoon() }
         let ordered = signIn + status.institutions.filter { !$0.needsSignIn && !$0.fromStatements } + status.institutions.filter(\.fromStatements)
         let claimed = Set(ordered.flatMap { held(by: $0).map(\.id) })
         let unclaimed = accounts.filter { !claimed.contains($0.id) }
         return List {
-            if !signIn.isEmpty {
+            if !signIn.isEmpty || !expiring.isEmpty {
                 Section {
-                    LinkRepairControls(links: signIn, status: status)
+                    LinkRepairControls(links: signIn, expiring: expiring, status: status, canRepair: repairAPI != nil) { repairing = $0 }
                 }
             }
             ForEach(ordered) { link in
@@ -161,10 +172,37 @@ struct AccountsView: View {
     private func load() async {
         let api = app.api
         async let overview = try? api.overview()
-        state = await state.refreshed { try await api.serverStatus() }
+        var next = await state.refreshed { try await api.serverStatus() }
+        #if targetEnvironment(simulator)
+        if ReconnectStub.isOn, let status = next.value { next = .loaded(await ReconnectStub.shared.decorate(status)) }
+        #endif
+        state = next
         let loaded = await overview
         accounts = loaded?.accounts ?? accounts
         if let list = loaded?.accountHealth { health = Dictionary(list.map { ($0.id, $0) }, uniquingKeysWith: { first, _ in first }) }
+        repairAPI = await linkRepairAPI()
+        openPendingReconnect()
+    }
+
+    /// The API to sign in to banks again through, when the server has the routes; nil before 0.6.0 and in the demo.
+    private func linkRepairAPI() async -> (any LinkRepairAPI)? {
+        #if targetEnvironment(simulator)
+        if ReconnectStub.isOn { return ReconnectStub.shared }
+        #endif
+        guard !app.isDemo, let api = app.api as? any LinkRepairAPI,
+              await app.serverSupports(ServerStatus.connectionsSince) else { return nil }
+        return api
+    }
+
+    /// The link a connection push (or Home's attention) asked for: its reconnect sheet, when the phone can repair it and
+    /// it still needs it. Otherwise the list, whose notices say what to do.
+    private func openPendingReconnect() {
+        guard let id = app.pendingReconnect, let status = state.value else { return }
+        app.pendingReconnect = nil
+        guard repairAPI != nil, repairing == nil,
+              let link = status.institutions.first(where: { $0.id == id }), link.reconnect == .phone,
+              link.needsSignIn || link.consentEndsSoon() else { return }
+        repairing = link
     }
 
     /// Pulls every connected bank now, then says what came in.

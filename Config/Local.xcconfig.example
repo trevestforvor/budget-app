@@ -4,3 +4,7 @@
 DEVELOPMENT_TEAM = ABCDE12345
 // A reverse-DNS prefix you own. The app is <prefix>.budget, and the server's APNs bundle ID (for the morning summary) must match it.
 BUDGET_BUNDLE_PREFIX = com.yourname
+// Optional: the host the phone reaches your server's API on, without https:// (the server's BUDGET_PUBLIC_URL host).
+// It lets Plaid's sign-in come back to the app from a bank's own app; the server serves the matching
+// apple-app-site-association. Needs Associated Domains on your App ID (automatic signing adds it).
+// BUDGET_API_HOST = budget-api.example.com
