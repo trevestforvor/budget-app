@@ -2,14 +2,16 @@ import BudgetKit
 import DesignSystem
 import SwiftUI
 
-/// A proposal that reaches more than a handful of rows: how many, and a few of them, before it applies to all.
+/// A proposal that changes more than a handful of rows: how many, and a few of the rows it reaches, before it applies.
 struct ProposalReviewSheet: View {
     let proposal: ProposedAction
     let onApply: () -> Void
 
     @Environment(\.dismiss) private var dismiss
 
-    private var count: Int { proposal.matchCount ?? 0 }
+    /// The rows it changes, and the rows it reaches (more when some of them stay as they are).
+    private var count: Int { proposal.reviewCount }
+    private var reach: Int { max(proposal.matchCount ?? count, count) }
     private var sample: [String] { proposal.sample ?? [] }
 
     var body: some View {
@@ -23,9 +25,13 @@ struct ProposalReviewSheet: View {
                     if let detail = proposal.detail {
                         Text(detail).dsFont(.callout).foregroundStyle(Color.ds.inkSecondary).fixedSize(horizontal: false, vertical: true)
                     }
+                    if reach > count {
+                        Text("It reaches \(reach) transactions; \(count) of them change.")
+                            .dsFont(.callout).foregroundStyle(Color.ds.inkSoft).fixedSize(horizontal: false, vertical: true)
+                    }
                 }
                 if !sample.isEmpty {
-                    DSListSection(sample.count < count ? "\(sample.count) of \(count)" : "All \(count)") {
+                    DSListSection(sample.count < reach ? "\(sample.count) of \(reach)" : "All \(reach)") {
                         ForEach(Array(sample.enumerated()), id: \.offset) { _, line in
                             SampleLine(line: line)
                         }
@@ -43,7 +49,7 @@ struct ProposalReviewSheet: View {
                     dismiss()
                     onApply()
                 } label: {
-                    Text("Apply to all \(count)").fixedSize(horizontal: false, vertical: true)
+                    Text(reach > count ? "Apply to \(count)" : "Apply to all \(count)").fixedSize(horizontal: false, vertical: true)
                 }
                 .buttonStyle(.ds(.ai, size: .large, fullWidth: true))
                 .padding(.horizontal, DSSpace.gutter)

@@ -403,7 +403,8 @@ public actor LedgerBudgetAPI: BudgetAPI {
         // changed in memory but never saved, so a restart quietly undid it.
         var result = try await write {
             if let basis, let current = try ledger.basis(for: action), current.fingerprint != basis {
-                throw BudgetAPIError.server(status: 409, message: "Your data changed since this was proposed (\(current.rowCount) transaction\(current.rowCount == 1 ? "" : "s") now). Refresh it to see what it would do now.")
+                let now = current.rowCount > 0 ? " (\(current.rowCount) transaction\(current.rowCount == 1 ? "" : "s") now)" : ""
+                throw BudgetAPIError.server(status: 409, message: "Your data changed since this was proposed\(now). Refresh it to see what it would do now.")
             }
             return try ledger.perform(action)
         }

@@ -38,7 +38,9 @@ final class StaleProposalUITests: XCTestCase {
         XCTAssertTrue(refresh.exists)
         refresh.tap()
 
-        XCTAssertTrue(app.buttons["Apply"].waitForExistence(timeout: 10))
+        // Offered again once it's worked out: the tag reads "Not applied" only then (a spinner while it refreshes, with
+        // no Apply button to tap early).
+        XCTAssertTrue(app.staticTexts["Not applied"].waitForExistence(timeout: 10))
         XCTAssertFalse(app.staticTexts["Out of date"].exists)
         app.buttons["Apply"].firstMatch.tap()
         XCTAssertTrue(app.staticTexts.matching(identifier: "Applied").element(boundBy: 1).waitForExistence(timeout: 10))

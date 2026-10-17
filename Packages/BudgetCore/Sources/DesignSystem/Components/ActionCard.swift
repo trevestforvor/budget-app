@@ -9,6 +9,10 @@ public struct DSActionCard: View {
         case earlier
         /// The data it was worked out from changed before it applied; nothing changed. Refresh shows what it would do now.
         case stale(String)
+        /// Stale, while Refresh works it out again: no Apply until it's back.
+        case refreshing(String)
+        /// Refresh found it can't be done any more (what it changes is gone, or it's refused now): shown, not offered.
+        case unavailable(String)
     }
 
     public struct Effect: Identifiable, Hashable, Sendable {
@@ -52,6 +56,13 @@ public struct DSActionCard: View {
     }
 
     private var isPending: Bool { phase == .proposed || phase == .applying }
+
+    private var isRetired: Bool {
+        switch phase {
+        case .dismissed, .earlier, .unavailable: true
+        default: false
+        }
+    }
 
     public var body: some View {
         VStack(alignment: .leading, spacing: DSSpace.sm) {
@@ -99,7 +110,7 @@ public struct DSActionCard: View {
                 Color.clear.dsLitEdge(radius: DSRadius.card)
             }
         }
-        .opacity(phase == .dismissed || phase == .earlier ? 0.55 : 1)
+        .opacity(isRetired ? 0.55 : 1)
         .animation(DSMotion.standard, value: phase)
     }
 
@@ -107,12 +118,13 @@ public struct DSActionCard: View {
     private var statusTag: some View {
         switch phase {
         case .proposed: DSTag("Not applied", tint: Color.ds.inkTertiary)
-        case .applying: ProgressView().controlSize(.small).tint(Color.ds.iris)
+        case .applying, .refreshing: ProgressView().controlSize(.small).tint(Color.ds.iris)
         case .applied: DSTag("Applied", systemImage: "checkmark", tint: Color.ds.accent)
         case .dismissed: DSTag("Dismissed", tint: Color.ds.inkTertiary)
         case .earlier: DSTag("Earlier", tint: Color.ds.inkTertiary)
         case .failed: DSTag("Didn't apply", systemImage: "exclamationmark", tint: Color.ds.caution)
         case .stale: DSTag("Out of date", systemImage: "arrow.clockwise", tint: Color.ds.caution)
+        case .unavailable: DSTag("Not possible now", tint: Color.ds.inkTertiary)
         }
     }
 
@@ -138,14 +150,22 @@ public struct DSActionCard: View {
                 Text(message).dsFont(.callout).foregroundStyle(Color.ds.caution)
                 Button("Try again", action: onApply).buttonStyle(.ds(.secondary))
             }
-        case let .stale(message):
+        case let .stale(message), let .refreshing(message):
+            let isRefreshing = phase == .refreshing(message)
             VStack(alignment: .leading, spacing: DSSpace.xs) {
                 Text(message).dsFont(.callout).foregroundStyle(Color.ds.inkSecondary).fixedSize(horizontal: false, vertical: true)
                 HStack(spacing: DSSpace.md) {
-                    Button("Refresh", action: onRefresh).buttonStyle(.ds(.secondary))
-                    Button("Not now", action: onDismiss).buttonStyle(.ds(.quiet))
+                    // While it refreshes, Refresh spins and ignores taps; there's nothing to apply until it's back.
+                    Button("Refresh", action: onRefresh)
+                        .buttonStyle(.ds(.secondary, isLoading: isRefreshing))
+                        .allowsHitTesting(!isRefreshing)
+                    Button("Not now", action: onDismiss)
+                        .buttonStyle(.ds(.quiet))
+                        .disabled(isRefreshing)
                 }
             }
+        case let .unavailable(message):
+            Text(message).dsFont(.callout).foregroundStyle(Color.ds.inkSecondary).fixedSize(horizontal: false, vertical: true)
         case .dismissed:
             EmptyView()
         case .earlier:

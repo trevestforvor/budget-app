@@ -116,12 +116,31 @@ struct ActionBasisRouteTests {
         #expect(try await service.api.rules().count == rulesBefore + 1)
     }
 
-    @Test("A proposal whose row is gone is 404, as without a basis")
+    @Test("A row that was there when proposed and is gone at apply (its import rolled back) is 404, and nothing changes")
     func missingRowIs404() async throws {
-        let (app, _) = try await TestServer.app()
+        let (app, service) = try await TestServer.app()
+        let accountID = try #require(try await service.api.overview().accounts.first { $0.kind == .credit }?.id)
         try await app.test(.router) { client in
-            try await client.execute(uri: "/v1/actions", method: .post, headers: Self.headers(basis: "v1:" + String(repeating: "0", count: 32)),
-                                     body: try Self.body(Self.recategorize("no-such-row", "dining"))) { #expect($0.status == .notFound) }
+            let csv = "Date,Description,Amount\\n09/10/2026,HARBOR HARDWARE 0042,41.87\\n"
+            let body = #"{"content":"\#(csv)","accountID":"\#(accountID)","options":{"format":"csv","sign":"positiveIsOut","institution":"Summit"}}"#
+            var batch = ""
+            try await client.execute(uri: "/v1/imports", method: .post, headers: TestServer.auth, body: TestServer.body(body)) { response in
+                #expect(response.status == .created)
+                batch = try Self.decode(ImportRecord.self, response.body).batchID
+            }
+            let row = try #require(try await service.api.transactions(TransactionFilter(search: "Harbor Hardware")).first)
+            let action = Self.recategorize(row.id, "shopping")
+            let proposed = try await client.execute(uri: "/v1/actions/preview", method: .post, headers: TestServer.auth, body: try Self.body(action))
+            #expect(proposed.status == .ok)
+            let basis = try #require(try Self.decode(ActionPreview.self, proposed.body).basis)
+
+            try await client.execute(uri: "/v1/imports/\(batch)", method: .delete, headers: TestServer.auth) { #expect($0.status == .ok) }
+            let before = try await service.store.loadLedger()?.transactions.count
+            try await client.execute(uri: "/v1/actions", method: .post, headers: Self.headers(basis: basis), body: try Self.body(action)) {
+                #expect($0.status == .notFound)
+            }
+            #expect(try await service.store.loadLedger()?.transactions.count == before)
+            #expect(try await service.api.transactions(TransactionFilter(search: "Harbor Hardware")).isEmpty)
         }
     }
 

@@ -263,7 +263,7 @@ struct AskView: View {
     }
 
     /// Applies a proposal with the basis it was made against, so the server refuses it (409) if its rows changed since.
-    /// One reaching more than a handful of rows shows its count and sample first.
+    /// One changing more than a handful of rows shows its count and sample first.
     private func apply(_ proposal: ProposedAction, reviewed: Bool = false) {
         let proposal = refreshed[proposal.id] ?? proposal
         if proposal.needsReview, !reviewed {
@@ -284,8 +284,10 @@ struct AskView: View {
     }
 
     /// Works a stale proposal out again from the ledger as it is now — a preview, no model call — and offers it again.
+    /// One that can't be done any more is retired with the reason, not offered again: retrying it would only be refused.
     private func refresh(_ proposal: ProposedAction) {
-        phases[proposal.id] = .applying
+        guard case let .stale(message) = phases[proposal.id] else { return }
+        phases[proposal.id] = .refreshing(message)
         Task {
             do {
                 let preview = try await app.api.preview(proposal.action)
@@ -294,9 +296,9 @@ struct AskView: View {
                 }
                 phases[proposal.id] = .proposed
             } catch BudgetAPIError.notFound {
-                phases[proposal.id] = .failed("That's no longer possible: what it changes is gone.")
+                phases[proposal.id] = .unavailable("That's no longer possible: what it changes is gone.")
             } catch let BudgetAPIError.rejected(reason) {
-                phases[proposal.id] = .failed("That's no longer possible: \(reason)")
+                phases[proposal.id] = .unavailable("That's no longer possible: \(reason)")
             } catch {
                 phases[proposal.id] = .stale("Couldn't refresh it: \(error.localizedDescription)")
             }
@@ -410,7 +412,7 @@ struct AnswerView: View {
             effects: effects,
             trace: (name: proposal.action.toolName, arguments: display),
             phase: phases[proposal.id] ?? .proposed,
-            applyTitle: isClient ? "Open" : proposal.needsReview ? "Review \(proposal.matchCount ?? 0)" : "Apply",
+            applyTitle: isClient ? "Open" : proposal.needsReview ? "Review \(proposal.reviewCount)" : "Apply",
             onApply: { onApply(proposal) },
             onDismiss: { onDismiss(proposal) },
             onRefresh: { onRefresh(proposal) })

@@ -41,6 +41,39 @@ struct ActionBasisTests {
         #expect(try ledger.basis(for: action) == before)
     }
 
+    @Test("A sync of another account, through ingest, leaves a re-file's and a rule's fingerprint unchanged")
+    func basisStableAcrossSyncOfAnotherAccount() async throws {
+        let api = Fixture.api()
+        let rows = try await api.transactions(TransactionFilter(limit: 2000)).filter { !$0.isPending }
+        let counts = Dictionary(grouping: rows, by: \.merchant).mapValues(\.count)
+        let merchant = try #require(counts.filter { $0.value > ProposedAction.reviewAbove }.keys.sorted().first)
+        let refile = AppAction.recategorize(Recategorize(transactionIDs: rows.filter { $0.merchant == merchant }.prefix(2).map(\.id), categoryID: "shopping"))
+        let rule = Self.rule(merchant)
+        let refileBasis = try #require(try await api.preview(refile).basis)
+        let ruleBasis = try #require(try await api.preview(rule).basis)
+
+        // The full sync path (pending matching, transfer pairing, categorizing) on an account none of those rows are on:
+        // first a pull with a pending charge, then the next pull posting it under a new id.
+        let day = { Fixture.calendar.date(byAdding: .day, value: -$0, to: Fixture.now)! }
+        func pull(_ transactions: [SourceTransaction]) -> SourceSnapshot {
+            SourceSnapshot(source: .plaid, accounts: [
+                SourceAccount(externalID: "elsewhere-1", institution: "Harbor Credit Union", institutionDomain: nil, name: "Harbor Card", kind: .credit,
+                              balance: Money(-54.37), availableBalance: nil, balanceDate: Fixture.now, transactions: transactions, holdings: []),
+            ], warnings: [], includesPending: true)
+        }
+        let hardware = SourceTransaction(externalID: "e1", posted: day(2), amount: Money(-41.87), description: "HARBOR HARDWARE 0042")
+        let pending = SourceTransaction(externalID: "e2", posted: day(1), amount: Money(-12.50), description: "QUAYSIDE NOODLES", isPending: true)
+        var posted = SourceTransaction(externalID: "e3", posted: day(0), amount: Money(-12.50), description: "QUAYSIDE NOODLES")
+        posted.replacesExternalID = "e2"
+        #expect(try await api.ingest(pull([hardware, pending]), batchID: "sync-elsewhere-1").rowsAdded == 2)
+        #expect(try await api.preview(refile).basis == refileBasis)
+        #expect(try await api.preview(rule).basis == ruleBasis)
+        _ = try await api.ingest(pull([hardware, posted]), batchID: "sync-elsewhere-2")
+        #expect(try await api.transactions(TransactionFilter(limit: 2000)).contains { $0.merchant.localizedCaseInsensitiveContains("quayside") && !$0.isPending })
+        #expect(try await api.preview(refile).basis == refileBasis)
+        #expect(try await api.preview(rule).basis == ruleBasis)
+    }
+
     @Test("Re-filing, hiding or renaming a reached row changes the fingerprint")
     func basisChangesWhenReachedRowRecategorized() throws {
         let ledger = Self.ledger()
@@ -146,8 +179,10 @@ struct ActionBasisTests {
         do {
             _ = try await api.perform(first.action, basis: basis)
             Issue.record("a stale cap applied")
-        } catch let BudgetAPIError.server(status, _) {
+        } catch let BudgetAPIError.server(status, message) {
             #expect(status == 409)
+            // A cap reaches no rows, so the message doesn't count any.
+            #expect(message == "Your data changed since this was proposed. Refresh it to see what it would do now.")
         }
         let refreshed = ProposedAction(id: first.id, action: first.action, preview: try await api.preview(first.action), timeZone: Fixture.calendar.timeZone) { _ in nil }
         #expect(refreshed.basis != basis && refreshed.id == first.id)
@@ -183,5 +218,33 @@ struct ActionBasisTests {
         #expect(try await api.rules().count == rulesBefore + 1)
         _ = try await api.perform(.recategorize(Recategorize(transactionIDs: [row.id], categoryID: "dining")))
         #expect(try await api.transaction(id: row.id).categorization?.categoryID == "dining")
+    }
+
+    @Test("The review counts the rows a proposal changes: a rule that doesn't re-file, forgetting a merchant or deleting a rule changes none")
+    func reviewCountsChangedRows() async throws {
+        let ledger = Self.ledger()
+        let merchant = try Self.busyMerchant(ledger)
+        let toolbox = DemoToolbox(ledger: ledger, decisions: nil)
+
+        let refiling = try await toolbox.propose(Self.rule(merchant))
+        #expect(refiling.changeCount == (try ledger.preview(Self.rule(merchant))).changeCount)
+
+        let keeping = AppAction.createBudgetRule(CreateBudgetRule(match: RuleMatch(merchantContains: merchant), categoryID: "shopping", applyToExisting: false))
+        let kept = try await toolbox.propose(keeping)
+        #expect((kept.matchCount ?? 0) > ProposedAction.reviewAbove)
+        #expect(kept.changeCount == 0 && kept.reviewCount == 0 && !kept.needsReview && kept.sample == nil && kept.basis != nil)
+
+        // Re-filing named rows changes every one of them, even those already under the category.
+        let ids = ledger.transactions.filter { $0.merchant == merchant }.prefix(ProposedAction.reviewAbove + 1).map(\.id)
+        let refile = try await toolbox.propose(.recategorize(Recategorize(transactionIDs: Array(ids), categoryID: "shopping")))
+        #expect(refile.changeCount == ids.count && refile.needsReview)
+
+        let preview = ActionPreview(title: "Forget it", matchCount: 40, changeCount: 0)
+        let forget = ProposedAction(action: .forgetMerchant(ForgetMerchant(descriptor: merchant)), preview: preview, timeZone: Fixture.calendar.timeZone) { _ in nil }
+        #expect(forget.matchCount == 40 && forget.changeCount == 0 && !forget.needsReview)
+
+        // A proposal from before server 0.6.0 named no change count: the rows it reaches stand in.
+        let older = ProposedAction(id: "old", action: Self.rule(merchant), title: "Old", matchCount: 12)
+        #expect(older.reviewCount == 12 && older.needsReview)
     }
 }
