@@ -49,6 +49,9 @@ enum ConnectionAlertFixture {
     }
 
     static func sent(_ apns: FakeAPNs) -> [(title: String, info: [String: String])] { PaceFixture.alerts(apns) }
+
+    /// An install where every Plaid link can be repaired from the phone (what P6's `ReconnectMethod.for` gives one).
+    static func phone(_ link: StoredLink) -> ReconnectMethod { .phone }
 }
 
 @Suite("Connection pushes: what the links call for")
@@ -63,7 +66,7 @@ struct ConnectionAlertCollectorTests {
             F.link("plaid-b", institution: "Amex", token: "", kind: .revoked, since: since),
             F.link("plaid-c", institution: "Ally"),
             { var parked = F.link("plaid-d", institution: "Citi"); parked.status = .needsReauth; return parked }(),
-        ], now: F.noon)
+        ], now: F.noon, reconnect: F.phone)
         #expect(alerts.map(\.kind) == [.needsSignIn, .revoked])
         let signIn = alerts[0]
         #expect(signIn.episodeKeys == ["signin|plaid-a|\(Int(since.timeIntervalSince1970))"])
@@ -75,10 +78,22 @@ struct ConnectionAlertCollectorTests {
         #expect(later.first?.episodeKeys != signIn.episodeKeys)
     }
 
+    @Test("Only a link the phone can repair says 'Tap to fix it' and opens signing in again; otherwise the dashboard")
+    func reconnectMethod() throws {
+        let needs = F.link(kind: .needsSignIn, since: F.noon)
+        let renew = F.link("plaid-b", institution: "Amex", consent: F.noon.addingTimeInterval(10 * F.day))
+        let phone = ConnectionAlerts.linkAlerts([needs, renew], now: F.noon, reconnect: F.phone)
+        #expect(phone.allSatisfy(\.opensReconnect) && phone.map { ConnectionAlerts.notification($0, now: F.noon).userInfo["to"] } == ["reconnect", "reconnect"])
+        #expect(phone[0].body.contains("Tap to fix it") && phone[1].body.contains("It takes a minute"))
+        let dashboard = ConnectionAlerts.linkAlerts([needs, renew], now: F.noon, reconnect: { _ in .dashboard })
+        #expect(dashboard.map { ConnectionAlerts.notification($0, now: F.noon).userInfo["to"] } == ["accounts", "accounts"])
+        #expect(dashboard.allSatisfy { $0.body.contains("Budget dashboard") && !$0.body.contains("Tap") })
+    }
+
     @Test("Consent: 13 days out one alert (the 14-day key); 20 days none; the day after none; inside a week the 7-day key covers the 14")
     func expiry() throws {
         func alerts(_ consent: Date?, pending: Date? = nil) -> [ConnectionAlert] {
-            ConnectionAlerts.linkAlerts([F.link(institution: "Amex", consent: consent, pendingDisconnect: pending)], now: F.noon)
+            ConnectionAlerts.linkAlerts([F.link(institution: "Amex", consent: consent, pendingDisconnect: pending)], now: F.noon, reconnect: F.phone)
         }
         let thirteen = F.noon.addingTimeInterval(13 * F.day)
         let first = try #require(alerts(thirteen).first)
@@ -94,11 +109,20 @@ struct ConnectionAlertCollectorTests {
         let fromWarning = ConnectionAlerts.day(warned.addingTimeInterval(7 * F.day))
         #expect(alerts(nil, pending: warned).first?.episodeKeys.first == "expiry|plaid-item-1|\(fromWarning)|7")
         #expect(alerts(F.noon.addingTimeInterval(200 * F.day), pending: warned).first?.episodeKeys.first == "expiry|plaid-item-1|\(fromWarning)|7")
+        // A warning whose week has passed while the Item stayed healthy doesn't hide the consent date still to come.
+        let ten = F.noon.addingTimeInterval(10 * F.day)
+        let stillAhead = alerts(ten, pending: F.noon.addingTimeInterval(-10 * F.day))
+        #expect(stillAhead.map(\.kind) == [.consentExpiring])
+        #expect(stillAhead.first?.episodeKeys == ["expiry|plaid-item-1|\(ConnectionAlerts.day(ten))|14"])
 
         // A link that already needs a sign-in hears about that, not the date; a dropped Item about neither date nor renewal.
         let both = ConnectionAlerts.linkAlerts([F.link(kind: .needsSignIn, since: F.noon, consent: thirteen)], now: F.noon)
         #expect(both.map(\.kind) == [.needsSignIn])
         #expect(ConnectionAlerts.linkAlerts([F.link(token: "", consent: thirteen)], now: F.noon).isEmpty)
+        // Parked before 0.6.0 (no failure run): no sign-in push yet, and no "Renew now" either.
+        var parked = F.link(consent: thirteen)
+        parked.status = .needsReauth
+        #expect(ConnectionAlerts.linkAlerts([parked], now: F.noon, reconnect: F.phone).isEmpty)
     }
 
     @Test("The date in the copy is the phone's: access ending 3:00 UTC on Oct 3 ends Oct 2 in Los Angeles")
@@ -113,7 +137,7 @@ struct ConnectionAlertCollectorTests {
         #expect(ConnectionAlerts.linkAlerts([F.link(consent: ends)], now: now, timeZone: la).first?.episodeKeys == utc.first?.episodeKeys)
     }
 
-    @Test("The server's Plaid setup refused: one alert for the earliest run, however many links it stops; Teller none")
+    @Test("The server's Plaid setup refused: one alert, keyed on every stopped link's run, earliest first; Teller none")
     func setup() {
         let early = F.noon.addingTimeInterval(-7_200)
         let alerts = ConnectionAlerts.linkAlerts([
@@ -121,7 +145,8 @@ struct ConnectionAlertCollectorTests {
             F.link("teller-x", provider: .teller, kind: .needsSignIn, since: early),
         ], now: F.noon)
         #expect(alerts.count == 1 && alerts.first?.kind == .providerSetup)
-        #expect(alerts.first?.episodeKeys == ["setup|plaid|\(Int(early.timeIntervalSince1970))"] && alerts.first?.linkID == nil)
+        #expect(alerts.first?.episodeKeys == ["setup|plaid|\(Int(early.timeIntervalSince1970))", "setup|plaid|\(Int(F.noon.timeIntervalSince1970))"])
+        #expect(alerts.first?.linkID == nil)
     }
 
     @Test("Most pressing first: setup, then sign-ins, then dates")
@@ -135,7 +160,7 @@ struct ConnectionAlertCollectorTests {
 
     @Test("The payload: where a tap goes and ids only, grouped, replacing itself, gone after a day; never a URL or token")
     func payload() {
-        let alert = ConnectionAlerts.linkAlerts([F.link(kind: .needsSignIn, since: F.noon)], now: F.noon)[0]
+        let alert = ConnectionAlerts.linkAlerts([F.link(kind: .needsSignIn, since: F.noon)], now: F.noon, reconnect: F.phone)[0]
         let n = ConnectionAlerts.notification(alert, now: F.noon)
         #expect(n.userInfo == ["kind": "connection", "alert": "needsSignIn", "linkID": "plaid-item-1", "to": "reconnect"])
         #expect(n.threadID == "connections" && n.collapseID == "conn-needsSignIn-plaid-item-1")
@@ -145,6 +170,10 @@ struct ConnectionAlertCollectorTests {
         account.bankID = "conn-1"
         #expect(ConnectionAlerts.notification(account, now: F.noon).userInfo["to"] == "accounts")
         #expect(ConnectionAlerts.notification(account, now: F.noon).userInfo["bank"] == "conn-1")
+        // Two banks behind one link don't replace each other on the lock screen.
+        let bank = { (id: String) in ConnectionAlert(kind: .bankNeedsSignIn, episodeKeys: ["bank|sf|\(id)|1"], title: "t", body: "b", linkID: "simplefin-1", bankID: id) }
+        let a = ConnectionAlerts.notification(bank("conn-a"), now: F.noon).collapseID, b = ConnectionAlerts.notification(bank("conn-b"), now: F.noon).collapseID
+        #expect(a != b && a == "conn-bankNeedsSignIn-conn-a-simplefin-1")
         // Nothing but kinds, ids and where to go; no amounts or masks in the copy.
         let keys: Set<String> = ["kind", "alert", "linkID", "accountID", "bank", "to"]
         #expect(Set(n.userInfo.keys).isSubset(of: keys))
@@ -183,7 +212,8 @@ struct ConnectionAlertTests {
         let sent = F.sent(apns)
         #expect(sent.count == 1)
         #expect(sent.first?.title == "Chase needs you to sign in again")
-        #expect(sent.first?.info == ["kind": "connection", "alert": "needsSignIn", "linkID": "plaid-item-1", "to": "reconnect"])
+        // The test server has no public URL: the phone can't repair it, so the tap opens Accounts.
+        #expect(sent.first?.info == ["kind": "connection", "alert": "needsSignIn", "linkID": "plaid-item-1", "to": "accounts"])
         #expect(apns.sent.first?.host == "api.sandbox.push.apple.com")
         let log = await service.alerts.sentLog()
         #expect(log[PushFixture.token]?.keys.sorted() == ["signin|plaid-item-1|\(Int(since.timeIntervalSince1970))"])
@@ -214,7 +244,7 @@ struct ConnectionAlertTests {
         await service.alerts.sendDue()
         await service.alerts.sendDue()
         #expect(F.sent(apns).map(\.title) == ["Amex access ends Oct 19"])
-        #expect(F.sent(apns).first?.info["to"] == "reconnect")
+        #expect(F.sent(apns).first?.info["to"] == "accounts")
 
         clock.set(ends.addingTimeInterval(-6 * F.day))
         await service.alerts.sendDue()
@@ -335,5 +365,56 @@ struct ConnectionAlertTests {
         #expect(lines == ["notice would push needsSignIn signin|plaid-item-1|\(Int(since.timeIntervalSince1970))"])
         #expect(apns.sent.isEmpty)
         #expect(await service.alerts.sentLog().isEmpty)
+    }
+
+    @Test("Plaid setup refused: one push for the outage, none when the first link heals before the rest or one joins late")
+    func setupOnce() async throws {
+        let apns = FakeAPNs()
+        let clock = TestClock(F.noon)
+        let t0 = F.noon.addingTimeInterval(-1_200), t1 = F.noon.addingTimeInterval(-600)
+        let (service, store) = try await F.service(apns: apns, clock: clock, links: [
+            F.link("plaid-a", kind: .providerSetup, since: t0), F.link("plaid-b", institution: "Amex", kind: .providerSetup, since: t1),
+        ])
+        try await F.register(service)
+        await service.alerts.sendDue()
+        #expect(F.sent(apns).map(\.title) == ["Bank syncing through Plaid has stopped"])
+
+        // A third link stops later in the same outage, then the first one heals before the others.
+        clock.set(F.noon.addingTimeInterval(600))
+        try await store.upsertLink(F.link("plaid-c", institution: "Ally", kind: .providerSetup, since: F.noon.addingTimeInterval(300)))
+        await service.alerts.sendDue()
+        try await store.upsertLink(F.link("plaid-a"))
+        clock.set(F.noon.addingTimeInterval(1_200))
+        await service.alerts.sendDue()
+        try await store.upsertLink(F.link("plaid-b", institution: "Amex"))
+        clock.set(F.noon.addingTimeInterval(1_800))
+        await service.alerts.sendDue()
+        #expect(apns.sent.count == 1)
+
+        // All healed, then refused again: a new outage.
+        try await store.upsertLink(F.link("plaid-c", institution: "Ally"))
+        try await store.upsertLink(F.link("plaid-a", kind: .providerSetup, since: F.noon.addingTimeInterval(3_600)))
+        clock.set(F.noon.addingTimeInterval(4_000))
+        await service.alerts.sendDue()
+        #expect(apns.sent.count == 2)
+    }
+
+    @Test("Production with PLAID_MOBILE_REDIRECT_URI=off can't repair from the phone: the tap opens Accounts")
+    func productionWithoutMobileRedirect() async throws {
+        func capable(_ edit: (inout ServerConfig) -> Void) async throws -> Bool {
+            var config = TestServer.config()
+            config.publicURL = "https://budget.example.com"
+            edit(&config)
+            let (service, _) = try await BudgetServerApp.makeService(config: config, store: MemoryStore(), logger: Logger(label: "test"))
+            return await ReconnectMethod.phoneCapable(settings: service.settings, providers: service.sync.providers)
+        }
+        #expect(try await capable { $0.plaid?.environment = .production; $0.plaidMobileRedirectURI = "off" } == false)
+        #expect(try await capable { $0.publicURL = nil } == false)
+        #expect(try await capable { $0.plaid?.environment = .production })
+        #expect(try await capable { $0.plaidMobileRedirectURI = "off" })
+
+        let alerts = ConnectionAlerts.linkAlerts([F.link(kind: .needsSignIn, since: F.noon)], now: F.noon,
+                                                 reconnect: { ReconnectMethod.for($0, phoneCapable: false) })
+        #expect(alerts.map { ConnectionAlerts.notification($0, now: F.noon).userInfo["to"] } == ["accounts"])
     }
 }

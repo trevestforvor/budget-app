@@ -47,9 +47,10 @@ enum ConnectionAlerts {
     static let keepSentFor: TimeInterval = 120 * 86_400
 
     /// Every push the server's links and accounts call for now, most pressing first. Dates in the copy are in `timeZone`
-    /// (the phone's); the keys never depend on it.
-    static func all(links: [StoredLink], health: [AccountHealth], now: Date, timeZone: TimeZone) -> [ConnectionAlert] {
-        let alerts = linkAlerts(links, now: now, timeZone: timeZone) + healthAlerts(health, links: links, now: now)
+    /// (the phone's); the keys never depend on it. `reconnect` is how each link is repaired (see `linkAlerts`).
+    static func all(links: [StoredLink], health: [AccountHealth], now: Date, timeZone: TimeZone,
+                    reconnect: (StoredLink) -> ReconnectMethod = { ReconnectMethod.for($0, phoneCapable: false) }) -> [ConnectionAlert] {
+        let alerts = linkAlerts(links, now: now, timeZone: timeZone, reconnect: reconnect) + healthAlerts(health, links: links, now: now)
         // A stable sort: the collectors' own order holds within a kind.
         return alerts.enumerated().sorted { ($0.element.kind.rank, $0.offset) < ($1.element.kind.rank, $1.offset) }.map(\.element)
     }
@@ -59,6 +60,15 @@ enum ConnectionAlerts {
         alerts.filter { alert in alert.episodeKeys.first.map { sent[$0] == nil } ?? false }
     }
 
+    /// An episode already told carries the keys that joined it since (another link stopped by the same refused setup),
+    /// so it doesn't push again when the link that started it heals first.
+    static func absorb(_ alerts: [ConnectionAlert], into sent: inout [String: Date], now: Date) {
+        for alert in alerts {
+            guard let first = alert.episodeKeys.first, sent[first] != nil else { continue }
+            for key in alert.episodeKeys.dropFirst() where sent[key] == nil { sent[key] = now }
+        }
+    }
+
     /// The notification. A tap opens signing in again (`to: "reconnect"`) or Accounts; it carries ids and the alert's
     /// kind, never a URL, a link token or a session: the phone asks the server for a fresh session when it's tapped.
     static func notification(_ alert: ConnectionAlert, now: Date) -> APNsClient.Alert {
@@ -66,7 +76,10 @@ enum ConnectionAlerts {
         info["linkID"] = alert.linkID
         info["accountID"] = alert.accountID
         info["bank"] = alert.bankID
-        let collapse = PaceAlertSender.utf8Prefix("conn-\(alert.kind.rawValue)-\(alert.linkID ?? alert.accountID ?? "")", maxBytes: 64)
+        // The most specific id first, so two banks behind one link (or two accounts) don't replace each other, and the
+        // 64-byte cap cuts the least specific.
+        let ids = [alert.accountID, alert.bankID, alert.linkID].compactMap { $0 }.joined(separator: "-")
+        let collapse = PaceAlertSender.utf8Prefix("conn-\(alert.kind.rawValue)-\(ids)", maxBytes: 64)
         return APNsClient.Alert(title: alert.title, body: alert.body, collapseID: collapse, threadID: threadID, userInfo: info,
                                 expiration: now.addingTimeInterval(24 * 3600))
     }
@@ -140,6 +153,8 @@ public actor ConnectionAlertSender {
         let listening = devices.filter { ConnectionAlerts.listens($0) && PaceAlertSender.awake($0, now: now) }
         guard !listening.isEmpty else { return }
         let health = await health()
+        let capable = await ReconnectMethod.phoneCapable(settings: settings, providers: sync.providers)
+        let reconnect: (StoredLink) -> ReconnectMethod = { ReconnectMethod.for($0, phoneCapable: capable) }
 
         var sent = await sentLog()
         var saved = sent
@@ -153,7 +168,9 @@ public actor ConnectionAlertSender {
         for device in listening {
             let zone = TimeZone(identifier: device.timeZone) ?? ConnectionAlerts.utc
             var marked = sent[device.token] ?? [:]
-            let due = ConnectionAlerts.due(ConnectionAlerts.all(links: links, health: health, now: now, timeZone: zone), sent: marked)
+            let alerts = ConnectionAlerts.all(links: links, health: health, now: now, timeZone: zone, reconnect: reconnect)
+            ConnectionAlerts.absorb(alerts, into: &marked, now: now)
+            let due = ConnectionAlerts.due(alerts, sent: marked)
             for alert in due.prefix(PaceAlertSender.perCheck) {
                 let (outcome, environment) = await push.send(ConnectionAlerts.notification(alert, now: now), to: device.token,
                                                              environment: device.environment, now: now)
