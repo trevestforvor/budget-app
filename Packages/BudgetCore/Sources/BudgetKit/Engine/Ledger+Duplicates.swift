@@ -198,10 +198,19 @@ extension Ledger {
             var row = record.dropped
             row.id = record.droppedID
             if let keptID = record.keptID, let k = index[keptID], let before = record.keptBefore {
-                var expected = before
-                Self.carryOnMerge(from: record.dropped, to: &expected, kind: record.kind)
+                var expected = before, original = before
+                if record.kind == .pendingSettled {
+                    // A settled pending row carried what ingest carries (`carryOver`). When its category didn't come
+                    // across, the posted row was filed on its own: that filing neither blocks the undo nor is undone.
+                    if !Self.carryOver(from: record.dropped, to: &expected) {
+                        expected.categorization = transactions[k].categorization
+                        original.categorization = transactions[k].categorization
+                    }
+                } else {
+                    Self.carryOnMerge(from: record.dropped, to: &expected, kind: record.kind)
+                }
                 if CarriedFields(transactions[k]) == CarriedFields(expected) {
-                    CarriedFields(before).restore(onto: &transactions[k])
+                    CarriedFields(original).restore(onto: &transactions[k])
                     if transactions[k].categorization?.needsReview != true { reviewReasons[keptID] = nil }
                 }
                 // "You said this is the same charge…" no longer holds.

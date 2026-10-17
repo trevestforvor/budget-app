@@ -144,7 +144,9 @@ function fileRow(item, view) {
 function historyRow(record) {
   const r = record.report, sync = record.kind === "sync";
   const summary = [dateShort(record.createdAt), plural(r.rowsAdded, "new transaction"), r.duplicatesSkipped ? `${count(r.duplicatesSkipped)} already here` : null,
-    r.rowsUpdated ? `${count(r.rowsUpdated)} updated` : null, r.needsReview ? `${count(r.needsReview)} to review` : null, span(r.addedFrom, r.addedThrough) || null].filter(Boolean).join(" · ");
+    r.rowsUpdated ? `${count(r.rowsUpdated)} updated` : null,
+    r.pendingSettled ? `${count(r.pendingSettled)} pending settled` : null, r.pendingDropped ? `${count(r.pendingDropped)} pending dropped` : null,
+    r.needsReview ? `${count(r.needsReview)} to review` : null, span(r.addedFrom, r.addedThrough) || null].filter(Boolean).join(" · ");
   const filed = [[r.byRule, "by your rules"], [r.byTransferMatch, "as transfers between your accounts"], [r.byStatement, "settled by the statement"],
     [r.byMemory, "by remembered merchants"], [r.byModel, "by the decision model"]].filter(([n]) => n > 0).map(([n, how]) => `${count(n)} ${how}`);
   const how = [filed.length ? `Filed on their own: ${filed.join(", ")}.` : "Nothing was filed on its own.",
@@ -194,7 +196,12 @@ function alreadyHere(record) {
   const r = record.report;
   const list = h("div", { class: "rows" });
   const line = (t) => `${dateShort(t.postedAt)} · ${t.rawDescription} · ${money(t.amount)}`;
-  const KIND_LABEL = { skippedIncoming: "Already here", sweptFileCopy: "Removed as a copy", duplicateResolved: "You said same charge" };
+  const KIND_LABEL = { skippedIncoming: "Already here", sweptFileCopy: "Removed as a copy", duplicateResolved: "You said same charge",
+    pendingSettled: "Pending, posted under a new id", pendingDropped: "Pending, the bank dropped it" };
+  // What the logged row went into, or why it went.
+  const why = (m) => m.kind === "pendingSettled" ? `Posted as: ${m.keptBefore ? line(m.keptBefore) : "a new row"}`
+    : m.kind === "pendingDropped" ? `${SOURCE[m.dropped.source] || "The bank"} stopped sending it, on two syncs at least half a day apart.`
+    : m.keptID ? `Matched ${SOURCE[(m.keptBefore || {}).source] || "a row already in the ledger"}${m.keptBefore ? `: ${line(m.keptBefore)}` : ""}` : null;
   // Rows an earlier import skipped (or merged) first are listed under that import, not this one.
   const before = r.duplicatesSkippedBefore || 0;
   const beforeNote = before ? h("div", { class: "help" }, `${plural(before, "row")} ${before === 1 ? "was" : "were"} skipped or merged by an earlier import first; ${before === 1 ? "it's" : "they're"} listed under that import, with Bring back.`) : null;
@@ -212,7 +219,7 @@ function alreadyHere(record) {
       fill(list,
         open.map((m) => h("div", { class: "row" },
           h("div", { class: "grow" }, h("div", { class: "title wrap" }, line(m.dropped), " ", tag(KIND_LABEL[m.kind] || m.kind)),
-            m.keptID ? h("div", { class: "sub wrap" }, `Matched ${SOURCE[(m.keptBefore || {}).source] || "a row already in the ledger"}${m.keptBefore ? `: ${line(m.keptBefore)}` : ""}`) : null),
+            why(m) ? h("div", { class: "sub wrap" }, why(m)) : null),
           button("Bring back", { kind: "quiet", compact: true, "aria-label": `Bring back ${m.dropped.rawDescription} on ${dateShort(m.dropped.postedAt)}`,
             onclick: (e) => busy(e.currentTarget, "Bringing back…", async () => {
               toast(broughtBack(await api(`/v1/merges/${encodeURIComponent(m.id)}/undo`, { method: "POST" })));
@@ -234,7 +241,8 @@ function alreadyHere(record) {
   let loaded = false;
   const merged = mergeCounts[record.batchID] || 0;
   return h("details", { class: "disclosure", ontoggle: (e) => { if (e.currentTarget.open && !loaded) { loaded = true; load(); } } },
-    h("summary", {}, r.duplicatesSkipped ? `${count(r.duplicatesSkipped)} already here` : `${count(merged)} merged or removed as copies`), list);
+    h("summary", {}, r.duplicatesSkipped ? `${count(r.duplicatesSkipped)} already here`
+      : r.pendingSettled || r.pendingDropped ? `${plural(merged, "pending charge")} settled or dropped` : `${count(merged)} merged or removed as copies`), list);
 }
 
 /// Undo, armed by a second click. With `ask` (a SimpleFIN sync) the first click asks the server what Undo would do, and

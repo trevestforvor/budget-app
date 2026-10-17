@@ -59,6 +59,10 @@ public struct IngestReport: Hashable, Codable, Sendable {
     /// Of `duplicatesSkipped`, rows an earlier import already skipped (or the person merged, or a sweep removed as a
     /// statement copy): the merge log lists them under that import, with Bring back. Optional, as above.
     public var duplicatesSkippedBefore: Int?
+    /// Pending rows a window source (SimpleFIN) stopped sending: settled into the posted row that replaced them, or
+    /// removed once the bank dropped them (missed twice, half a day apart). Both are in the merge log. Optional, as above.
+    public var pendingSettled: Int?
+    public var pendingDropped: Int?
     /// Internal hand-off to the categorizer; not part of the wire report.
     var newRowIDs: [String] = []
     /// Internal: the rows `possibleDuplicates` counts, flagged for review once they're categorized.
@@ -73,7 +77,7 @@ public struct IngestReport: Hashable, Codable, Sendable {
     enum CodingKeys: String, CodingKey {
         case batchID, source, accountsAdded, accountsUpdated, rowsAdded, rowsUpdated, duplicatesSkipped, byRule, byMemory, byModel, needsReview, modelCalls, warnings
         case modelMilliseconds, addedFrom, addedThrough, duplicateSamples, byTransferMatch, byStatement, notes
-        case possibleDuplicates, namesImproved, duplicatesSkippedBefore
+        case possibleDuplicates, namesImproved, duplicatesSkippedBefore, pendingSettled, pendingDropped
     }
 
     public struct DuplicateSample: Hashable, Codable, Sendable {
@@ -175,6 +179,9 @@ extension Ledger {
         let mergedAway = self.mergedAway
         let skippedBefore = Set(mergeLog.lazy.filter { $0.kind == .skippedIncoming && $0.undoneAt == nil }.map(\.droppedID))
         func countSkippedBefore() { report.duplicatesSkippedBefore = (report.duplicatesSkippedBefore ?? 0) + 1 }
+        // Pending rows the sweep settles or drops, taken out once every account is done (indices stay valid until then).
+        var swept = Set<String>()
+        var sweptLog: [RowMergeRecord] = []
 
         for sourceAccount in snapshot.accounts {
             let label = sourceAccount.name + (sourceAccount.mask.map { " ••" + $0 } ?? "")
@@ -226,12 +233,15 @@ extension Ledger {
             // Posted rows that took over their pending row's category, by the pending row's index.
             var replaced: [(pending: Int, posted: String)] = []
             var otherCurrency = 0
+            // Every incoming row id, whatever became of it: a pending row among them isn't missing.
+            var seen = Set<String>()
             for row in sourceAccount.transactions {
                 guard row.amount.currencyCode == Self.homeCurrency else { otherCurrency += 1; continue }
                 // A statement file's row ids are only unique within the file, so they're scoped to the account
                 // the rows land in (two cards can each have a $6.50 coffee on the same day).
                 let id = snapshot.source == .fileImport
                     ? "\(snapshot.source.rawValue):\(accountID):\(row.externalID)" : "\(snapshot.source.rawValue):\(row.externalID)"
+                seen.insert(id)
                 // Files imported before ids were scoped to an account used the bare id.
                 let legacy = snapshot.source == .fileImport ? byID["\(snapshot.source.rawValue):\(row.externalID)"].flatMap { transactions[$0].accountID == accountID ? $0 : nil } : nil
                 if let index = byID[id] ?? legacy {
@@ -291,6 +301,18 @@ extension Ledger {
                 }
                 added.append(transaction)
             }
+            // A window source's pending rows that stopped coming (B4): only when this pull asked for pending rows and
+            // covered the account without an error. Plaid sends its own removals; files and other accounts are left alone.
+            if snapshot.source.syncStyle == .window, snapshot.includesPending, targetAccountID == nil,
+               snapshot.accountProblems[sourceAccount.externalID] == nil, let coveredFrom = sourceAccount.coveredFrom {
+                let sweep = sweepPending(account: accountID, source: snapshot.source, coveredFrom: coveredFrom, seen: seen, added: &added,
+                                         claimed: Set(replaced.map(\.posted)), claimedPending: Set(replaced.map(\.pending)), batchID: batchID)
+                replaced += sweep.replaced
+                swept.formUnion(sweep.remove)
+                sweptLog += sweep.log
+                if sweep.settled > 0 { report.pendingSettled = (report.pendingSettled ?? 0) + sweep.settled }
+                if sweep.dropped > 0 { report.pendingDropped = (report.pendingDropped ?? 0) + sweep.dropped }
+            }
             if otherCurrency > 0 {
                 report.warnings.append("Skipped \(otherCurrency) transaction\(otherCurrency == 1 ? "" : "s") on \(label) that weren't in \(Self.homeCurrency).")
             }
@@ -307,9 +329,13 @@ extension Ledger {
                 if let index = transactions.firstIndex(where: { $0.id == peer }) { transactions[index].transferPeerID = posted }
             }
         }
+        removeSweptPending(swept)
         transactions.sort { $0.postedAt > $1.postedAt }
         for id in touched { reanchor(id) }
-        appendMerges(skipped)
+        appendMerges(skipped + sweptLog)
+        if let note = Self.pendingSweepNote(settled: report.pendingSettled ?? 0, dropped: report.pendingDropped ?? 0) {
+            report.notes = (report.notes ?? []) + [note]
+        }
         if !report.possibleDuplicateIDs.isEmpty { report.possibleDuplicates = report.possibleDuplicateIDs.count }
         return report
     }
