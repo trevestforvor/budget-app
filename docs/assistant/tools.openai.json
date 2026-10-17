@@ -494,7 +494,7 @@
   },
   {
     "function" : {
-      "description" : "What's expected from today through `days` ahead, soonest first: paychecks predicted from the user's pay schedule (date, payer, the typical recent paycheck), bills and subscriptions the recurring list expects, and card bills from the card issuer (what's left of the statement balance, the minimum and the due date; paid or past due). Returns totals by kind for the window and for the next seven days, the next paycheck and how often pay comes. Card bills pay for spending already made, so never add them to bills and subscriptions. Use it for questions about the next paycheck, what's coming up or due, and card bills.",
+      "description" : "What's expected from today through `days` ahead, soonest first: paychecks predicted from the user's pay schedule (date, payer, the typical recent paycheck), bills and subscriptions the recurring list expects, and card bills from the card issuer when the server has them (Plaid with card bills turned on; what's left of the statement balance, the minimum and the due date; paid or past due); otherwise it says none are known, and they must not be estimated. Returns totals by kind for the window and for the next seven days, the next paycheck and how often pay comes. Card bills pay for spending already made, so never add them to bills and subscriptions. Use it for questions about the next paycheck, what's coming up or due, and card bills.",
       "name" : "findUpcoming",
       "parameters" : {
         "additionalProperties" : false,

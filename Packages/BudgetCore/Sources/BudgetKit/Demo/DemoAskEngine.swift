@@ -386,8 +386,16 @@ struct DemoAskEngine {
         }
         if q.contains("card"), upcoming.cardBills.isEmpty {
             lines.append(ledger.accounts.contains { $0.kind == .credit }
-                         ? "I don't know your card bills: statements and due dates come only from Plaid's card bills, which aren't on for your cards."
+                         ? "I don't know your card bills: statements and due dates come only from Plaid's card bills, which aren't on for your cards or haven't come in lately."
                          : "No credit cards are linked.")
+        } else if q.contains("card") {
+            // Same cards the tool lists as cardsWithoutBills, so a card question doesn't leave them out.
+            let billed = Set(upcoming.cardBills.map(\.accountID))
+            let unbilled = ledger.accounts.filter { $0.kind == .credit && !billed.contains($0.id) }.map(\.shortLabel)
+            if !unbilled.isEmpty { lines.append("I don't know the card bill for \(unbilled.joined(separator: ", ")).") }
+            if upcoming.cardBills.allSatisfy({ $0.status == .paid || $0.status == .nothingDue }) {
+                lines.append("Nothing is left to pay on your card bills right now.")
+            }
         }
         return reply(cid, text: lines.joined(separator: " "), figures: figures, tools: [call("findUpcoming", ["days": .number(30)])],
                      followUps: ["Open my recurring charges", "What's safe to spend this month?"])

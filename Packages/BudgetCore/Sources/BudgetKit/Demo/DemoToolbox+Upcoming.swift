@@ -50,7 +50,7 @@ extension DemoToolbox {
         guard !upcoming.cardBills.isEmpty else {
             o["cardBills"] = .string(cards.isEmpty
                 ? "No credit cards are linked."
-                : "No card bills are known: statements, minimums and due dates come only from Plaid's card bills, which aren't on for these cards. Don't estimate them.")
+                : "No card bills are known: statements, minimums and due dates come only from Plaid's card bills, which aren't on for these cards or haven't come in lately. Don't estimate them.")
             return (.object(o), figures)
         }
         let unbilled = cards.filter { !billed.contains($0.id) }.map(\.shortLabel)
