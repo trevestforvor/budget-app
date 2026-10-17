@@ -36,7 +36,7 @@ public struct SimpleFINLinkState: Codable, Hashable, Sendable {
     /// The link id inside a bank's row id; any other id unchanged. An app that sends a row id back gets the link.
     static func linkID(fromRowID id: String) -> String { id.firstIndex(of: "~").map { String(id[..<$0]) } ?? id }
 
-    static func ledgerID(_ externalID: String) -> String { "\(SourceKind.simplefin.rawValue):\(externalID)" }
+    static func ledgerID(_ externalID: String) -> String { SimpleFINSource.ledgerAccountID(externalID) }
 
     /// Requests in the rolling 24 hours, for the dashboard's "Requests today: N of 20".
     func requestsToday(now: Date) -> Int { SimpleFINBudget.recent(requests, now: now).count }

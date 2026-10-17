@@ -34,13 +34,8 @@ extension SyncService {
         let stored = try await store.links().first { $0.id == linkID }
         let after = Set(stored?.simplefin?.connections.values.flatMap(\.accountIDs) ?? [])
         guard !after.isEmpty, before.isDisjoint(with: after) else { return (result, nil) }
-        // New ids: walk their history back from the fresh pull, as for a new link, on the next scheduled runs.
-        try await updateLink(linkID) { link in
-            guard var state = link.simplefin else { return }
-            for id in state.connections.keys { state.connections[id]?.gap = nil }
-            state.backfill = SimpleFINBackfill(reachedBack: Date().addingTimeInterval(-SimpleFINPlanner.maxSpan))
-            link.simplefin = state
-        }
+        // New ids came in as new banks: the sync already gave each its history from the fresh pull's start back two years
+        // (`SimpleFINPlanner.newBankGap`), filled on the next scheduled runs. Nothing to reset here.
         return (result, "These accounts came in as new ones; your old ones keep their history.")
     }
 }

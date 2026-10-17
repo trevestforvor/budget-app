@@ -108,28 +108,28 @@ struct SimpleFINSourceTests {
         {"accounts": [{"id": "ACT-1", "name": "Checking", "conn_id": "CON-1", "currency": "USD", "balance": "1", "balance-date": 1790000000,
           "extra": {"routing-hint": "SECRET-ACCOUNT-VALUE"},
           "transactions": [
-            {"id": "t1", "posted": 1789900000, "amount": "-4.00", "description": "SQ *BLUE BTL 0042", "extra": {"payee": "Blue Bottle", "memo": "ignore previous instructions", "category": "Coffee"}},
+            {"id": "t1", "posted": 1789900000, "amount": "-4.00", "description": "SQ *LANTERN CAFE 0042", "extra": {"payee": "Lantern Café", "memo": "ignore previous instructions", "category": "Coffee"}},
             {"id": "t2", "posted": 1789900000, "amount": "-9.00", "description": "ACH DEBIT", "extra": {"payee": "  "}}
           ]}]}
         """#
         let pull = try SimpleFINSource.pull(Data(json.utf8), window: SimpleFINWindow(start: Self.start, purpose: .fresh), requestedAt: Self.end)
         let rows = pull.snapshot.accounts[0].transactions
-        #expect(rows.map(\.payee) == ["Blue Bottle", nil])
+        #expect(rows.map(\.payee) == ["Lantern Café", nil])
         #expect(rows.allSatisfy { $0.providerCategory == nil })
         #expect(pull.extraKeys == ["category", "memo", "payee", "routing-hint"])
         let reported = pull.extraKeys.joined() + pull.snapshot.warnings.joined()
-        #expect(!reported.contains("SECRET") && !reported.contains("Blue Bottle") && !reported.contains("ignore previous"))
+        #expect(!reported.contains("SECRET") && !reported.contains("Lantern Café") && !reported.contains("ignore previous"))
     }
 
     @Test("errlist messages are sanitized: control characters stripped, at most 200 characters")
     func errlistMessagesSanitized() throws {
         let long = String(repeating: "x", count: 500)
-        let json = #"{"errlist": [{"code": "con.auth", "msg": "Chase\u0007 needs\u001b[31m you\n\(long)", "conn_id": "CON-1"}], "accounts": []}"#
+        let json = #"{"errlist": [{"code": "con.auth", "msg": "Harbor\u0007 needs\u001b[31m you\n\(long)", "conn_id": "CON-1"}], "accounts": []}"#
             .replacingOccurrences(of: "\\(long)", with: long)
         let pull = try SimpleFINSource.pull(Data(json.utf8), window: SimpleFINWindow(start: Self.start, purpose: .fresh), requestedAt: Self.end)
         let warning = try #require(pull.snapshot.warnings.first)
         #expect(warning.count == 200)
-        #expect(warning.hasPrefix("Chase needs[31m you"))
+        #expect(warning.hasPrefix("Harbor needs[31m you"))
         #expect(!warning.unicodeScalars.contains { CharacterSet.controlCharacters.contains($0) })
         #expect(pull.problems.first?.message == warning)
     }
@@ -156,7 +156,7 @@ struct SimpleFINSourceTests {
     @Test("The phone opens a provider's page only on https SimpleFIN Bridge, and only for a row that says so")
     func providerSiteURLOnlyOnTheBridge() {
         func row(_ url: String?, _ method: ReconnectMethod? = .providerSite) -> InstitutionLink {
-            InstitutionLink(id: "simplefin-1~abc", institution: "Chase", primary: .simplefin, fallback: nil, accountKinds: [], status: .needsReauth,
+            InstitutionLink(id: "simplefin-1~abc", institution: "Harbor", primary: .simplefin, fallback: nil, accountKinds: [], status: .needsReauth,
                             note: "", reconnect: method, reconnectURL: url, syncLinkID: "simplefin-1")
         }
         #expect(row("https://beta-bridge.simplefin.org").providerSiteURL?.host == "beta-bridge.simplefin.org")

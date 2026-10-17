@@ -17,9 +17,10 @@ public struct SimpleFINRequest: Codable, Hashable, Sendable {
 /// How many requests SimpleFIN gets from this server. SimpleFIN asks for no more than about 24 a day and refreshes its
 /// data about once a day, so a short sync interval must never mean 96 pulls. Pure, so it's tested without a clock.
 public enum SimpleFINBudget {
-    /// Scheduled fresh pulls in 24 hours, each at least `automaticGap` after the last.
+    /// Scheduled fresh pulls in 24 hours (the `simplefinDailyPulls` setting's default), spread evenly over the day.
     public static let automaticPerDay = 4
-    public static let automaticGap: TimeInterval = 6 * 3600
+    /// How long after one scheduled pull the next may run: the day split evenly, so 4 a day are 6 h apart and 8 are 3 h.
+    public static func automaticGap(perDay: Int) -> TimeInterval { day / Double(max(1, min(perDay, hardStopPerDay))) }
     /// Repair and history windows on scheduled runs in 24 hours.
     public static let backfillPerDay = 6
     /// History windows the first sync of a new link adds to its fresh pull (about a year).
@@ -69,8 +70,9 @@ public enum SimpleFINBudget {
             let perDay = max(1, min(automaticPerDay, hardStopPerDay))
             var nextAt: Date?
             if automatic.count >= perDay { nextAt = automatic[automatic.count - perDay].at.addingTimeInterval(day) }
-            if let last = automatic.last, now.timeIntervalSince(last.at) < automaticGap {
-                nextAt = max(nextAt ?? .distantPast, last.at.addingTimeInterval(automaticGap))
+            let gap = automaticGap(perDay: perDay)
+            if let last = automatic.last, now.timeIntervalSince(last.at) < gap {
+                nextAt = max(nextAt ?? .distantPast, last.at.addingTimeInterval(gap))
             }
             if let nextAt { return .skipped(nextAt: nextAt) }
             let backfillUsed = recent.filter { $0.trigger == Trigger.scheduled.rawValue && $0.purpose != .fresh }.count

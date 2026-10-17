@@ -103,7 +103,9 @@ public enum SimpleFINPlanner {
         SimpleFINGap(from: now.addingTimeInterval(-historyLimit), through: freshStart, purpose: .backfill)
     }
 
-    /// Up to `limit` older windows, in order: each bank's gap (repairs first), then the link's history walk.
+    /// Up to `limit` older windows, in order: each bank's gap (repairs first), then the link's history walk. The walk
+    /// waits while any bank needs a sign-in: a window it moved past would bring nothing for that bank, and nothing asks
+    /// for it again once the bank is back.
     public static func catchUp(connections: [String: SimpleFINConnectionState], backfill: SimpleFINBackfill?, now: Date, limit: Int) -> [SimpleFINWindow] {
         guard limit > 0 else { return [] }
         var windows: [SimpleFINWindow] = []
@@ -118,7 +120,7 @@ public enum SimpleFINPlanner {
                 end = start
             }
         }
-        if let backfill, !backfill.done {
+        if let backfill, !backfill.done, !connections.values.contains(where: { $0.status == .needsReauth }) {
             let oldest = now.addingTimeInterval(-historyLimit)
             var end = backfill.reachedBack
             while end > oldest, windows.count < limit {

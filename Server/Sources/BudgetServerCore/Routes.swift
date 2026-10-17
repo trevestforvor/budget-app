@@ -425,7 +425,7 @@ func addLinkRoutes(_ router: Router<BasicRequestContext>, _ service: BudgetServi
     /// Answers the sync's result, plus `note` when the accounts came back under new ids.
     router.put("/v1/links/:id/token") { request, context in
         let body = try await HTTP.body(SimpleFINBody.self, request)
-        let (result, note) = try await service.sync.replaceSimpleFINToken(linkID: try HTTP.rowID(context), setupToken: body.setupToken)
+        let (result, note) = try await service.sync.replaceSimpleFINToken(linkID: SimpleFINLinkState.linkID(fromRowID: try HTTP.rowID(context)), setupToken: body.setupToken)
         return try HTTP.json(ReplacedToken(result: result, note: note))
     }
     // MARK: - [end lane S] SimpleFIN and Teller link routes

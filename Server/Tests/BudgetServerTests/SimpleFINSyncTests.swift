@@ -127,8 +127,8 @@ struct SimpleFINSyncTests {
         #expect(link.summary.requestsToday == 4 && link.summary.banks?.map(\.name) == ["Harbor", "Keystone"])
     }
 
-    @Test("A scheduled sync with the budget spent asks nothing and isn't an error")
-    func scheduledSyncSkipsWhenBudgetSpent() async throws {
+    @Test("A scheduled sync within six hours of the last automatic pull asks nothing and isn't an error")
+    func scheduledSyncSkipsWithinSixHours() async throws {
         let bridge = FakeBridge([Self.harbor])
         let (app, service) = try await TestServer.app(seedDemo: false, plaid: bridge)
         try await app.test(.router) { client in _ = try await Self.link(client) }

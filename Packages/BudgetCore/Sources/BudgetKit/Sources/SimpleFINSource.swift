@@ -20,6 +20,10 @@ public struct SimpleFINSource: TransactionSource {
 
     public var kind: SourceKind { .simplefin }
 
+    /// The ledger's id for one of the bridge's accounts (`Ledger.accountID`), so the server's per-bank rows name the
+    /// same accounts ingest made.
+    public static func ledgerAccountID(_ externalID: String) -> String { Ledger.accountID(.simplefin, externalID) }
+
     // MARK: Setup
 
     public enum SetupError: LocalizedError, Equatable {

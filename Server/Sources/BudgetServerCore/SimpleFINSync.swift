@@ -58,9 +58,13 @@ enum SimpleFINSync {
             do {
                 let older = try await request(window, source: source, state: &state, linkID: link.id, trigger: kind, now: now, logger: logger)
                 if older.linkProblem != nil { break }
+                let signIn = older.problems.filter { $0.code.hasPrefix("con.auth") }
                 // The bank this window is for went back to needing a sign-in: its gap waits for it.
-                if let id = window.connectionID, older.problems.contains(where: { $0.code.hasPrefix("con.auth") && $0.connectionID == id }) { continue }
+                if let id = window.connectionID, signIn.contains(where: { $0.connectionID == id }) { continue }
                 merge(try await api.ingest(older.snapshot, batchID: batchID), into: &report)
+                // A bank needing a sign-in brought nothing in this window of the link's walk: the walk stays put, so the
+                // window is asked for again (the planner holds the walk once a fresh pull marks that bank).
+                if window.connectionID == nil, !signIn.isEmpty { break }
                 advance(&state, after: window, transactions: older.transactionCount, now: now)
             } catch {
                 logger.warning("simplefin \(link.id): \(window.purpose.rawValue) window not fetched (\(code(error))); a later run tries again")
@@ -94,12 +98,18 @@ enum SimpleFINSync {
         } catch let error as SimpleFINError {
             if case let .http(code) = error { status = code } else if error == .revoked { status = 403 } else if error == .paymentRequired { status = 402 }
             throw error
+        } catch let error as DecodingError {
+            // Only a 200's body is read: the answer came, it just couldn't be read.
+            status = 200
+            throw error
         }
     }
 
     /// Moves each bank on after the fresh pull: names and accounts from the bridge; a `con.auth` bank marked as needing a
-    /// sign-in (its window stays put); a bank whose accounts all came through stamped, with a repair gap queued when it
-    /// was away longer than the fresh pull reaches; a bank first seen on a link that already has history, its history.
+    /// sign-in (its window stays put); a bank whose accounts all came through stamped, with a repair gap queued whenever
+    /// its last good pull is older than the fresh pull reaches (back from a sign-in, or the whole link down for months:
+    /// revoked, a lapsed subscription, a long run of errors); a bank first seen on a link that already has history, its
+    /// history.
     static func update(_ state: inout SimpleFINLinkState, after pull: SimpleFINPull, freshStart: Date, startsHistory: Bool, now: Date,
                        logger: Logger, linkID: String) {
         let accountsByBank = Dictionary(grouping: pull.snapshot.accounts) { $0.connectionID ?? "" }
@@ -110,24 +120,34 @@ enum SimpleFINSync {
                 ?? SimpleFINConnectionState(name: connection.name, gap: startsHistory ? SimpleFINPlanner.newBankGap(freshStart: freshStart, now: now) : nil)
             bank.name = connection.name
             bank.orgURL = connection.orgURL
-            if !accounts.isEmpty { bank.accountIDs = accounts.map(\.externalID) }
+            // An account SimpleFIN names only in an `act.*` problem (left out of `accounts`) stays the bank's, and holds
+            // its window back.
+            let pulled = accounts.map(\.externalID)
+            let known = Set(bank.accountIDs + pulled)
+            let failing = pull.problems.filter { problem in
+                problem.code.hasPrefix("act.") && (problem.connectionID == connection.id || problem.accountID.map(known.contains) == true)
+            }
+            var ids = pulled
+            for id in failing.compactMap(\.accountID) where !ids.contains(id) { ids.append(id) }
+            if !ids.isEmpty { bank.accountIDs = ids }
             let signIn = pull.problems.first { $0.code.hasPrefix("con.auth") && $0.connectionID == connection.id }
-            let failed = pull.problems.contains { $0.code.hasPrefix("act.") && $0.accountID.map(bank.accountIDs.contains) == true }
             if let signIn {
                 if bank.status != .needsReauth { logger.info("simplefin \(linkID): \(signIn.code) on one bank; the others keep syncing") }
                 bank.status = .needsReauth
                 bank.firstFailedAt = bank.firstFailedAt ?? now
                 bank.lastMessage = signIn.message
                 bank.errorCode = signIn.code
-            } else if failed {
+            } else if let failed = failing.first {
                 // One account didn't come through: nothing to fix, but its window doesn't move.
-                bank.lastMessage = pull.problems.first { $0.code.hasPrefix("act.") && $0.accountID.map(bank.accountIDs.contains) == true }?.message
+                bank.lastMessage = failed.message
             } else {
-                if bank.status == .needsReauth, bank.gap == nil {
-                    // Back from a sign-in: the days it missed, or, if it never brought anything, its history.
-                    bank.gap = bank.lastGoodData == nil
-                        ? (startsHistory ? SimpleFINPlanner.newBankGap(freshStart: freshStart, now: now) : nil)
-                        : SimpleFINPlanner.repairGap(lastGoodData: bank.lastGoodData, freshStart: freshStart)
+                if let repair = SimpleFINPlanner.repairGap(lastGoodData: bank.lastGoodData, freshStart: freshStart) {
+                    // The days it missed that this pull didn't reach. A gap still being filled joins it as one span, so
+                    // neither is dropped; the days between are asked for again and skipped as duplicates.
+                    bank.gap = bank.gap.map { SimpleFINGap(from: min($0.from, repair.from), through: max($0.through, repair.through), purpose: .repair) } ?? repair
+                } else if bank.lastGoodData == nil, bank.status == .needsReauth, bank.gap == nil, startsHistory {
+                    // Back from a sign-in having never brought anything: its history.
+                    bank.gap = SimpleFINPlanner.newBankGap(freshStart: freshStart, now: now)
                 }
                 bank.status = .connected
                 bank.firstFailedAt = nil
