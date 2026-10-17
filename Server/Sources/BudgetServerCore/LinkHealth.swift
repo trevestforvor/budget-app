@@ -39,9 +39,14 @@ enum LinkFailureClassifier {
 /// - A transient failure, a rate limit or a setup problem backs off: the next scheduled try waits
 ///   `min(6 h, 5 min · 2^(n−1))`, give or take 20 %, after the n-th failure in a row.
 /// - A refused sign-in waits for the person (or a reconnect, or Plaid saying the login is repaired): retrying on a
-///   schedule can't fix it. A webhook (Plaid has new data) still tries, until the third failure in a row.
+///   schedule can't fix it (0.5.5 did the same, and Plaid says not to). A webhook (Plaid has new data) still tries,
+///   until the third refused sign-in in a row.
 /// - Withdrawn access is never retried on its own.
-/// - The person asking always goes ahead, whatever the backoff says.
+/// - A webhook skips only a transient failure's backoff (Plaid has the data ready); a rate limit or a setup problem
+///   keeps its wait, since asking sooner can't help.
+/// - The person asking always goes ahead, whatever the backoff says. Their "sync everything" still leaves out links
+///   that need a sign-in or lost their access, as 0.5.5 did; their sync of that one link, a reconnect or a new link
+///   tries it.
 enum LinkHealthBook {
     /// The first wait after a failure, and the most the wait grows to.
     static let firstBackoff: TimeInterval = 5 * 60
@@ -61,6 +66,7 @@ enum LinkHealthBook {
         link.firstFailedAt = nil
         link.failureCount = nil
         link.nextAttemptAt = nil
+        link.plaid?.signInFailures = nil
     }
 
     /// A sync failed: why, the failure run, and when to try again. Only a refused sign-in (or withdrawn access) waits for
@@ -75,6 +81,13 @@ enum LinkHealthBook {
         if link.firstFailedAt == nil { link.firstFailedAt = now }
         let count = (link.failureCount ?? 0) + 1
         link.failureCount = count
+        if failure.kind == .needsSignIn, link.provider == .plaid {
+            var plaid = link.plaid ?? PlaidLinkState()
+            plaid.signInFailures = (plaid.signInFailures ?? 0) + 1
+            link.plaid = plaid
+        } else {
+            link.plaid?.signInFailures = nil
+        }
         switch failure.kind {
         case .needsSignIn, .revoked: link.nextAttemptAt = nil
         case .transient, .rateLimited, .providerSetup: link.nextAttemptAt = now.addingTimeInterval(backoff(failures: count) * jitter)
@@ -84,6 +97,13 @@ enum LinkHealthBook {
     /// The wait after the `failures`-th failure in a row, before jitter.
     static func backoff(failures: Int) -> TimeInterval {
         min(maxBackoff, firstBackoff * pow(2, Double(min(max(failures - 1, 0), 20))))
+    }
+
+    /// Refused sign-ins in a row. Plaid (the only provider with webhooks) counts them apart from other failures, so a
+    /// bank that was down before it asked for a sign-in doesn't use up a webhook's retries; elsewhere it's every failure
+    /// in a row.
+    static func signInFailures(_ link: StoredLink) -> Int {
+        link.provider == .plaid ? link.plaid?.signInFailures ?? 0 : link.failureCount ?? 0
     }
 
     /// Whether a run with `trigger` asks the provider for this link.
@@ -97,8 +117,13 @@ enum LinkHealthBook {
         case .revoked?:
             return false
         case .needsSignIn?:
-            return webhook && (link.failureCount ?? 0) < signInRetries
-        default:
+            return webhook && signInFailures(link) < signInRetries
+        case .rateLimited?, .providerSetup?:
+            if link.status == .needsReauth { return false }
+            // Only the person skips this wait: asking again sooner, webhook or not, can't lift a rate limit or fix keys.
+            if trigger.requestedByPerson { return true }
+            return (link.nextAttemptAt ?? .distantPast) <= now
+        case .transient?, nil:
             if link.status == .needsReauth { return false }
             // The person's "sync everything" and Plaid saying it has data ready skip the backoff.
             if trigger.requestedByPerson || webhook { return true }
@@ -106,11 +131,25 @@ enum LinkHealthBook {
         }
     }
 
-    /// Whether the sync goes in the import history: it changed rows, it finished with warnings, or it failed. A clean
-    /// sync with nothing new writes nothing, so the history doesn't grow by a row per link per run.
-    static func shouldRecordImport(_ report: IngestReport?, failure: LinkFailure?) -> Bool {
+    /// Whether the sync goes in the import history: it failed, it changed rows, or it warned about something the link's
+    /// last recorded sync didn't. A clean sync with nothing new writes nothing, so the history doesn't grow by a row per
+    /// link per run. Some warnings come with every ingest while a setting is off (a decision model not set up, a non-USD
+    /// account set aside, a SimpleFIN errlist entry): those are recorded once, not each run. `lastRecordedWarnings` is
+    /// asked only for a sync that changed no rows but warned.
+    static func shouldRecordImport(_ report: IngestReport?, failure: LinkFailure?,
+                                   lastRecordedWarnings: @Sendable () async -> Set<String> = { [] }) async -> Bool {
         if failure != nil { return true }
         guard let report else { return false }
-        return report.rowsAdded + report.rowsUpdated > 0 || !report.warnings.isEmpty
+        if report.rowsAdded + report.rowsUpdated > 0 { return true }
+        guard !report.warnings.isEmpty else { return false }
+        return Set(report.warnings) != (await lastRecordedWarnings())
+    }
+
+    /// The warnings on the link's newest recorded sync: none when that one failed (a warning back after a failure is
+    /// recorded again).
+    static func lastRecordedWarnings(_ records: [ImportRecord], linkID: String) -> Set<String> {
+        let last = records.filter { $0.kind == .sync && $0.linkID == linkID }.max { $0.createdAt < $1.createdAt }
+        guard let last, last.outcome != .failed else { return [] }
+        return Set(last.report.warnings)
     }
 }

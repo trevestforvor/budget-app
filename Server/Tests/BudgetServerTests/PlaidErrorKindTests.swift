@@ -235,11 +235,12 @@ struct PlaidErrorKindTests {
     @Test("Which runs ask the provider (the stop rules)")
     func stopRules() {
         let now = Date()
-        func link(_ kind: LinkErrorKind?, failures: Int, next: Date? = nil, status: ConnectionStatus? = nil) -> StoredLink {
+        func link(_ kind: LinkErrorKind?, failures: Int, signIns: Int? = nil, next: Date? = nil, status: ConnectionStatus? = nil) -> StoredLink {
             var l = StoredLink(id: "l", provider: .plaid, institution: "H", externalID: nil, sealedToken: "x", cursor: nil,
                                status: status ?? (kind == .needsSignIn || kind == .revoked ? .needsReauth : .connected),
                                lastSync: nil, lastError: nil, createdAt: now)
             l.errorKind = kind; l.failureCount = failures; l.nextAttemptAt = next
+            if kind == .needsSignIn { l.plaid = PlaidLinkState(); l.plaid?.signInFailures = signIns ?? failures }
             return l
         }
         let webhook = SyncTrigger.webhook("SYNC_UPDATES_AVAILABLE")
@@ -248,17 +249,23 @@ struct PlaidErrorKindTests {
         for t in [SyncTrigger.schedule, .morningCatchUp, .person, .personLink, .reconnect, .afterLink, webhook] {
             #expect(LinkHealthBook.isDue(link(nil, failures: 0), trigger: t, now: now))
         }
-        // Backing off: the schedule waits; the person and a webhook go.
+        // Backing off: the schedule waits; the person goes, and a webhook skips only a transient failure's wait.
         #expect(!LinkHealthBook.isDue(link(.transient, failures: 2, next: later), trigger: .schedule, now: now))
         #expect(!LinkHealthBook.isDue(link(.rateLimited, failures: 2, next: later), trigger: .morningCatchUp, now: now))
         #expect(LinkHealthBook.isDue(link(.transient, failures: 2, next: now.addingTimeInterval(-1)), trigger: .schedule, now: now))
         #expect(LinkHealthBook.isDue(link(.transient, failures: 2, next: later), trigger: .person, now: now))
         #expect(LinkHealthBook.isDue(link(.transient, failures: 2, next: later), trigger: webhook, now: now))
+        #expect(!LinkHealthBook.isDue(link(.rateLimited, failures: 2, next: later), trigger: webhook, now: now))
+        #expect(!LinkHealthBook.isDue(link(.providerSetup, failures: 1, next: later), trigger: webhook, now: now))
+        #expect(LinkHealthBook.isDue(link(.rateLimited, failures: 2, next: now.addingTimeInterval(-1)), trigger: webhook, now: now))
+        #expect(LinkHealthBook.isDue(link(.rateLimited, failures: 2, next: later), trigger: .person, now: now))
         // Needs a sign-in: never the schedule; a webhook until the third failure; one link's sync always.
         #expect(!LinkHealthBook.isDue(link(.needsSignIn, failures: 1), trigger: .schedule, now: now))
         #expect(!LinkHealthBook.isDue(link(.needsSignIn, failures: 1), trigger: .person, now: now))
         #expect(LinkHealthBook.isDue(link(.needsSignIn, failures: 2), trigger: webhook, now: now))
         #expect(!LinkHealthBook.isDue(link(.needsSignIn, failures: 3), trigger: webhook, now: now))
+        // Only refused sign-ins count toward the webhook's three: five failures while the bank was down don't.
+        #expect(LinkHealthBook.isDue(link(.needsSignIn, failures: 6, signIns: 1), trigger: webhook, now: now))
         #expect(LinkHealthBook.isDue(link(.needsSignIn, failures: 9), trigger: .personLink, now: now))
         // Withdrawn: only the person's own sync of that link, a reconnect or a new link.
         #expect(!LinkHealthBook.isDue(link(.revoked, failures: 1), trigger: webhook, now: now))
@@ -332,17 +339,77 @@ struct PlaidErrorKindTests {
         #expect(recent.count == 2)
     }
 
-    @Test("What goes in the history: changed rows, warnings, failures; not a clean empty sync")
-    func recordRule() {
+    @Test("What goes in the history: changed rows, new warnings, failures; not a clean empty sync or a repeated warning")
+    func recordRule() async {
         var report = IngestReport(batchID: "b", source: .plaid)
-        #expect(!LinkHealthBook.shouldRecordImport(report, failure: nil))
-        #expect(!LinkHealthBook.shouldRecordImport(nil, failure: nil))
-        #expect(LinkHealthBook.shouldRecordImport(nil, failure: LinkFailure(kind: .transient, message: "x")))
+        #expect(!(await LinkHealthBook.shouldRecordImport(report, failure: nil)))
+        #expect(!(await LinkHealthBook.shouldRecordImport(nil, failure: nil)))
+        #expect(await LinkHealthBook.shouldRecordImport(nil, failure: LinkFailure(kind: .transient, message: "x")))
         report.warnings = ["Skipped a row."]
-        #expect(LinkHealthBook.shouldRecordImport(report, failure: nil))
+        #expect(await LinkHealthBook.shouldRecordImport(report, failure: nil))
+        // The same warnings as the link's last recorded sync: nothing new to say.
+        #expect(!(await LinkHealthBook.shouldRecordImport(report, failure: nil, lastRecordedWarnings: { ["Skipped a row."] })))
+        #expect(await LinkHealthBook.shouldRecordImport(report, failure: nil, lastRecordedWarnings: { ["Another."] }))
+        report.rowsAdded = 1
+        #expect(await LinkHealthBook.shouldRecordImport(report, failure: nil, lastRecordedWarnings: { ["Skipped a row."] }))
         report.warnings = []
+        report.rowsAdded = 0
         report.rowsUpdated = 1
-        #expect(LinkHealthBook.shouldRecordImport(report, failure: nil))
+        #expect(await LinkHealthBook.shouldRecordImport(report, failure: nil))
+    }
+
+    @Test("The last recorded warnings: the link's newest sync record's, none after a failure")
+    func lastRecordedWarnings() {
+        let base = Date(timeIntervalSince1970: 1_000_000)
+        func record(_ id: String, _ link: String, _ at: Double, warnings: [String] = [], outcome: ImportOutcome? = nil) -> ImportRecord {
+            ImportRecord(batchID: id, kind: .sync, linkID: link, label: "sync", report: IngestReport(batchID: id, source: .plaid, warnings: warnings),
+                         createdAt: base.addingTimeInterval(at), rolledBack: false, outcome: outcome)
+        }
+        let records = [record("1", "a", 1, warnings: ["Old."], outcome: .warning), record("2", "a", 2, warnings: ["New."], outcome: .warning),
+                       record("3", "b", 3, warnings: ["B."], outcome: .warning), record("4", "b", 4, outcome: .failed)]
+        #expect(LinkHealthBook.lastRecordedWarnings(records, linkID: "a") == ["New."])
+        #expect(LinkHealthBook.lastRecordedWarnings(records, linkID: "b") == [])
+        #expect(LinkHealthBook.lastRecordedWarnings(records, linkID: "c") == [])
+    }
+
+    @Test("Two clean syncs in a row with the same warning write one record; the warning back after a failure writes another")
+    func repeatedWarningRecordedOnce() async throws {
+        // A Canadian-dollar account is set aside on every ingest, with the same warning each time.
+        let balances = (200, #"{"accounts": [{"account_id": "chk", "balances": {"current": 5000, "iso_currency_code": "USD"}, "name": "Checking", "type": "depository", "subtype": "checking"}, {"account_id": "cad", "balances": {"current": 10, "iso_currency_code": "CAD"}, "name": "Loonie", "type": "depository", "subtype": "savings"}]}"#)
+        let plaid = ScriptedProvider([
+            "/transactions/sync": [PlaidScript.page("c1"), PlaidScript.page("c2"), PlaidScript.page("c3"),
+                                   Self.plaidError("INSTITUTION_DOWN", type: "INSTITUTION_ERROR"), PlaidScript.page("c4")],
+            "/accounts/balance/get": [balances],
+            "/accounts/get": [balances],
+        ])
+        let (_, service) = try await Self.service(plaid)
+        for _ in 0..<3 { #expect(try await service.sync.sync(linkID: Self.id).ok) }
+        var records = try await service.store.imports()
+        #expect(records.count == 1 && records[0].outcome == .warning && records[0].report.warnings.contains { $0.contains("Loonie") })
+        #expect(try await service.sync.sync(linkID: Self.id).ok == false)
+        #expect(try await service.sync.sync(linkID: Self.id).ok)
+        records = try await service.store.imports()
+        #expect(records.map(\.outcome) == [.warning, .failed, .warning])
+    }
+
+    @Test("Refused sign-ins after the bank was down: a webhook still gets its three tries")
+    func signInCountApart() async throws {
+        let plaid = ScriptedProvider(["/transactions/sync": [
+            Self.plaidError("INSTITUTION_DOWN", type: "INSTITUTION_ERROR"), Self.plaidError("INSTITUTION_DOWN", type: "INSTITUTION_ERROR"),
+            PlaidScript.loginRequired,
+        ]])
+        let (_, service) = try await Self.service(plaid)
+        let webhook = SyncTrigger.webhook("SYNC_UPDATES_AVAILABLE")
+        for _ in 0..<3 { _ = try await service.sync.sync(linkID: Self.id) }   // down, down, then a refused sign-in
+        var link = try await Self.link(service)
+        #expect(link.failureCount == 3 && link.plaid?.signInFailures == 1 && link.errorKind == .needsSignIn)
+        _ = try await service.sync.sync(linkID: Self.id, trigger: webhook)
+        _ = try await service.sync.sync(linkID: Self.id, trigger: webhook)
+        #expect(plaid.count("/transactions/sync") == 5)
+        link = try await Self.link(service)
+        #expect(link.plaid?.signInFailures == 3)
+        #expect(try await service.sync.sync(linkID: Self.id, trigger: webhook).skipped != nil)
+        #expect(plaid.count("/transactions/sync") == 5)
     }
 
     // MARK: Cursor
@@ -352,7 +419,7 @@ struct PlaidErrorKindTests {
         let mutation = Self.plaidError("TRANSACTIONS_SYNC_MUTATION_DURING_PAGINATION", type: "TRANSACTIONS_ERROR")
         let plaid = ScriptedProvider([
             "/transactions/sync": [
-                (200, #"{"added": [\#(PlaidScript.row)], "modified": [], "removed": [], "next_cursor": "p1", "has_more": true}"#),
+                (200, #"{"added": [\#(Self.discarded)], "modified": [], "removed": [], "next_cursor": "p1", "has_more": true}"#),
                 mutation,
                 (200, #"{"added": [\#(PlaidScript.row)], "modified": [], "removed": [], "next_cursor": "p1b", "has_more": true}"#),
                 PlaidScript.page("final"),
@@ -361,10 +428,16 @@ struct PlaidErrorKindTests {
         ])
         let (_, service) = try await Self.service(plaid)
         let result = try await service.sync.sync(linkID: Self.id)
-        #expect(result.ok && result.report?.rowsAdded == 1)  // the first attempt's page was thrown away, not added twice
+        #expect(result.ok && result.report?.rowsAdded == 1)
+        // The first attempt's page was thrown away: its row (one the retry no longer has) isn't in the ledger.
+        let descriptions = try #require(try await service.store.loadLedger()).transactions.map(\.rawDescription)
+        #expect(descriptions.contains("BLUE BOTTLE COFFEE") && !descriptions.contains { $0.contains("GONE BEFORE THE RESTART") })
         #expect(Self.cursors(plaid) == ["c0", "p1", "c0", "p1b"])
         #expect(try await Self.link(service).cursor == "final")
     }
+
+    /// A row only the discarded first attempt had.
+    static let discarded = #"{"transaction_id": "t-gone", "account_id": "chk", "amount": 3, "iso_currency_code": "USD", "date": "2026-09-21", "name": "GONE BEFORE THE RESTART", "pending": false}"#
 
     @Test("A pagination that keeps changing gives up after three restarts, as transient, with the cursor unchanged")
     func mutationGivesUp() async throws {

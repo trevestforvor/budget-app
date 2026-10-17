@@ -239,7 +239,7 @@ struct ResetBody: Decodable {
 /// so a dead or sandbox Item can always be removed locally.
 func revoke(_ link: StoredLink, _ service: BudgetService) async {
     // An empty token is an Item Plaid already deleted (ITEM_NOT_FOUND): there's nothing left to remove.
-    guard link.provider == .plaid, !link.sealedToken.isEmpty, let sealer = service.sealer else { return }
+    guard link.hasLiveItem, let sealer = service.sealer else { return }
     do {
         guard let plaid = try await service.providers.plaid() else { return }
         try await PlaidSource.removeItem(accessToken: try sealer.open(link.sealedToken), environment: plaid.environment,
@@ -380,7 +380,7 @@ func addLinkRoutes(_ router: Router<BasicRequestContext>, _ service: BudgetServi
             guard let link = try await service.store.links().first(where: { $0.id == linkID }) else { throw BudgetAPIError.notFound }
             guard link.provider == .plaid else { throw BudgetAPIError.rejected("\(link.institution) connects through \(link.provider.displayName), not Plaid.") }
             // Update mode needs a live Item; one Plaid deleted can only be linked again.
-            guard !link.sealedToken.isEmpty else { throw BudgetAPIError.rejected(SyncService.itemGoneMessage(link)) }
+            guard link.hasLiveItem else { throw BudgetAPIError.rejected(SyncService.itemGoneMessage(link)) }
             accessToken = try requireSealer().open(link.sealedToken)
         }
         let token = try await PlaidSource.linkToken(environment: plaid.environment, credentials: .init(clientID: plaid.clientID, secret: plaid.secret),

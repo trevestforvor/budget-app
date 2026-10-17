@@ -29,9 +29,21 @@ public struct PlaidLinkState: Codable, Hashable, Sendable {
     public var balanceAsOf: Date? = nil
     /// When Plaid last said new transactions were ready.
     public var lastTransactionsUpdate: Date? = nil
+    // Retries.
+    /// Refused sign-ins in a row, counted apart from other failures: a webhook stops retrying after three of them, and a
+    /// bank that was down first doesn't use them up. Nil after any other outcome.
+    public var signInFailures: Int? = nil
 
     public init() {}
 
     /// Copies what the dashboard shows about this Item onto its summary.
     func summaryFields(into summary: inout LinkSummary) {}
+}
+
+extension StoredLink {
+    /// A Plaid link whose Item still exists: it has an access token. After ITEM_NOT_FOUND (confirmed by /item/get) the
+    /// token is dropped and the link kept for its history; such a link opens nothing, so nothing may call Plaid with it
+    /// (no sync, balance, /item/get, /item/remove or update mode), and it never counts as a live Item at its institution.
+    /// Linking the bank again is the only way back.
+    public var hasLiveItem: Bool { provider == .plaid && !sealedToken.isEmpty }
 }

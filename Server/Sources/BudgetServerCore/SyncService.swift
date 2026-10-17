@@ -179,7 +179,7 @@ public actor SyncService {
             guard let sealer else {
                 throw LinkFailure(kind: .providerSetup, code: "no-token-key", message: "BUDGET_TOKEN_KEY isn't set; can't open stored tokens.")
             }
-            if link.provider == .plaid, link.sealedToken.isEmpty {
+            if link.provider == .plaid, !link.hasLiveItem {
                 // Plaid deleted the Item (ITEM_NOT_FOUND, confirmed by /item/get) and the token was dropped: nothing to ask.
                 throw LinkFailure(kind: .revoked, code: "ITEM_NOT_FOUND", message: Self.itemGoneMessage(link))
             }
@@ -204,10 +204,17 @@ public actor SyncService {
             let removed = outcome.removed
             LinkHealthBook.recordSuccess(&link, now: Date())
             try await store.upsertLink(link)
-            if LinkHealthBook.shouldRecordImport(report, failure: nil) {
-                try await store.upsertImport(ImportRecord(batchID: batchID, kind: .sync, linkID: link.id, label: "\(link.institution) sync",
-                                                          report: report, createdAt: Date(), rolledBack: false,
-                                                          outcome: report.warnings.isEmpty ? .ok : .warning))
+            let linkID = link.id
+            if await LinkHealthBook.shouldRecordImport(report, failure: nil, lastRecordedWarnings: { await self.lastRecordedWarnings(linkID) }) {
+                var record = ImportRecord(batchID: batchID, kind: .sync, linkID: link.id, label: "\(link.institution) sync",
+                                          report: report, createdAt: Date(), rolledBack: false, outcome: report.warnings.isEmpty ? .ok : .warning)
+                if report.rowsAdded + report.rowsUpdated == 0 {
+                    // Warnings only: no row carries the batch id, so the record takes an id of its own, as a failure does,
+                    // and never replaces the record of a batch in the same second that did write rows.
+                    record.batchID = "\(batchID)-warning-\(UUID().uuidString.prefix(8).lowercased())"
+                    record.report.batchID = record.batchID
+                }
+                try await store.upsertImport(record)
             }
             logger.info("synced \(link.institution): +\(report.rowsAdded) rows, \(report.needsReview) to review, \(report.modelCalls) model calls in \(report.modelMilliseconds ?? 0) ms\(report.warnings.isEmpty ? "" : " — " + report.warnings.joined(separator: " "))\((report.notes ?? []).isEmpty ? "" : " — " + (report.notes ?? []).joined(separator: " "))")
             return LinkSyncResult(linkID: link.id, institution: link.institution, ok: true, report: report, removed: removed, error: nil)
@@ -220,7 +227,7 @@ public actor SyncService {
             // The failure goes in the history, so the person can see the bank has been failing, not only that it is.
             // It wrote no rows, so it gets an id of its own: the batch id is per second, and a failure must never replace
             // the record of a batch that did write rows.
-            if LinkHealthBook.shouldRecordImport(nil, failure: failure) {
+            if await LinkHealthBook.shouldRecordImport(nil, failure: failure) {
                 let failedID = "\(batchID)-failed-\(UUID().uuidString.prefix(8).lowercased())"
                 try? await store.upsertImport(ImportRecord(batchID: failedID, kind: .sync, linkID: link.id, label: "\(link.institution) sync",
                                                            report: IngestReport(batchID: failedID, source: link.provider), createdAt: now,
@@ -334,6 +341,12 @@ public actor SyncService {
         await api.setInstitutions(rows)
     }
 
+    /// The warnings on the link's newest recorded sync (none when it failed). Read only for a sync that changed no rows
+    /// but warned, to tell a new warning from one every ingest repeats.
+    private func lastRecordedWarnings(_ linkID: String) async -> Set<String> {
+        LinkHealthBook.lastRecordedWarnings((try? await store.imports()) ?? [], linkID: linkID)
+    }
+
     /// Each link's last five recorded syncs, newest first: the ones that changed rows, warned or failed (a clean sync with
     /// nothing new isn't recorded).
     static func recentSyncs(_ records: [ImportRecord], limit: Int = 5) -> [String: [SyncOutcome]] {
@@ -352,7 +365,7 @@ public actor SyncService {
         let retry = link.nextAttemptAt.map { " The server tries again \($0.formatted(style))." } ?? " The next sync tries again."
         switch link.errorKind {
         case .revoked?:
-            if link.provider == .plaid, link.sealedToken.isEmpty { return itemGoneMessage(link) }
+            if link.provider == .plaid, !link.hasLiveItem { return itemGoneMessage(link) }
             return "Access to \(link.institution) was withdrawn. Reconnect it on the Budget dashboard."
         case .needsSignIn?:
             return "\(link.institution) needs you to sign in again. Reconnect it on the Budget dashboard."
