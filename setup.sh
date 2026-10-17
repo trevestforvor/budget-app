@@ -784,7 +784,8 @@ EOF
        Merchants    names and bank categories                     raw bank descriptions
        History      up to 2 years at link                         ~90 days per request, walked back further
        Freshness    several times a day                           about once a day
-       Investments  holdings by position                          balances only
+       Investments  holdings by position, once turned on          balances only
+                    (Settings > Sync; Plaid then bills Investments)
 EOF
     ;;
   esac

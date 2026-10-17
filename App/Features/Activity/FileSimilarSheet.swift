@@ -76,12 +76,14 @@ struct FileSimilarSheet: View {
                 }
                 .buttonStyle(.ds(.primary, size: .large, fullWidth: true, isLoading: isSaving))
                 .disabled(isSaving)
+                // On the button itself, not the bar: the bar's background runs into the bottom safe area, which on a
+                // floating sheet is outside it, so a tap at the bar's centre (as UI tests aim) can miss the sheet.
+                .accessibilityIdentifier("fileSimilarButton")
                 .padding(.horizontal, DSSpace.gutter)
                 .padding(.vertical, DSSpace.sm)
                 .background {
                     Color.ds.canvas.overlay(alignment: .top) { DSDivider() }.ignoresSafeArea(edges: .bottom)
                 }
-                .accessibilityIdentifier("fileSimilarButton")
             }
         }
         .presentationDetents([.medium, .large])

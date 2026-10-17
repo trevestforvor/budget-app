@@ -289,8 +289,8 @@ public actor ServerSettings {
               help: "Lets Plaid tell this server when there's news (new transactions, a bank asking for a sign-in), at the server URL for the phone. Does nothing without one.",
               configValue: { $0.plaidWebhooks ? "true" : "false" }, builtInDefault: "true"),
         .init(key: "simplefinDailyPulls", group: "Sync", label: "SimpleFIN pulls a day", kind: .number, environmentVariable: "BUDGET_SIMPLEFIN_DAILY_PULLS",
-              help: "How many times a day the server asks SimpleFIN Bridge on its own. Its banks update about once a day.",
-              configValue: { String($0.simplefinDailyPulls) }, builtInDefault: "4.0", range: 1...20),
+              help: "How many times a day the server asks SimpleFIN Bridge on its own, up to 12 (SimpleFIN takes about 20 requests a day, and the rest are kept for your own syncs and filling gaps). Its banks update about once a day.",
+              configValue: { String(Int($0.simplefinDailyPulls)) }, builtInDefault: "4", range: 1...Double(SimpleFINBudget.maxAutomaticPerDay)),
         .init(key: "timeZone", group: "Sync", label: "Time zone", kind: .timeZone, environmentVariable: "BUDGET_TIMEZONE",
               help: "Where months begin and end (e.g. America/Los_Angeles).", configValue: { $0.timeZone.identifier }, builtInDefault: "America/Los_Angeles"),
         .init(key: "publicURL", group: "Phone", label: "Server URL for the phone", kind: .url, environmentVariable: "BUDGET_PUBLIC_URL",
@@ -441,7 +441,7 @@ public actor ServerSettings {
     /// Whether to register Plaid webhooks; they also need the public URL.
     public var plaidWebhooksEnabled: Bool { value("plaidWebhooks") != "false" }
     /// SimpleFIN pulls a day on the server's own initiative (the hard stop stays in code).
-    public var simplefinDailyPulls: Int { Int(min(max(Double(value("simplefinDailyPulls") ?? "") ?? 4, 1), 20)) }
+    public var simplefinDailyPulls: Int { Int(min(max(Double(value("simplefinDailyPulls") ?? "") ?? 4, 1), Double(SimpleFINBudget.maxAutomaticPerDay))) }
 
     /// The public URL a provider calls back (webhooks, the phone's OAuth return): without a trailing slash, and only
     /// https — plain http only for a Plaid sandbox test server. Nil when there's none to use.
@@ -450,10 +450,20 @@ public actor ServerSettings {
     }
 
     /// Where a bank app returns the phone after an OAuth sign-in (`PLAID_MOBILE_REDIRECT_URI`): that value, or
-    /// `<public URL>/plaid/oauth-return`; nil when it's `off` or there's no public URL.
+    /// `<public URL>/plaid/oauth-return`; nil when it's `off` or there's no public URL. In production the default is a
+    /// Universal Link only once `BUDGET_IOS_APP_ID` is set (without it the AASA file is a 404 and an app-to-app OAuth
+    /// bank returns to a page in Safari, stranding the sign-in), so it's nil until then (`missingAppLinks`). An explicit
+    /// `PLAID_MOBILE_REDIRECT_URI` is the operator's choice and is trusted as given.
     public func plaidMobileRedirectURI(sandbox: Bool) -> String? {
         if let raw = config.plaidMobileRedirectURI { return raw.lowercased() == "off" ? nil : raw }
+        if missingAppLinks(sandbox: sandbox) { return nil }
         return providerCallbackBase(sandbox: sandbox).map { $0 + "/plaid/oauth-return" }
+    }
+
+    /// Production with the default mobile redirect but no `BUDGET_IOS_APP_ID`: the redirect wouldn't open the app.
+    public func missingAppLinks(sandbox: Bool) -> Bool {
+        guard !sandbox, config.plaidMobileRedirectURI == nil else { return false }
+        return (config.iosAppID?.trimmingCharacters(in: .whitespacesAndNewlines) ?? "").isEmpty
     }
 
     public var calendar: Calendar {

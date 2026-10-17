@@ -112,7 +112,13 @@ struct FoundationWireTests {
         try await settings.load()
         let (mode, webhooks, pulls) = (await settings.holdingsMode, await settings.plaidWebhooksEnabled, await settings.simplefinDailyPulls)
         #expect(mode == .auto && webhooks && pulls == 4)
-        #expect(await settings.plaidMobileRedirectURI(sandbox: false) == "https://api.example/plaid/oauth-return")
+        // Production's default needs BUDGET_IOS_APP_ID (the AASA file), else the redirect wouldn't open the app.
+        #expect(await settings.plaidMobileRedirectURI(sandbox: false) == nil)
+        #expect(await settings.missingAppLinks(sandbox: false))
+        #expect(await settings.plaidMobileRedirectURI(sandbox: true) == "https://api.example/plaid/oauth-return")
+        config.iosAppID = "TEAMID.com.example.budget"
+        let withApp = ServerSettings(config: config, store: MemoryStore(), sealer: nil, logger: .init(label: "test"))
+        #expect(await withApp.plaidMobileRedirectURI(sandbox: false) == "https://api.example/plaid/oauth-return")
         try await settings.update(["holdings": "on", "simplefinDailyPulls": "6"], policy: nil)
         let (mode2, pulls2) = (await settings.holdingsMode, await settings.simplefinDailyPulls)
         #expect(mode2 == .on && pulls2 == 6)

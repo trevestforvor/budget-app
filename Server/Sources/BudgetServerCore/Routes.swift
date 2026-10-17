@@ -143,8 +143,16 @@ struct AuthMiddleware<Context: RequestContext>: RouterMiddleware {
     let allowedOrigins: [String]
 
     /// Routes on the API surface that take no bearer token and no Origin check, as "METHOD /path". Plaid's webhook
-    /// carries its own auth (a signed JWT the route verifies).
-    static var publicRoutes: Set<String> { ["POST /v1/plaid/webhook"] }
+    /// carries its own auth (a signed JWT the route verifies); the rest are a health probe and the phone's Universal
+    /// Link files, which hold nothing private. Everything else on the API needs the token: the check denies by default
+    /// rather than keying on a "/v1" prefix, so a path the router reads differently from the check (`//v1/overview`,
+    /// which the router's split still sends to `/v1/overview`) can't slip past it.
+    static var publicRoutes: Set<String> {
+        ["POST /v1/plaid/webhook",
+         "GET /health", "HEAD /health",
+         "GET /.well-known/apple-app-site-association", "HEAD /.well-known/apple-app-site-association",
+         "GET /plaid/oauth-return", "HEAD /plaid/oauth-return"]
+    }
 
     /// Exactly a public route: the method and the path as sent, with no prefix match, case folding or trailing-slash
     /// tidying, so anything else (`/v1/plaid/webhook/`, `/V1/…`, `…/../admin/reset`) still needs the token.
@@ -152,9 +160,15 @@ struct AuthMiddleware<Context: RequestContext>: RouterMiddleware {
         publicRoutes.contains("\(request.method.rawValue) \(request.uri.path)")
     }
 
+    /// A path the router would read differently from how it's written: an empty segment (`//`), which the router drops,
+    /// or no leading slash. Refused outright on both surfaces, so no check ever has to guess which form the router sees.
+    static func isMalformed(_ path: String) -> Bool {
+        !path.hasPrefix("/") || path.contains("//")
+    }
+
     func handle(_ request: Request, context: Context, next: (Request, Context) async throws -> Response) async throws -> Response {
         let path = request.uri.path
-        guard path.hasPrefix("/v1") || path.hasPrefix("/dash") else { return try await next(request, context) }
+        if Self.isMalformed(path) { return HTTP.error(.badRequest, "That path isn't well formed.") }
         let isWrite = request.method != .get && request.method != .head
         switch surface {
         case .api:
@@ -166,9 +180,12 @@ struct AuthMiddleware<Context: RequestContext>: RouterMiddleware {
                 return HTTP.error(.forbidden, "Cross-origin writes aren't allowed.")
             }
         case .dashboard:
+            // Every write, whatever its path: the dashboard's page and its assets are reads.
             if isWrite {
                 guard request.headers[HTTPField.Name("X-Budget-Dashboard")!] == "1" else { return HTTP.error(.forbidden, "Dashboard writes need the X-Budget-Dashboard header.") }
-                if let origin = request.headers[.origin], let host = URL(string: origin)?.host {
+                if let origin = request.headers[.origin] {
+                    // An opaque origin ("null": a sandboxed frame, a file, a cross-site redirect) is never the dashboard's own.
+                    guard let host = URL(string: origin)?.host else { return HTTP.error(.forbidden, "Cross-origin writes aren't allowed.") }
                     let served = [request.head.authority, request.headers[HTTPField.Name("X-Forwarded-Host")!]].compactMap { $0?.split(separator: ":").first.map(String.init) }
                     guard served.contains(host) else { return HTTP.error(.forbidden, "Cross-origin writes aren't allowed.") }
                 }
@@ -235,18 +252,40 @@ struct ResetBody: Decodable {
 
 // MARK: - [lane P] revoke
 
-/// Stops a link at its provider where that's possible (Plaid `/item/remove`); failures are logged, not fatal,
-/// so a dead or sandbox Item can always be removed locally.
-func revoke(_ link: StoredLink, _ service: BudgetService) async {
+/// Stops a link at its provider where that's possible (Plaid `/item/remove`). A live Item's link may only be dropped once
+/// Plaid confirms the removal (or says the Item is already gone): deleting the only copy of its token otherwise leaves a
+/// live, billed Item nobody can remove (ITEM-005). So this throws when Plaid didn't confirm, and the caller keeps the link
+/// for another try. Nothing to remove (no live Item), nothing to remove it with (no BUDGET_TOKEN_KEY, no Plaid keys, a
+/// token that won't open) or a sandbox Item (never billed) never stops the removal here.
+func revoke(_ link: StoredLink, _ service: BudgetService) async throws {
     // An empty token is an Item Plaid already deleted (ITEM_NOT_FOUND): there's nothing left to remove.
     guard link.hasLiveItem, let sealer = service.sealer else { return }
+    guard let plaid = try? await service.providers.plaid(), let accessToken = try? sealer.open(link.sealedToken) else {
+        service.logger.warning("couldn't remove \(link.institution) at Plaid: no Plaid keys or the token won't open (removed here anyway)")
+        return
+    }
     do {
-        guard let plaid = try await service.providers.plaid() else { return }
-        try await PlaidSource.removeItem(accessToken: try sealer.open(link.sealedToken), environment: plaid.environment,
+        try await PlaidSource.removeItem(accessToken: accessToken, environment: plaid.environment,
                                          credentials: .init(clientID: plaid.clientID, secret: plaid.secret), transport: service.providers.transport)
         service.logger.info("revoked Plaid item for \(link.institution)")
+    } catch where PlaidErrors.plaidError(error)?.errorCode == "ITEM_NOT_FOUND" {
+        service.logger.info("Plaid had already removed the item for \(link.institution)")
     } catch {
-        service.logger.warning("couldn't revoke \(link.institution) at Plaid (removed here anyway): \(error)")
+        if plaid.environment == .sandbox {
+            service.logger.warning("couldn't revoke sandbox item for \(link.institution) (removed here anyway): \(error)")
+            return
+        }
+        service.logger.warning("couldn't revoke \(link.institution) at Plaid, so it's kept: \(error)")
+        throw BudgetAPIError.server(status: 502, message: ItemRemoval.notConfirmed([link.institution]))
+    }
+}
+
+enum ItemRemoval {
+    /// What the dashboard says when Plaid didn't confirm removing an Item (kept under its 180-character limit).
+    static func notConfirmed(_ institutions: [String]) -> String {
+        let names = institutions.map { $0.count > 30 ? String($0.prefix(29)) + "…" : $0 }
+        let list = names.count > 2 ? "\(names.count) banks" : names.joined(separator: " and ")
+        return "Plaid didn't confirm removing \(list), so \(names.count == 1 ? "it's" : "they're") kept (Plaid would go on billing). Try again in a minute."
     }
 }
 
@@ -258,7 +297,10 @@ public func buildRouter(_ service: BudgetService, surface: Surface = .api) -> Ro
     let router = Router()
     router.add(middleware: ErrorMiddleware(logger: service.logger))
     router.add(middleware: AuthMiddleware(surface: surface, token: service.config.apiToken, allowedOrigins: service.config.allowedOrigins))
-    if surface == .dashboard { addDashboardRoutes(router, service) }
+    if surface == .dashboard {
+        addDashboardRoutes(router, service)
+        TestHooks.addRoutes(router, service)
+    }
     let api = service.api
 
     router.get("/health") { _, _ in
@@ -390,6 +432,9 @@ func addLinkRoutes(_ router: Router<BasicRequestContext>, _ service: BudgetServi
             if body.grantCardBills == true, body.linkID == nil { throw BudgetAPIError.rejected("Granting card-bill access needs the link it's for.") }
             var accessToken: String?
             var renewal = false
+            // A new Item needs somewhere to keep its token: without BUDGET_TOKEN_KEY, Link never opens (an Item made then
+            // would be lost, still billed and in a Trial slot).
+            if body.linkID == nil { _ = try requireSealer() }
             if let linkID = body.linkID {
                 guard let link = try await service.store.links().first(where: { $0.id == linkID }) else { throw BudgetAPIError.notFound }
                 guard link.provider == .plaid else { throw BudgetAPIError.rejected("\(link.institution) connects through \(link.provider.displayName), not Plaid.") }
@@ -417,22 +462,53 @@ func addLinkRoutes(_ router: Router<BasicRequestContext>, _ service: BudgetServi
             // (each one uses up a Plaid Trial slot). The public token is left to expire unexchanged. The check, the exchange
             // and the insert take one turn in the sync queue, so two exchanges for the same bank at once (two tabs) can't
             // both pass the check.
+            // Checked before the exchange: once exchanged, an Item that can't be stored is lost but still billed.
+            let sealer = try requireSealer()
             let link = try await service.sync.serialized { () async throws -> StoredLink in
-                if let existing = StoredLink.duplicateItem(in: try await service.store.links(), institutionID: institutionID, institution: body.institution) {
+                let before = try await service.store.links()
+                if let existing = StoredLink.duplicateItem(in: before, institutionID: institutionID, institution: body.institution) {
                     service.logger.info("plaid exchange refused: \(existing.id) already holds an Item at that bank")
                     throw BudgetAPIError.server(status: 409, message: StoredLink.duplicateItemMessage(existing))
                 }
+                let credentials = PlaidSource.Credentials(clientID: plaid.clientID, secret: plaid.secret)
                 let exchanged = try await PlaidSource.exchange(publicToken: body.publicToken, environment: plaid.environment,
-                                                               credentials: .init(clientID: plaid.clientID, secret: plaid.secret), transport: service.providers.transport)
+                                                               credentials: credentials, transport: service.providers.transport)
                 var link = StoredLink(id: "plaid-" + exchanged.itemID, provider: .plaid, institution: body.institution, externalID: exchanged.itemID,
-                                      sealedToken: try requireSealer().seal(exchanged.accessToken), cursor: nil, status: .connected,
+                                      sealedToken: "", cursor: nil, status: .connected,
                                       lastSync: nil, lastError: nil, createdAt: Date())
                 if let institutionID {
                     var plaid = PlaidLinkState()
                     plaid.institutionID = institutionID
                     link.plaid = plaid
                 }
-                try await service.store.upsertLink(link)
+                do {
+                    link.sealedToken = try sealer.seal(exchanged.accessToken)
+                    try await service.store.upsertLink(link)
+                } catch {
+                    // The Item exists at Plaid but can't be kept here: remove it while the token is still in hand, so it
+                    // isn't left billed with no way to reach it.
+                    service.logger.error("couldn't store the new Plaid item for \(body.institution) (\(error)); removing it at Plaid")
+                    do {
+                        try await PlaidSource.removeItem(accessToken: exchanged.accessToken, environment: plaid.environment,
+                                                         credentials: credentials, transport: service.providers.transport)
+                    } catch let removal {
+                        service.logger.error("couldn't remove the unstored Plaid item for \(body.institution) either: \(removal)")
+                    }
+                    throw error
+                }
+                // Linking again after access was withdrawn: the old Item still exists (it kept its token). Remove it now
+                // that the new one has taken over, and drop its token; its accounts and rows stay. A failure leaves it for
+                // the person's Remove on the dashboard.
+                for old in StoredLink.withdrawnItems(in: before, institutionID: institutionID, institution: body.institution) {
+                    do {
+                        try await revoke(old, service)
+                        var gone = old
+                        gone.sealedToken = ""
+                        try await service.store.upsertLink(gone)
+                    } catch {
+                        service.logger.warning("couldn't remove the withdrawn Plaid item for \(old.institution) after linking it again: \(error)")
+                    }
+                }
                 return link
             }
             let result = try await service.sync.sync(linkID: link.id, trigger: .afterLink)
@@ -462,7 +538,10 @@ func addLinkRoutes(_ router: Router<BasicRequestContext>, _ service: BudgetServi
     /// Syncs one link now; for a link waiting for a sign-in, a retry. Plaid's reconnect ends here. One bank's row of a
     /// SimpleFIN link (`<linkID>~<bank>`, what an app before 0.6.0 sends back) syncs the link.
     router.post("/v1/links/:id/sync") { request, context in
-        let afterUpdateMode = (try? await HTTP.body(LinkSyncBody.self, request))?.afterUpdateMode == true
+        // Update mode is the dashboard's (the phone's arrives as the reconnect session's own sync), so only the dashboard
+        // may say it just finished: on the API it would clear a PENDING_DISCONNECT warning without any sign-in.
+        let claimed = (try? await HTTP.body(LinkSyncBody.self, request))?.afterUpdateMode == true
+        let afterUpdateMode = surface == .dashboard && claimed
         let linkID = SimpleFINLinkState.linkID(fromRowID: try HTTP.rowID(context))
         return try HTTP.json(try await service.sync.sync(linkID: linkID, trigger: .personLink, afterUpdateMode: afterUpdateMode))
     }
@@ -482,8 +561,11 @@ func addLinkRoutes(_ router: Router<BasicRequestContext>, _ service: BudgetServi
         /// Removes the link (stops syncing). Its rows stay; roll back its batches to remove them.
         router.delete("/v1/links/:id") { _, context in
             let id = try context.parameters.require("id")
-            if let link = try await service.store.links().first(where: { $0.id == id }) { await revoke(link, service) }
-            try await service.store.deleteLink(id)
+            // In the link's turn, so a sync or Item check already holding the link can't write it back after the delete.
+            try await service.sync.serialized {
+                if let link = try await service.store.links().first(where: { $0.id == id }) { try await revoke(link, service) }
+                try await service.store.deleteLink(id)
+            }
             await service.sync.publishInstitutions()
             return Response(status: .noContent)
         }
@@ -607,10 +689,20 @@ func addImportRoutes(_ router: Router<BasicRequestContext>, _ service: BudgetSer
             }
             var removed: [String] = []
             if body.removeLinks == true {
-                let links = try await service.store.links()
-                for link in links { await revoke(link, service); try await service.store.deleteLink(link.id) }
+                // In the queue's turn (no sync can write a link back), and a link whose Item Plaid didn't confirm removing
+                // is kept; then nothing else is reset, so the person can try again.
+                let (count, kept) = try await service.sync.serialized { () async throws -> (Int, [String]) in
+                    var count = 0, kept: [String] = []
+                    for link in try await service.store.links() {
+                        do { try await revoke(link, service) } catch { kept.append(link.institution); continue }
+                        try await service.store.deleteLink(link.id)
+                        count += 1
+                    }
+                    return (count, kept)
+                }
                 await service.sync.publishInstitutions()
-                removed.append("\(links.count) linked account\(links.count == 1 ? "" : "s")")
+                if !kept.isEmpty { throw BudgetAPIError.server(status: 502, message: ItemRemoval.notConfirmed(kept) + " Nothing else was reset.") }
+                removed.append("\(count) linked account\(count == 1 ? "" : "s")")
             }
             if body.clearImports == true { try await service.store.clearImports(); removed.append("import history") }
             if body.removeProviderKeys == true {

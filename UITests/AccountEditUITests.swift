@@ -25,8 +25,8 @@ final class AccountEditUITests: XCTestCase {
         app.descendants(matching: .any).matching(NSPredicate(format: "label CONTAINS[c] %@", fragment)).firstMatch
     }
 
-    /// The account row reads as one element (its pencil included, "Edit <name>"), so the pencil is reached by its own
-    /// identifier when the tree has it, else by a tap on the row's trailing edge, where it sits.
+    /// The pencil sits beside the account row as its own element ("Edit <name>"); a tap on the row's trailing edge, where
+    /// it sits, is the fallback.
     private func tapEdit(_ name: String) {
         let pencil = app.buttons.matching(NSPredicate(format: "identifier == 'editAccount' AND label == %@", "Edit \(name)")).firstMatch
         if pencil.waitForExistence(timeout: 3), pencil.isHittable { pencil.tap(); return }
@@ -48,7 +48,10 @@ final class AccountEditUITests: XCTestCase {
         tapEdit("Total Checking")
         XCTAssertTrue(app.navigationBars["Edit account"].waitForExistence(timeout: 5))
         XCTAssertTrue(text(containing: "Your bank calls it “Total Checking”").exists)
-        XCTAssertTrue(app.buttons["saveAccount"].exists && !app.buttons["saveAccount"].isEnabled, "nothing to save yet")
+        // The demo's Total Checking comes from SimpleFIN, whose kind is a guess until the person says: Save is on from the
+        // start, since saving confirms the kind even unchanged, and the Kind footer says so.
+        XCTAssertTrue(app.buttons["saveAccount"].exists && app.buttons["saveAccount"].isEnabled, "saving confirms a guessed kind")
+        XCTAssertTrue(text(containing: "Saving confirms the kind").exists)
         snapshot("account-edit-sheet")
 
         let nickname = app.textFields["accountNickname"]

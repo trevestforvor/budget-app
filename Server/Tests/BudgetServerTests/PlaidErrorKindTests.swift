@@ -356,6 +356,18 @@ struct PlaidErrorKindTests {
         report.rowsAdded = 0
         report.rowsUpdated = 1
         #expect(await LinkHealthBook.shouldRecordImport(report, failure: nil))
+        // No rows, but merge-log entries under this batch (Bring back lives on its history row): recorded.
+        report.rowsUpdated = 0
+        #expect(!(await LinkHealthBook.shouldRecordImport(report, failure: nil)))
+        for edit: (inout IngestReport) -> Void in [{ $0.pendingDropped = 2 }, { $0.pendingSettled = 1 }, { $0.duplicatesSkipped = 3 }] {
+            var swept = report
+            edit(&swept)
+            #expect(await LinkHealthBook.shouldRecordImport(swept, failure: nil))
+        }
+        // Skips an earlier import logged first are listed under that import: nothing new here.
+        report.duplicatesSkipped = 3
+        report.duplicatesSkippedBefore = 3
+        #expect(!(await LinkHealthBook.shouldRecordImport(report, failure: nil)))
     }
 
     @Test("The last recorded warnings: the link's newest sync record's, none after a failure")

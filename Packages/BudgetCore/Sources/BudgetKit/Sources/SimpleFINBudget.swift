@@ -20,7 +20,13 @@ public enum SimpleFINBudget {
     /// Scheduled fresh pulls in 24 hours (the `simplefinDailyPulls` setting's default), spread evenly over the day.
     public static let automaticPerDay = 4
     /// How long after one scheduled pull the next may run: the day split evenly, so 4 a day are 6 h apart and 8 are 3 h.
-    public static func automaticGap(perDay: Int) -> TimeInterval { day / Double(max(1, min(perDay, hardStopPerDay))) }
+    public static func automaticGap(perDay: Int) -> TimeInterval { day / Double(clampedAutomatic(perDay)) }
+    /// The most scheduled fresh pulls a day: the hard stop less the repair and history windows and a few for the person,
+    /// so automatic pulls alone never fill the day and leave Sync now refused and missed rows never fetched.
+    public static let maxAutomaticPerDay = hardStopPerDay - backfillPerDay - personReserve
+    /// Requests the schedule always leaves for the person's own syncs.
+    public static let personReserve = 2
+    static func clampedAutomatic(_ perDay: Int) -> Int { max(1, min(perDay, maxAutomaticPerDay)) }
     /// Repair and history windows on scheduled runs in 24 hours.
     public static let backfillPerDay = 6
     /// History windows the first sync of a new link adds to its fresh pull (about a year).
@@ -67,7 +73,7 @@ public enum SimpleFINBudget {
             return .pull(backfill: min(firstLinkBackfill, left - 1))
         case .scheduled:
             let automatic = recent.filter { $0.trigger == Trigger.scheduled.rawValue && $0.purpose == .fresh }
-            let perDay = max(1, min(automaticPerDay, hardStopPerDay))
+            let perDay = clampedAutomatic(automaticPerDay)
             var nextAt: Date?
             if automatic.count >= perDay { nextAt = automatic[automatic.count - perDay].at.addingTimeInterval(day) }
             let gap = automaticGap(perDay: perDay)

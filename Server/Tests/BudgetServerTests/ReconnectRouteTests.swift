@@ -454,9 +454,48 @@ struct ReconnectRouteTests {
         #expect(sent["redirect_uri"] as? String == "https://dash.example/plaid")
         #expect((sent["hosted_link"] as? [String: Any])?["is_mobile_app"] as? Bool == false)
 
-        let configured = try await Self.fixture(edit: { $0.plaid?.environment = .production })
+        let configured = try await Self.fixture(edit: { $0.plaid?.environment = .production; $0.iosAppID = "TEAMID.com.example.budget" })
         await configured.service.sync.publishInstitutions()
         #expect(try await configured.service.api.serverStatus().institutions.first { $0.id == Self.id }?.reconnect == .phone)
+    }
+
+    @Test("Production without BUDGET_IOS_APP_ID: the default redirect wouldn't open the app, so reconnect is the dashboard's and the POST is 422")
+    func productionWithoutAppID() async throws {
+        let f = try await Self.fixture(edit: { $0.plaid?.environment = .production })
+        try await f.app.test(.router) { client in
+            let (status, body, _) = try await Self.post(client)
+            #expect(status == .unprocessableContent)
+            #expect(body.contains("BUDGET_IOS_APP_ID"))
+        }
+        #expect(f.plaid.count("/link/token/create") == 0)
+        await f.service.sync.publishInstitutions()
+        #expect(try await f.service.api.serverStatus().institutions.first { $0.id == Self.id }?.reconnect == .dashboard)
+        // An explicit PLAID_MOBILE_REDIRECT_URI is the operator's choice, trusted as given.
+        let explicit = try await Self.fixture(edit: { $0.plaid?.environment = .production; $0.plaidMobileRedirectURI = Self.mobileRedirect })
+        await explicit.service.sync.publishInstitutions()
+        #expect(try await explicit.service.api.serverStatus().institutions.first { $0.id == Self.id }?.reconnect == .phone)
+    }
+
+    @Test("Signed in (/item/get healthy) but the first sync failed: done, carrying the failed sync, not \"couldn't sign in\"")
+    func signedInButSyncFailed() async throws {
+        let plaid = ScriptedProvider([
+            "/link/token/create": [Self.created],
+            "/link/token/get": [Self.succeeded],
+            "/item/get": [ItemCheckTests.item()],
+            "/item/webhook/update": [(200, #"{"request_id": "req-wh"}"#)],
+            "/transactions/sync": [PlaidErrorKindTests.plaidError("INSTITUTION_DOWN", type: "INSTITUTION_ERROR")],
+        ])
+        let f = try await Self.fixture(plaid, link: { link in link.plaid = PlaidLinkState(); link.plaid?.pendingDisconnectAt = Self.start.addingTimeInterval(-86_400) })
+        try await f.app.test(.router) { client in
+            let session = try Self.session(try await Self.post(client).1)
+            let ended = try await Self.settle(client, session.id)
+            #expect(ended.state == .done)
+            #expect(ended.result?.ok == false)
+            #expect(ended.result?.error != nil)
+        }
+        let link = try await f.link()
+        #expect(link.status == .connected)
+        #expect(link.plaid?.pendingDisconnectAt == nil)
     }
 
     @Test("How each link is repaired")

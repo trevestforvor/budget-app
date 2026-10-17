@@ -16,7 +16,9 @@ struct AccountEditButton: View {
     @State private var outcome: String?
 
     var body: some View {
-        Group {
+        // A ZStack, not a Group: with nothing in it (before the check), a Group is no view at all, so its `.task` never
+        // runs and the pencil never shows. An empty ZStack is still there, with no size.
+        ZStack {
             if canEdit {
                 Button { isEditing = true } label: {
                     Image(systemName: "pencil")

@@ -277,6 +277,10 @@ struct AskView: View {
                 phases[proposal.id] = .applied(message)
             } catch let BudgetAPIError.server(status, message) where status == 409 {
                 phases[proposal.id] = .stale(message ?? "Your data changed since this was proposed. Refresh it to see what it would do now.")
+            } catch BudgetAPIError.notFound {
+                // A row it changes is gone (a pending charge posted under a new id, or a sync swept it): trying again would
+                // only be refused again, so it's retired with the reason, as Refresh does.
+                phases[proposal.id] = .unavailable("That's no longer possible: what it changes is gone.")
             } catch {
                 phases[proposal.id] = .failed(error.localizedDescription)
             }

@@ -119,6 +119,10 @@ public actor ReconnectSessions {
         // dashboard's redirect, with the hosted page not told it's in an app. Every link token carries a redirect
         // (OAUTH-005), so a sandbox with neither has no phone flow either.
         let mobileRedirect = await settings.plaidMobileRedirectURI(sandbox: sandbox)
+        if await settings.missingAppLinks(sandbox: sandbox) {
+            throw ReconnectError(status: 422, message: "The server has no BUDGET_IOS_APP_ID, so a bank's app couldn't return to Budget after signing in. Reconnect \(link.institution) on the Budget dashboard.",
+                                 kind: .providerSetup)
+        }
         guard mobileRedirect != nil || sandbox else {
             throw ReconnectError(status: 422, message: "Signing in again from the phone is off on this server (PLAID_MOBILE_REDIRECT_URI=off). Reconnect \(link.institution) on the Budget dashboard.",
                                  kind: .providerSetup)
@@ -318,6 +322,9 @@ public actor ReconnectSessions {
             end(id, .failed, "\(institution) isn't linked any more.", now: clock())
             return
         }
+        // Whether /item/get confirmed the sign-in took: then the reconnect is done whatever the first sync does, and the
+        // phone says "signed in, the first sync didn't finish" for a sync that failed, not "couldn't sign in".
+        let confirmed: Bool
         switch outcome {
         case .checked where LinkHealthBook.waitsForPerson(link):
             logger.warning("reconnect for \(institution) finished, but Plaid still reports \(link.errorCode ?? "an error")")
@@ -325,19 +332,27 @@ public actor ReconnectSessions {
             return
         case .failed, .skipped:
             logger.info("reconnect for \(institution) finished; /item/get couldn't confirm it, so the sync decides")
+            confirmed = false
         case .checked, .healed:
-            break
+            confirmed = true
         }
+        let unfinished = "\(institution) signed in, but its sync didn't go through. The next sync tries again."
+        let result: LinkSyncResult
         do {
-            let result = try await sync.sync(linkID: linkID, trigger: .reconnect)
-            sessions[id]?.session.result = result
-            if result.ok {
-                end(id, .done, nil, now: clock())
-            } else {
-                end(id, .failed, result.error ?? "\(institution) signed in, but its sync didn't go through. The next sync tries again.", now: clock())
-            }
+            result = try await sync.sync(linkID: linkID, trigger: .reconnect)
         } catch {
-            end(id, .failed, "\(institution) signed in, but its sync didn't go through. The next sync tries again.", now: clock())
+            result = LinkSyncResult(linkID: linkID, institution: institution, ok: false, error: unfinished)
+        }
+        sessions[id]?.session.result = result
+        if result.ok {
+            end(id, .done, nil, now: clock())
+        } else if confirmed {
+            // Plaid said the Item is healthy after update mode, which is what a PENDING_DISCONNECT asked for: its warning
+            // goes now, not only after a sync that went through (`SyncService.noteUpdateMode`).
+            _ = try? await sync.updateLink(linkID) { $0.plaid?.pendingDisconnectAt = nil }
+            end(id, .done, nil, now: clock())
+        } else {
+            end(id, .failed, result.error ?? unfinished, now: clock())
         }
     }
 

@@ -52,9 +52,18 @@ struct PlaidWebhookReceiver: Sendable {
         self.queue = queue ?? PlaidWebhookQueue(service: service, clock: clock)
     }
 
-    /// The live key fetch: `/webhook_verification_key/get` with this server's Plaid keys.
+    /// The live key fetch: `/webhook_verification_key/get` with this server's Plaid keys. On a test server with
+    /// `BUDGET_TEST_WEBHOOK_JWK_FILE` (`TestHooks`), that file's keys instead.
     static func fetchKey(_ service: BudgetService) -> PlaidWebhookVerifier.KeyFetcher {
-        { kid in
+        if let keys = TestHooks.webhookKeys(service.config, logger: service.logger) {
+            return { kid in
+                guard let key = keys[kid] else {
+                    throw PlaidAPIError(status: 400, errorType: "INVALID_INPUT", errorCode: "INVALID_WEBHOOK_VERIFICATION_KEY_ID")
+                }
+                return key
+            }
+        }
+        return { kid in
             guard let plaid = try await service.providers.plaid() else { throw PlaidWebhookVerifier.Refusal.notConfigured }
             return try await PlaidSource.webhookVerificationKey(keyID: kid, environment: plaid.environment,
                                                                 credentials: .init(clientID: plaid.clientID, secret: plaid.secret),

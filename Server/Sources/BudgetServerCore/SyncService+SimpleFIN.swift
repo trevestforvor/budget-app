@@ -24,10 +24,8 @@ extension SyncService {
         let before = Set(link.simplefin?.connections.values.flatMap(\.accountIDs) ?? [])
         try await updateLink(linkID) { link in
             link.sealedToken = sealed
-            link.status = .connected
-            link.lastError = nil
-            link.errorKind = nil
-            link.errorCode = nil
+            // A new setup token is the repair: the failure run ends, so a later failure starts a new episode (and push).
+            LinkHealthBook.recordRepaired(&link)
         }
         let result = try await sync(linkID: linkID, trigger: .reconnect)
         guard result.ok, !before.isEmpty else { return (result, nil) }

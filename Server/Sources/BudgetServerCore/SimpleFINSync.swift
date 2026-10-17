@@ -53,14 +53,21 @@ enum SimpleFINSync {
         if firstSince060 { state.backfill = SimpleFINBackfill(reachedBack: fresh.start) }
         logExtraKeys(pull, state: &state, linkID: link.id, now: now, logger: logger)
 
+        // Banks an older window found needing a sign-in: their remaining windows this run would only be refused too.
+        var waitingBanks = Set<String>()
         for window in SimpleFINPlanner.catchUp(connections: state.connections, backfill: state.backfill, now: now, limit: backfillAllowed) {
             guard SimpleFINBudget.hasRoom(state.requests, now: now) else { break }
+            if let id = window.connectionID, waitingBanks.contains(id) { continue }
             do {
                 let older = try await request(window, source: source, state: &state, linkID: link.id, trigger: kind, now: now, logger: logger)
                 if older.linkProblem != nil { break }
                 let signIn = older.problems.filter { $0.code.hasPrefix("con.auth") }
-                // The bank this window is for went back to needing a sign-in: its gap waits for it.
-                if let id = window.connectionID, signIn.contains(where: { $0.connectionID == id }) { continue }
+                // The bank this window is for went back to needing a sign-in: its gap waits for it, and so do its other
+                // windows this run.
+                if let id = window.connectionID, signIn.contains(where: { $0.connectionID == id }) {
+                    waitingBanks.insert(id)
+                    continue
+                }
                 merge(try await api.ingest(older.snapshot, batchID: batchID), into: &report)
                 // A bank needing a sign-in brought nothing in this window of the link's walk: the walk stays put, so the
                 // window is asked for again (the planner holds the walk once a fresh pull marks that bank).
@@ -138,7 +145,13 @@ enum SimpleFINSync {
                 bank.lastMessage = signIn.message
                 bank.errorCode = signIn.code
             } else if let failed = failing.first {
-                // One account didn't come through: nothing to fix, but its window doesn't move.
+                // One account didn't come through: nothing to fix, but its window doesn't move. No `con.auth` this time,
+                // so a bank that needed a sign-in has had it: it's connected again, the account's problem aside.
+                if bank.status == .needsReauth {
+                    bank.status = .connected
+                    bank.firstFailedAt = nil
+                    bank.errorCode = nil
+                }
                 bank.lastMessage = failed.message
             } else {
                 if let repair = SimpleFINPlanner.repairGap(lastGoodData: bank.lastGoodData, freshStart: freshStart) {

@@ -52,8 +52,11 @@ final class ReconnectUITests: XCTestCase {
         snapshot("reconnect-done")
 
         app.buttons["reconnectDone"].tap()
+        // The sheet goes, and Linked accounts no longer offers the sign-in. (Checked on this page's own controls: Home's
+        // attention card, on another tab, reads the demo ledger, which the stub doesn't heal.)
         let gone = NSPredicate(format: "exists == false")
-        expectation(for: gone, evaluatedWith: text(containing: "Tidewater needs you to sign in again"))
+        expectation(for: gone, evaluatedWith: app.staticTexts["reconnectTitle"])
+        expectation(for: gone, evaluatedWith: app.buttons["Sign in again"])
         waitForExpectations(timeout: 10)
         XCTAssertTrue(app.buttons["Renew access"].exists, "the other link still offers renewal")
     }

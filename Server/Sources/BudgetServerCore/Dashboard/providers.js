@@ -211,7 +211,7 @@ const COMPARE = [
   ["Merchant names and bank categories", "Yes", "Raw bank descriptions"],
   ["History", "Up to 2 years at link", "About 90 days per request; Budget walks back further where the bank allows"],
   ["Freshness", "Several times a day", "About once a day"],
-  ["Investments", "Holdings by position", "Balances only"],
+  ["Investments", "Holdings by position, once Investment holdings is on (Settings → Sync); Plaid then bills Investments", "Balances only"],
 ];
 
 /// The comparison as a compact table (rows stack on a phone), in a fold that starts open until a bank is linked.

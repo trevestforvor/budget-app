@@ -146,6 +146,71 @@ struct MergeLogTests {
         #expect(await api.possibleDuplicates().isEmpty)
     }
 
+    @Test("Undoing a statement brings back the synced rows that were skipped as copies of its rows")
+    func undoStatementBringsBackSkippedSyncRows() async throws {
+        let empty = LedgerState.empty
+        let api = LedgerBudgetAPI(state: empty, calendar: Fixture.calendar, clock: { EngineFixture.now }, chatModel: nil, decisions: DecisionRouting(),
+                                  persistence: nil, deployment: DeploymentInfo(endpoint: "test", version: "t", sources: [.plaid], institutions: []))
+        _ = try await api.ingest(Self.plaid([]), batchID: "sync-0")  // the card, no rows yet
+        _ = try await Self.importStatement(api)
+        // Plaid's history arrives later: its coffee matches the statement's and is skipped, logged under the Plaid batch.
+        let coffee = SourceTransaction(externalID: "p-coffee", posted: FileImport.day(2026, 9, 22)!, amount: Money(-6.50), description: "BLUE BOTTLE COFFEE", payee: "Blue Bottle")
+        let report = try await api.ingest(Self.plaid([coffee]), batchID: "sync-1")
+        #expect(report.duplicatesSkipped == 1 && report.rowsAdded == 0)
+        let skipped = try #require(await api.merges(batchID: "sync-1").first)
+        #expect(skipped.kind == .skippedIncoming && skipped.droppedID == "plaid:p-coffee")
+
+        // The plan says the Plaid row comes back; undo removes the statement rows and brings it back.
+        let plan = await api.rollbackPlan(batchID: "file-1", nextWindowStart: nil)
+        #expect(plan.verdict == .undo && plan.message.contains("brings back the row"))
+        #expect(try await api.rollback(batchID: "file-1") == 2)
+        let rows = try await api.transactions(TransactionFilter())
+        #expect(rows.map(\.id) == ["plaid:p-coffee"])
+        #expect(rows.first?.batchID == "sync-1")
+        // Its entry went with the undo: nothing is left to bring back twice.
+        #expect(await api.merges(batchID: "sync-1").isEmpty)
+    }
+
+    @Test("Undoing a SimpleFIN sync after its statement copies were swept puts the statement rows back")
+    func undoSyncAfterSweepRestoresStatementRows() async throws {
+        var state = LedgerState.empty
+        state.accounts = [Account(id: "card", name: "Card", institution: "Harbor", kind: .credit, balance: .zero, source: .simplefin)]
+        state.transactions = [
+            LedgerTransaction(id: "simplefin:amc", accountID: "card", postedAt: FileImport.day(2026, 6, 8)!, merchant: "AMC Theatres",
+                              rawDescription: "AplPay AMC 0001 EXAMPLE", amount: Money(-23.45), categorization: nil, isPending: false, source: .simplefin,
+                              batchID: "simplefin-sync-1"),
+            LedgerTransaction(id: "fileImport:card:1", accountID: "card", postedAt: FileImport.day(2026, 6, 6)!, merchant: "Aplpay Amc Example",
+                              rawDescription: "AplPay AMC 0001 EXAMPLE", amount: Money(-23.45),
+                              categorization: Categorization(categoryID: "entertainment", confidence: 1, tier: .user, needsReview: false),
+                              isPending: false, source: .fileImport, batchID: "file-0"),
+        ]
+        let api = LedgerBudgetAPI(state: state, calendar: Fixture.calendar, clock: { EngineFixture.now }, chatModel: nil, decisions: DecisionRouting(),
+                                  persistence: nil, deployment: DeploymentInfo(endpoint: "test", version: "t", sources: [.simplefin], institutions: []))
+        #expect(try await api.importDuplicates(apply: true).removed == 1)
+        #expect(await api.merges().first?.kind == .sweptFileCopy)
+        let plan = await api.rollbackPlan(batchID: "simplefin-sync-1", nextWindowStart: nil)
+        #expect(plan.verdict == .undoReturns && plan.message.contains("brings back the row"))
+        #expect(try await api.rollback(batchID: "simplefin-sync-1", acknowledgeReturning: true) == 1)
+        let rows = try await api.transactions(TransactionFilter())
+        #expect(rows.map(\.id) == ["fileImport:card:1"])
+        #expect(rows.first?.categorization?.categoryID == "entertainment")
+        #expect(await api.merges().isEmpty)
+    }
+
+    @Test("After undoing a file import, importing it again lists its skipped rows under the new import, with Bring back")
+    func reimportAfterUndoLogsSkipsAfresh() async throws {
+        let api = try await Self.api()
+        let first = try await Self.importStatement(api, batchID: "file-1")
+        #expect(first.duplicatesSkipped == 1)
+        _ = try await api.rollback(batchID: "file-1")
+        #expect(await api.merges(batchID: "file-1").isEmpty)
+        let again = try await Self.importStatement(api, batchID: "file-2")
+        #expect(again.duplicatesSkipped == 1 && (again.duplicatesSkippedBefore ?? 0) == 0)
+        let skipped = await api.merges(batchID: "file-2").filter { $0.kind == .skippedIncoming }
+        #expect(skipped.count == 1)
+        #expect(try await api.undoSkipped(batchID: "file-2").restored == 1)
+    }
+
     @Test("A swept statement copy is logged; bringing it back hands the synced row its own fields back")
     func sweptCopyLogged() async throws {
         var state = LedgerState.empty

@@ -467,12 +467,13 @@ extension Ledger {
     /// needs a yes either way. Anything else (files) undoes.
     func rollbackPlan(batchID: String, nextWindowStart: Date?) -> RollbackPlan {
         let rows = transactions.filter { $0.batchID == batchID }
-        // Pending rows this batch's sweep settled or dropped, which undo puts back (`rollback`).
-        let ids = Set(rows.map(\.id))
-        let swept = mergeLog.filter {
-            $0.undoneAt == nil && ($0.kind == .pendingSettled || $0.kind == .pendingDropped) && ($0.batchID == batchID || $0.keptID.map(ids.contains) == true)
-        }.count
-        let sweptNote = swept == 0 ? "" : " It also puts back \(swept == 1 ? "the pending charge" : "the \(swept) pending charges") this sync settled or dropped."
+        // Pending rows this batch's sweep settled or dropped, and rows of other imports let go of as copies of this
+        // batch's rows, which undo puts back (`rollback`).
+        let merges = rollbackMerges(batchID: batchID, leaving: Set(rows.map(\.id)))
+        let swept = merges.sweep.count
+        let copies = merges.restore.count
+        let sweptNote = (swept == 0 ? "" : " It also puts back \(swept == 1 ? "the pending charge" : "the \(swept) pending charges") this sync settled or dropped.")
+            + (copies == 0 ? "" : " It brings back \(copies == 1 ? "the row" : "the \(copies) rows") another import or sync had set aside as \(copies == 1 ? "a copy" : "copies") of these, so \(copies == 1 ? "it isn't" : "they aren't") lost with them.")
         let bySource = Dictionary(grouping: rows, by: \.source.rawValue).mapValues(\.count)
         let returning = nextWindowStart.map { start in rows.filter { $0.source.syncStyle == .window && $0.postedAt >= start }.count } ?? 0
         let n = rows.count == 1 ? "this row" : "these \(rows.count) rows"
@@ -496,21 +497,39 @@ extension Ledger {
                             message: rows.isEmpty ? "Nothing from this batch is left to remove." : "Undo removes \(n) and nothing sends \(rows.count == 1 ? "it" : "them") again.\(sweptNote)")
     }
 
+    /// The open merge-log entries undoing `batchID` settles, given the ids of the rows it removes:
+    /// - `sweep`: pending rows the stale-pending sweep settled or dropped in this batch, or into a row this batch added;
+    /// - `restore`: rows of another import or sync let go of as copies of a row this batch added (skipped as already
+    ///   here, swept as a statement copy, or merged by the person): with their kept row gone they'd be lost, and a cursor
+    ///   source (Plaid) or a row outside a window source's next window never sends them again;
+    /// - `own`: rows this batch skipped as already here. They were never added, and the batch is going.
+    func rollbackMerges(batchID: String, leaving: Set<String>) -> (sweep: [String], restore: [String], own: [String]) {
+        var sweep: [String] = [], restore: [String] = [], own: [String] = []
+        for entry in mergeLog where entry.undoneAt == nil {
+            let keptLeaves = entry.keptID.map(leaving.contains) == true
+            switch entry.kind {
+            case .pendingSettled, .pendingDropped:
+                if entry.batchID == batchID || keptLeaves { sweep.append(entry.id) }
+            case .skippedIncoming, .sweptFileCopy, .duplicateResolved:
+                if entry.batchID != batchID, keptLeaves { restore.append(entry.id) }
+                else if entry.kind == .skippedIncoming, entry.batchID == batchID { own.append(entry.id) }
+            }
+        }
+        return (sweep, restore, own)
+    }
+
     mutating func rollback(batchID: String) -> Int {
         // What the stale-pending sweep did in this batch, or into a posted row this batch added, is undone first: the
         // pending rows come back (a settled one takes back its note, tags and category from the posted row), ready to
-        // settle again into the posted row the next sync re-sends. Their log entries go with the batch, so a row put
-        // back this way is swept again as usual, unlike one the person brought back.
+        // settle again into the posted row the next sync re-sends. Rows another import or sync let go of as copies of
+        // this batch's rows come back too, before their kept rows leave. Their log entries go with the batch, so a row
+        // put back this way is swept again as usual, unlike one the person brought back. So do the entries for rows this
+        // batch skipped: importing it again logs them afresh, under the new batch, where Bring back can reach them.
         let leaving = Set(transactions.lazy.filter { $0.batchID == batchID }.map(\.id))
-        let sweptEntries = mergeLog.filter {
-            $0.undoneAt == nil && ($0.kind == .pendingSettled || $0.kind == .pendingDropped)
-                && ($0.batchID == batchID || $0.keptID.map(leaving.contains) == true)
-        }.map(\.id)
-        if !sweptEntries.isEmpty {
-            _ = undoMerges(sweptEntries)
-            let void = Set(sweptEntries)
-            mergeLog.removeAll { void.contains($0.id) }
-        }
+        let merges = rollbackMerges(batchID: batchID, leaving: leaving)
+        if !merges.sweep.isEmpty || !merges.restore.isEmpty { _ = undoMerges(merges.sweep + merges.restore) }
+        let void = Set(merges.sweep + merges.restore + merges.own)
+        if !void.isEmpty { mergeLog.removeAll { void.contains($0.id) } }
         let affected = Set(transactions.filter { $0.batchID == batchID }.map(\.accountID))
         let removedIDs = Set(transactions.filter { $0.batchID == batchID }.map(\.id))
         transactions.removeAll { $0.batchID == batchID }

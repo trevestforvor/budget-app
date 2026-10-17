@@ -428,7 +428,11 @@ struct ConnectionAlertTests {
         }
         #expect(try await capable { $0.plaid?.environment = .production; $0.plaidMobileRedirectURI = "off" } == false)
         #expect(try await capable { $0.publicURL = nil } == false)
-        #expect(try await capable { $0.plaid?.environment = .production })
+        // Production's default redirect is a Universal Link only with BUDGET_IOS_APP_ID (else the AASA file is a 404).
+        #expect(try await capable { $0.plaid?.environment = .production } == false)
+        #expect(try await capable { $0.plaid?.environment = .production; $0.iosAppID = "TEAMID.com.example.budget" })
+        // An explicit PLAID_MOBILE_REDIRECT_URI is the operator's choice.
+        #expect(try await capable { $0.plaid?.environment = .production; $0.plaidMobileRedirectURI = "https://budget.example.com/return" })
         // The sandbox falls back to the dashboard's redirect, when there is one.
         #expect(try await capable { $0.plaidMobileRedirectURI = "off"; $0.plaid?.redirectURI = "https://dash.example/plaid" })
 

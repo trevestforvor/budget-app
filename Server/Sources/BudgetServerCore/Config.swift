@@ -68,6 +68,10 @@ public struct ServerConfig: Sendable {
     /// "off" means none.
     public var plaidMobileRedirectURI: String?
     /// The app's id for Universal Links, `<TEAMID>.<bundle id>` (BUDGET_IOS_APP_ID).
+    /// Test only (`BUDGET_TEST_WEBHOOK_JWK_FILE`): a JWK set webhooks are verified against instead of Plaid's keys, for a
+    /// local end-to-end run with `Server/Scripts/sign-test-webhook.swift`. Honoured only on an in-memory demo server in the
+    /// Plaid sandbox (`TestHooks.enabled`); anywhere else it's ignored with a warning.
+    public var testWebhookJWKFile: String?
     public var iosAppID: String?
 
     /// Which variables were actually set (so the dashboard can tell "environment" from "default").
@@ -133,11 +137,14 @@ public struct ServerConfig: Sendable {
         }
         c.plaidWebhooks = !["0", "false", "no"].contains(value("BUDGET_PLAID_WEBHOOKS")?.lowercased() ?? "")
         if let pulls = value("BUDGET_SIMPLEFIN_DAILY_PULLS") {
-            guard let n = Double(pulls), (1...20).contains(n) else { throw ConfigError.invalid("BUDGET_SIMPLEFIN_DAILY_PULLS must be a number from 1 to 20") }
+            guard let n = Double(pulls), (1...Double(SimpleFINBudget.maxAutomaticPerDay)).contains(n) else {
+                throw ConfigError.invalid("BUDGET_SIMPLEFIN_DAILY_PULLS must be a number from 1 to \(SimpleFINBudget.maxAutomaticPerDay)")
+            }
             c.simplefinDailyPulls = n
         }
         c.plaidMobileRedirectURI = value("PLAID_MOBILE_REDIRECT_URI")
         c.iosAppID = value("BUDGET_IOS_APP_ID")
+        c.testWebhookJWKFile = value("BUDGET_TEST_WEBHOOK_JWK_FILE")
         return c
     }
 

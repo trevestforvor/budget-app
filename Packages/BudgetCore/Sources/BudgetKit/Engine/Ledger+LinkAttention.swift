@@ -39,6 +39,10 @@ extension Ledger {
             "The bank ended the connection, so nothing new is coming in. Sign in again in the Budget app or on the dashboard — your accounts and history stay as they are."
         case .newLink?:
             "Access to it was withdrawn, so nothing new is coming in. Link it again on the Budget dashboard — your accounts and history stay as they are."
+        case .providerSite?:
+            "SimpleFIN Bridge says this bank needs you to sign in again, so nothing new is coming in from it. Sign in again on SimpleFIN Bridge; the next sync picks it up — your accounts and history stay as they are."
+        case .dashboard? where link.primary == .simplefin:
+            "SimpleFIN stopped accepting this server's access, so nothing new is coming in. Paste a new setup token on the Budget dashboard — your accounts and history stay as they are."
         default:
             "The bank ended the connection, so nothing new is coming in. Reconnect it on the Budget dashboard — your accounts and history stay as they are."
         }

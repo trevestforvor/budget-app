@@ -361,7 +361,8 @@ struct ServerTests {
         // The phone's listener never serves the page or the token.
         let (api, _) = try await TestServer.app()
         try await api.test(.router) { client in
-            try await client.execute(uri: "/", method: .get) { #expect($0.status == .notFound) }
+            try await client.execute(uri: "/", method: .get) { #expect($0.status == .unauthorized) }  // denied by default
+            try await client.execute(uri: "/", method: .get, headers: TestServer.auth) { #expect($0.status == .notFound) }
             try await client.execute(uri: "/dash/connect", method: .get, headers: TestServer.auth) { #expect($0.status == .notFound) }
         }
     }

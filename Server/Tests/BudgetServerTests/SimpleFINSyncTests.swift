@@ -19,6 +19,7 @@ final class FakeBridge: HTTPTransport, @unchecked Sendable {
     private var _banks: [Bank]
     private var _status = 200
     private var _conAuth: Set<String> = []
+    private var _actFailed: Set<String> = []
     private var _claimed = 0
     private(set) var accountRequests: [URLComponents] = []
 
@@ -27,6 +28,8 @@ final class FakeBridge: HTTPTransport, @unchecked Sendable {
     var banks: [Bank] { get { lock.withLock { _banks } } set { lock.withLock { _banks = newValue } } }
     var status: Int { get { lock.withLock { _status } } set { lock.withLock { _status = newValue } } }
     var conAuth: Set<String> { get { lock.withLock { _conAuth } } set { lock.withLock { _conAuth = newValue } } }
+    /// Accounts reported only in an `act.failed` problem (left out of `accounts`).
+    var actFailed: Set<String> { get { lock.withLock { _actFailed } } set { lock.withLock { _actFailed = newValue } } }
     var claimed: Int { lock.withLock { _claimed } }
     var requestCount: Int { lock.withLock { accountRequests.count } }
 
@@ -47,13 +50,14 @@ final class FakeBridge: HTTPTransport, @unchecked Sendable {
             let only = Set(query.filter { $0.name == "account" }.compactMap(\.value))
             var accounts: [String] = []
             for bank in _banks {
-                for id in bank.accounts where only.isEmpty || only.contains(id) {
+                for id in bank.accounts where (only.isEmpty || only.contains(id)) && !_actFailed.contains(id) {
                     let rows = _conAuth.contains(bank.connID) ? "" :
                         #"{"id": "\#(id)-\#(start)", "posted": \#(start + 86_400), "amount": "-12.50", "description": "COFFEE \#(id) \#(start)"}"#
                     accounts.append(#"{"id": "\#(id)", "name": "\#(bank.name) Checking", "conn_id": "\#(bank.connID)", "currency": "USD", "balance": "100.00", "balance-date": \#(Int(Date().timeIntervalSince1970)), "transactions": [\#(rows)]}"#)
                 }
             }
             let errlist = _conAuth.map { #"{"code": "con.auth", "msg": "Sign in again", "conn_id": "\#($0)"}"# }
+                + _actFailed.map { #"{"code": "act.failed", "msg": "Account unavailable", "account_id": "\#($0)"}"# }
             let connections = _banks.map { #"{"conn_id": "\#($0.connID)", "name": "\#($0.name)", "org_id": "ORG"}"# }
             return (200, #"{"errlist": [\#(errlist.joined(separator: ","))], "connections": [\#(connections.joined(separator: ","))], "accounts": [\#(accounts.joined(separator: ","))]}"#)
         }
@@ -230,6 +234,27 @@ struct SimpleFINSyncTests {
             _ = try await service.sync.sync(linkID: id, trigger: .personLink)
             let healed = try #require(try await Self.stored(service).simplefin?.connections["CON-B"])
             #expect(healed.status == .connected && healed.firstFailedAt == nil && healed.lastMessage == nil)
+        }
+    }
+
+    @Test("A bank signed in again whose one account still reports an act.* problem is connected again; its window still waits")
+    func signedInWithAccountProblemIsConnected() async throws {
+        let bridge = FakeBridge([Self.harbor, FakeBridge.Bank(connID: "CON-B", name: "Keystone", accounts: ["ACT-B1", "ACT-B2"])])
+        let (app, service) = try await TestServer.app(seedDemo: false, plaid: bridge, surface: .dashboard)
+        try await app.test(.router) { client in
+            let id = try await Self.link(client).linkID
+            bridge.conAuth = ["CON-B"]
+            _ = try await service.sync.sync(linkID: id, trigger: .personLink)
+            #expect(try await Self.stored(service).simplefin?.connections["CON-B"]?.status == .needsReauth)
+            let lastGood = try await Self.stored(service).simplefin?.connections["CON-B"]?.lastGoodData
+            // Signed in at the Bridge, but one account still fails.
+            bridge.conAuth = []
+            bridge.actFailed = ["ACT-B2"]
+            _ = try await service.sync.sync(linkID: id, trigger: .personLink)
+            let bank = try #require(try await Self.stored(service).simplefin?.connections["CON-B"])
+            #expect(bank.status == .connected && bank.firstFailedAt == nil && bank.errorCode == nil)
+            #expect(bank.lastMessage == "Account unavailable")
+            #expect(bank.lastGoodData == lastGood)  // the window doesn't move while an account fails
         }
     }
 

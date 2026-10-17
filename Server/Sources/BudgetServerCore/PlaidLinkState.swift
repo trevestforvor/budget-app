@@ -113,13 +113,22 @@ extension StoredLink {
     /// access was withdrawn doesn't count: linking again is the only way back for those. (A dropped token always comes
     /// with `errorKind` `.revoked`, which is what the dashboard's copy of this rule, `duplicatePlaidLink`, goes by.)
     static func duplicateItem(in links: [StoredLink], institutionID: String?, institution: String) -> StoredLink? {
+        links.first { $0.hasLiveItem && $0.errorKind != .revoked && $0.isAtBank(institutionID: institutionID, institution: institution) }
+    }
+
+    /// Links at the same bank whose access was withdrawn (USER_PERMISSION_REVOKED) but whose Item still exists: they keep
+    /// a token, so the Item is still at Plaid (on the bill, in a Trial slot, checked daily). Once the bank is linked again
+    /// the new Item takes over, and Plaid's answer for the old one is `/item/remove`.
+    static func withdrawnItems(in links: [StoredLink], institutionID: String?, institution: String) -> [StoredLink] {
+        links.filter { $0.hasLiveItem && $0.errorKind == .revoked && $0.isAtBank(institutionID: institutionID, institution: institution) }
+    }
+
+    /// Whether this link is at the bank Link just named: by Plaid's `institution_id` when both sides have it, otherwise
+    /// by name. "Plaid" is what the dashboard sends when Link names no bank; it says nothing about which one.
+    func isAtBank(institutionID: String?, institution: String) -> Bool {
+        if let known = plaid?.institutionID, let institutionID { return known == institutionID }
         let name = institution.trimmingCharacters(in: .whitespaces).lowercased()
-        return links.first { link in
-            guard link.hasLiveItem, link.errorKind != .revoked else { return false }
-            if let known = link.plaid?.institutionID, let institutionID { return known == institutionID }
-            // "Plaid" is what the dashboard sends when Link names no bank; it says nothing about which one.
-            return !name.isEmpty && name != "plaid" && link.institution.trimmingCharacters(in: .whitespaces).lowercased() == name
-        }
+        return !name.isEmpty && name != "plaid" && self.institution.trimmingCharacters(in: .whitespaces).lowercased() == name
     }
 
     /// What the dashboard says when it refuses a second Item at a bank. The name is cut short so the sentence stays

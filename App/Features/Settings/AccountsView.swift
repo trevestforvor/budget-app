@@ -142,11 +142,13 @@ struct AccountsView: View {
 
     private func accountRow(_ account: Account) -> some View {
         VStack(alignment: .leading, spacing: 0) {
-            DSListRow(account.shortLabel, detail: account.kindLabel) {
-                HStack(spacing: DSSpace.xs) {
+            // The pencil sits beside the row, not in it: the row reads as one element, which would swallow the button, so
+            // VoiceOver and the UI tests couldn't reach Edit.
+            HStack(spacing: DSSpace.xs) {
+                DSListRow(account.shortLabel, detail: account.kindLabel) {
                     DSAmountText(account.balance.decimal, currencyCode: account.balance.currencyCode)
-                    AccountEditButton(account: account)
                 }
+                AccountEditButton(account: account)
             }
             AccountHealthLabel(account: account, health: health[account.id])
         }

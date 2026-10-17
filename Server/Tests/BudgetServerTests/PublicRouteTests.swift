@@ -40,16 +40,67 @@ struct PublicRouteTests {
                     #expect(response.status == .unauthorized, "\(method) \(uri) answered \(response.status)")
                 }
             }
-            // Outside "/v1" (paths are case-sensitive) the token check doesn't apply, as for any non-API path, but the
-            // router has nothing there: it never reaches the webhook.
+            // The check denies by default: a path outside "/v1" (paths are case-sensitive) still needs the token.
             try await client.execute(uri: "/V1/plaid/webhook", method: .post, headers: Self.json, body: TestServer.body("{}")) {
-                #expect($0.status == .notFound)
+                #expect($0.status == .unauthorized)
             }
             // With the token the near misses are just routes that don't exist (or the wrong method).
             try await client.execute(uri: "/v1/plaid/webhookx", method: .post, headers: TestServer.auth, body: TestServer.body("{}")) {
                 #expect($0.status == .notFound)
             }
             try await client.execute(uri: "/v1/overview", method: .get) { #expect($0.status == .unauthorized) }
+        }
+    }
+
+    @Test("A doubled slash never skips the token: the router would still send //v1/… to the /v1 route")
+    func doubledSlashOnTheAPI() async throws {
+        let (app, _) = try await TestServer.app(seedDemo: true)
+        try await app.test(.router) { client in
+            for uri in ["//v1/overview", "//v1/links", "//v1/transactions", "/v1//overview", "///v1/overview", "//health"] {
+                try await client.execute(uri: uri, method: .get) { response in
+                    #expect(response.status == .badRequest, "GET \(uri) answered \(response.status)")
+                }
+            }
+            // Even with the token: the path is refused, not guessed at.
+            try await client.execute(uri: "//v1/overview", method: .get, headers: TestServer.auth) { #expect($0.status == .badRequest) }
+            try await client.execute(uri: "/v1/overview", method: .get) { #expect($0.status == .unauthorized) }
+            try await client.execute(uri: "/v1/overview", method: .get, headers: TestServer.auth) { #expect($0.status == .ok) }
+            // The listed public routes still answer without a token.
+            try await client.execute(uri: "/health", method: .get) { #expect($0.status == .ok) }
+            try await client.execute(uri: "/plaid/oauth-return", method: .get) { #expect($0.status == .ok) }
+            try await client.execute(uri: "/.well-known/apple-app-site-association", method: .get) {
+                #expect($0.status == .notFound)  // reached the route: no BUDGET_IOS_APP_ID in the test config
+            }
+            // Anything else outside "/v1" needs the token too.
+            try await client.execute(uri: "/anything", method: .get) { #expect($0.status == .unauthorized) }
+        }
+    }
+
+    @Test("A doubled slash never skips the dashboard's write guard, and every write path is guarded")
+    func doubledSlashOnTheDashboard() async throws {
+        let (dash, _) = try await TestServer.app(seedDemo: true, surface: .dashboard)
+        try await dash.test(.router) { client in
+            let reset = TestServer.body(#"{"confirm":"erase my ledger","keepLedger":true}"#)
+            var crossSite: HTTPFields = [.contentType: "text/plain"]
+            crossSite[.origin] = "https://evil.example"
+            try await client.execute(uri: "//v1/admin/reset", method: .post, headers: crossSite, body: reset) {
+                #expect($0.status == .badRequest)
+            }
+            try await client.execute(uri: "/v1/admin/reset", method: .post, headers: crossSite, body: reset) {
+                #expect($0.status == .forbidden)
+            }
+            // A write outside "/v1" and "/dash" is guarded the same way.
+            try await client.execute(uri: "/elsewhere", method: .post, headers: crossSite, body: reset) {
+                #expect($0.status == .forbidden)
+            }
+            // An opaque Origin ("null") is never the dashboard's own, even with the header.
+            var opaque: HTTPFields = [HTTPField.Name("X-Budget-Dashboard")!: "1", .contentType: "application/json"]
+            opaque[.origin] = "null"
+            try await client.execute(uri: "/v1/admin/reset", method: .post, headers: opaque, body: reset) {
+                #expect($0.status == .forbidden)
+            }
+            // Reads need nothing.
+            try await client.execute(uri: "/v1/overview", method: .get) { #expect($0.status == .ok) }
         }
     }
 

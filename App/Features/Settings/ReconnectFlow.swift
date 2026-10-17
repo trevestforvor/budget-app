@@ -20,7 +20,8 @@ struct LinkRepairControls: View {
 
     var body: some View {
         let onPhone = links.filter(phoneRepairs)
-        let elsewhere = links.filter { !phoneRepairs($0) }
+        // A SimpleFIN bank is signed in to again on SimpleFIN Bridge (its own button below), never on the dashboard.
+        let elsewhere = links.filter { !phoneRepairs($0) && $0.reconnect != .providerSite }
         ForEach(onPhone) { link in
             DSNoticeCard("\(link.institution) needs you to sign in again",
                          message: "The bank ended the connection, so nothing new is coming in. Sign in again here — your accounts and history stay as they are.",
@@ -30,9 +31,7 @@ struct LinkRepairControls: View {
         if !elsewhere.isEmpty {
             DSNoticeCard(elsewhere.count == 1 ? "\(elsewhere[0].institution) needs you to sign in again"
                                               : "\(elsewhere.count) connections need you to sign in again",
-                         message: elsewhere.allSatisfy { $0.reconnect == .newLink }
-                            ? "Access was withdrawn, so nothing new is coming in. Link \(elsewhere.count == 1 ? "it" : "them") again on your Budget dashboard — your accounts and history stay."
-                            : "The bank ended the connection, so nothing new is coming in. Reconnect on your Budget dashboard — it keeps your accounts and history.",
+                         message: InstitutionLink.repairElsewhereMessage(elsewhere),
                          actionTitle: dashboardURL == nil ? nil : "Open dashboard") { if let dashboardURL { openURL(dashboardURL) } }
                 .settingsCardRow()
         }
@@ -58,6 +57,24 @@ struct LinkRepairControls: View {
 }
 
 extension InstitutionLink {
+    /// A SimpleFIN link SimpleFIN stopped accepting as a whole: a new setup token on the dashboard fixes it.
+    var needsNewSetupToken: Bool { primary == .simplefin && reconnect == .dashboard }
+
+    /// What to say about connections the phone can't repair itself, by how each one is fixed.
+    static func repairElsewhereMessage(_ links: [InstitutionLink]) -> String {
+        let them = links.count == 1 ? "it" : "them"
+        if links.allSatisfy({ $0.reconnect == .providerSite }) {
+            return "Nothing new is coming in from \(them). Sign in again on SimpleFIN Bridge, then tap Try again — your accounts and history stay as they are."
+        }
+        if links.allSatisfy(\.needsNewSetupToken) {
+            return "SimpleFIN stopped accepting this server's access, so nothing new is coming in. Paste a new setup token on your Budget dashboard — your accounts and history stay."
+        }
+        if links.allSatisfy({ $0.reconnect == .newLink }) {
+            return "Access was withdrawn, so nothing new is coming in. Link \(them) again on your Budget dashboard — your accounts and history stay."
+        }
+        return "The bank ended the connection, so nothing new is coming in. Reconnect on your Budget dashboard — it keeps your accounts and history."
+    }
+
     /// Still working, but the bank's consent runs out within two weeks (or already has): time to renew access.
     func consentEndsSoon(now: Date = .now) -> Bool {
         guard !needsSignIn, let ends = consentExpiresAt else { return false }

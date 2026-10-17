@@ -170,7 +170,12 @@ public actor SyncService {
 
     private func sync(_ original: StoredLink, trigger: SyncTrigger, afterUpdateMode: Bool = false) async -> LinkSyncResult {
         var link = original
-        if trigger.retriesSignIn, link.status == .needsReauth { link.status = .connected }
+        if afterUpdateMode, LinkHealthBook.waitsForPerson(link), link.hasLiveItem {
+            // The person just signed in again in Plaid's update mode on the dashboard: that ends the failure run, so a
+            // failure after this is a new episode with a push of its own, and the backoff starts over. (The phone's
+            // reconnect ends it when /item/get confirms the Item healed; a new SimpleFIN setup token, when it's saved.)
+            LinkHealthBook.recordRepaired(&link)
+        } else if trigger.retriesSignIn, link.status == .needsReauth { link.status = .connected }
         let batchID = "\(link.provider.rawValue)-\(link.id)-\(Int(Date().timeIntervalSince1970))"
         do {
             guard let sealer else {
@@ -195,8 +200,9 @@ public actor SyncService {
                 throw BudgetAPIError.rejected("\(link.provider.displayName) links don't sync.")
             }
             guard let report = outcome.report else {
-                // The provider wasn't asked this time: nothing synced, so nothing is stamped.
-                try await store.upsertLink(link)
+                // The provider wasn't asked this time: nothing synced, so nothing is stamped (and nothing written unless the
+                // link changed: a skipped SimpleFIN run on every tick would otherwise rewrite it each time).
+                if link != original { try await store.upsertLink(link) }
                 return LinkSyncResult(linkID: link.id, institution: link.institution, ok: true, report: nil, removed: 0, error: nil, skipped: outcome.skipped)
             }
             let removed = outcome.removed
@@ -207,9 +213,10 @@ public actor SyncService {
             if await LinkHealthBook.shouldRecordImport(report, failure: nil, lastRecordedWarnings: { await self.lastRecordedWarnings(linkID) }) {
                 var record = ImportRecord(batchID: batchID, kind: .sync, linkID: link.id, label: "\(link.institution) sync",
                                           report: report, createdAt: Date(), rolledBack: false, outcome: report.warnings.isEmpty ? .ok : .warning)
-                if report.rowsAdded + report.rowsUpdated == 0 {
-                    // Warnings only: no row carries the batch id, so the record takes an id of its own, as a failure does,
-                    // and never replaces the record of a batch in the same second that did write rows.
+                if report.rowsAdded + report.rowsUpdated == 0, LinkHealthBook.loggedMerges(report) == 0 {
+                    // Warnings only: no row or merge-log entry carries the batch id, so the record takes an id of its own,
+                    // as a failure does, and never replaces the record of a batch in the same second that did write rows.
+                    // (A sync that logged merges keeps its batch id: that's what Bring back looks them up by.)
                     record.batchID = "\(batchID)-warning-\(UUID().uuidString.prefix(8).lowercased())"
                     record.report.batchID = record.batchID
                 }

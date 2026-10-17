@@ -85,7 +85,7 @@ struct SettingsView: View {
                                                    : "\(signIn.count) connections need you to sign in again",
                                  message: signIn.allSatisfy({ $0.reconnect == .phone })
                                     ? "Nothing new is coming in from \(signIn.count == 1 ? "it" : "them"). Sign in again from Linked accounts — your accounts and history stay as they are."
-                                    : "Nothing new is coming in from \(signIn.count == 1 ? "it" : "them"). Reconnect on your Budget dashboard — your accounts and history stay as they are.",
+                                    : InstitutionLink.repairElsewhereMessage(signIn),
                                  actionTitle: "See accounts") { path.append(.accounts) }
                         .settingsCardRow()
                 }

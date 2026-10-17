@@ -27,6 +27,9 @@ const JEV_KEYS = ["openRouterKey", "openRouterZeroRetention"];
 const INTERVALS = [["0.25", "Every 15 minutes"], ["1", "Every hour"], ["3", "Every 3 hours"], ["6", "Every 6 hours"], ["12", "Every 12 hours"], ["24", "Once a day"]];
 const ORIGIN_TAG = { environment: ["From install settings", ""], dashboard: ["Set here", "info"] };
 
+/// How a `choice` setting's values read in its select.
+const CHOICE_LABELS = { auto: "Auto", on: "On", off: "Off" };
+
 let uid = 0;
 const nextID = (key) => `set-${key}-${++uid}`;
 
@@ -45,6 +48,12 @@ function settingControl(f, onChange, { locked = null, disabled = false } = {}) {
     const current = String(Number(f.value || f.defaultValue || 6));
     const options = INTERVALS.some(([v]) => v === current) ? INTERVALS : [...INTERVALS, [current, `Every ${current} hours`]];
     input = h("select", { class: "input", id, value: current }, options.map(([v, l]) => h("option", { value: v }, l + (v === String(Number(f.defaultValue)) ? " (default)" : ""))));
+  } else if (f.kind === "choice" && Array.isArray(f.choices) && f.choices.length) {
+    // One of a fixed list (Investment holdings: auto, on, off), as a select rather than a box to type into.
+    const current = f.value || f.defaultValue || f.choices[0];
+    const options = f.choices.includes(current) ? f.choices : [...f.choices, current];
+    input = h("select", { class: "input", id, value: current },
+      options.map((v) => h("option", { value: v, selected: v === current }, (CHOICE_LABELS[v] || v) + (v === f.defaultValue ? " (default)" : ""))));
   } else input = h("input", { class: "input", id, value: f.value || "", spellcheck: "false", autocomplete: "off", list: f.kind === "timeZone" ? "tz-list" : null,
     inputmode: f.kind === "number" ? "decimal" : f.kind === "url" ? "url" : null,
     placeholder: f.kind === "url" ? (f.key === "publicURL" ? "https://…" : f.key === "dashboardURL" ? "Not set" : "Off") : (f.defaultValue || "") });

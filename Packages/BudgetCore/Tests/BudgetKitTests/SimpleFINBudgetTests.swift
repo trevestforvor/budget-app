@@ -27,6 +27,23 @@ struct SimpleFINBudgetTests {
                 == .skipped(nextAt: Self.hoursAgo(-4)))
     }
 
+    @Test("Automatic pulls stop at 12 a day, so the schedule never fills the hard stop: backfill and the person keep room")
+    func automaticPullsCappedBelowTheHardStop() {
+        #expect(SimpleFINBudget.maxAutomaticPerDay == 12)
+        #expect(SimpleFINBudget.automaticGap(perDay: 20) == SimpleFINBudget.day / 12)
+        // Twelve scheduled pulls two hours apart, asked for 20 a day: the 13th waits.
+        let twelve = (0..<12).map { Self.request(23 - 2 * Double($0)) }
+        guard case .skipped = SimpleFINBudget.allowance(log: twelve, trigger: .scheduled, now: Self.now, automaticPerDay: 20) else {
+            Issue.record("a 13th automatic pull ran"); return
+        }
+        // With 12 automatic pulls and 6 backfills spent, the person still gets a pull.
+        let full = twelve + (0..<6).map { Self.request(22.5 - 2 * Double($0), .backfill) }
+        #expect(SimpleFINBudget.allowance(log: full, trigger: .person, now: Self.now) == .pull(backfill: 0))
+        // And a scheduled pull with backfill left still gets its windows.
+        let eleven = (0..<11).map { Self.request(23 - 2 * Double($0)) }
+        #expect(SimpleFINBudget.allowance(log: eleven, trigger: .scheduled, now: Self.now, automaticPerDay: 20) == .pull(backfill: 6))
+    }
+
     @Test("The 21st request in 24 hours is refused here, with when the next can run")
     func twentyFirstRequestRefusedWithNextTime() {
         let twenty = (0..<20).map { Self.request(23 - Double($0), .fresh, .person) }

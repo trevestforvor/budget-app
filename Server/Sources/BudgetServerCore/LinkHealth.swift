@@ -162,9 +162,16 @@ enum LinkHealthBook {
                                    lastRecordedWarnings: @Sendable () async -> Set<String> = { [] }) async -> Bool {
         if failure != nil { return true }
         guard let report else { return false }
-        if report.rowsAdded + report.rowsUpdated > 0 { return true }
+        if report.rowsAdded + report.rowsUpdated > 0 || loggedMerges(report) > 0 { return true }
         guard !report.warnings.isEmpty else { return false }
         return Set(report.warnings) != (await lastRecordedWarnings())
+    }
+
+    /// Merge-log entries this sync logged under its own batch: pending rows it settled or dropped, and rows it skipped as
+    /// already here (less those an earlier import logged first). The dashboard offers Bring back for them only on the
+    /// batch's history row, so a sync that logged any is recorded, under its own batch id, even when it wrote no rows.
+    static func loggedMerges(_ report: IngestReport) -> Int {
+        (report.pendingSettled ?? 0) + (report.pendingDropped ?? 0) + max(0, report.duplicatesSkipped - (report.duplicatesSkippedBefore ?? 0))
     }
 
     /// How many sync records that wrote no rows (failed, or warnings only) each link keeps; older ones are pruned.

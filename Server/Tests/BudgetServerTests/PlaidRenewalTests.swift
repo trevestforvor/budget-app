@@ -80,6 +80,37 @@ struct PlaidRenewalTests {
         #expect(link.plaid?.pendingDisconnectAt == warned && link.plaid?.lastItemCheckAt == checked)
     }
 
+    @Test("Update mode on the dashboard ends the failure run: a transient failure right after starts a new episode")
+    func updateModeEndsFailureRun() async throws {
+        let plaid = ScriptedProvider(["/transactions/sync": [PlaidErrorKindTests.plaidError("INSTITUTION_DOWN", type: "INSTITUTION_ERROR")]])
+        let firstFailed = Date().addingTimeInterval(-3 * 86_400)
+        let (app, service) = try await PlaidDashboardTests.server(plaid) { link in
+            LinkHealthBook.recordFailure(&link, LinkFailure(kind: .needsSignIn, code: "ITEM_LOGIN_REQUIRED", message: "sign in"), now: firstFailed)
+            LinkHealthBook.recordFailure(&link, LinkFailure(kind: .needsSignIn, code: "ITEM_LOGIN_REQUIRED", message: "sign in"), now: firstFailed.addingTimeInterval(3_600))
+        }
+        #expect(try await service.store.links().first?.failureCount == 2)
+        #expect(try await Self.sync(app, #"{"afterUpdateMode":true}"#) == .ok)
+        let link = try #require(try await service.store.links().first)
+        #expect(link.errorKind == .transient)
+        #expect(link.failureCount == 1)
+        #expect((link.firstFailedAt ?? .distantPast) > firstFailed.addingTimeInterval(86_400))
+    }
+
+    @Test("The phone's token can't claim update mode: afterUpdateMode on the API leaves a PENDING_DISCONNECT warning")
+    func phoneCantClaimUpdateMode() async throws {
+        let plaid = PlaidDashboardTests.provider()
+        let warned = Date().addingTimeInterval(-86_400)
+        let (_, service) = try await PlaidDashboardTests.server(plaid) { link in link.plaid?.pendingDisconnectAt = warned }
+        let api = Application(router: buildRouter(service, surface: .api))
+        try await api.test(.router) { client in
+            var headers = TestServer.auth
+            headers[.contentType] = "application/json"
+            try await client.execute(uri: "/v1/links/plaid-item-0/sync", method: .post, headers: headers,
+                                     body: TestServer.body(#"{"afterUpdateMode":true}"#)) { #expect($0.status == .ok) }
+        }
+        #expect(try await service.store.links().first?.plaid?.pendingDisconnectAt == warned)
+    }
+
     @Test("A link whose token was dropped shows no access-ends date, on the dashboard as on the phone")
     func droppedTokenHasNoAccessEnds() async throws {
         let plaid = PlaidDashboardTests.provider()

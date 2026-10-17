@@ -13,7 +13,8 @@ final class StaleProposalUITests: XCTestCase {
         XCTAssertTrue(field.waitForExistence(timeout: 5))
         field.tap()
         field.typeText(question)
-        app.buttons["Send"].tap()
+        // The app's Send button, not the software keyboard's send key (identifier "Send"), which also matches "Send".
+        app.buttons.matching(NSPredicate(format: "label == 'Send' AND identifier != 'Send'")).firstMatch.tap()
     }
 
     /// Two caps for DoorDash proposed in one conversation: applying the second moves the cap the first was worked out

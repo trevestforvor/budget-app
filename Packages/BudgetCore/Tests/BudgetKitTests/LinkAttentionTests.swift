@@ -12,6 +12,18 @@ struct LinkAttentionTests {
                         errorKind: errorKind, consentExpiresAt: expiresInDays.map { MonthFixture.day(-$0) }, reconnect: reconnect)
     }
 
+    @Test("A SimpleFIN bank is sent to SimpleFIN Bridge, a refused SimpleFIN link to a new setup token, never \"reconnect on the dashboard\"")
+    func simpleFINRepairs() throws {
+        var bank = Self.link("simplefin-1~b", "Tidewater", status: .needsReauth, reconnect: .providerSite, errorKind: .needsSignIn)
+        bank.primary = .simplefin
+        var whole = Self.link("simplefin-1", "SimpleFIN Bridge", status: .needsReauth, reconnect: .dashboard, errorKind: .revoked)
+        whole.primary = .simplefin
+        let items = Self.ledger.linkAttention([bank, whole])
+        #expect(items.count == 2)
+        #expect(items[0].detail.contains("Sign in again on SimpleFIN Bridge") && !items[0].detail.contains("dashboard"))
+        #expect(items[1].detail.contains("new setup token"))
+    }
+
     @Test("Consent ending within 14 days is one item with its link, its date and the consentExpiring reason")
     func expiring() throws {
         let items = Self.ledger.linkAttention([Self.link("plaid-amex", "Amex", expiresInDays: 13, reconnect: .phone)])
