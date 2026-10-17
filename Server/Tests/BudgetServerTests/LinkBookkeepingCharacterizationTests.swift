@@ -122,24 +122,17 @@ struct LinkBookkeepingCharacterizationTests {
         #expect(!SyncService.needsSignIn(SourceHTTPError(status: 429, body: "RATE_LIMIT_EXCEEDED")))
     }
 
-    @Test("Teller: a disconnected enrollment waits for a sign-in; the retry that works clears it")
+    // Teller's case changed on purpose in 0.6.0 (SPEC §10: Teller removed): its sync is gone, and a stored link says so.
+    @Test("Teller: a stored link fails every sync with the shut-down note, stays connected and writes nothing")
     func teller() async throws {
-        let teller = ScriptedProvider([
-            "/accounts": [(401, #"{"error": {"code": "enrollment.disconnected", "message": "The enrollment is disconnected"}}"#), (200, "[]")],
-        ])
-        let (_, service) = try await TestServer.app(seedDemo: false, plaid: teller)
-        try await service.providers.saveTeller(applicationID: "app_test", environment: "sandbox", certificatePEM: nil, keyPEM: nil)
+        let (_, service) = try await TestServer.app(seedDemo: false)
         try await Self.link(service, id: "teller-enr_1", provider: .teller, token: "tok-1")
 
         let r1 = await service.sync.syncAll()
-        #expect(r1.map(\.ok) == [false] && r1[0].error == "Teller: The enrollment is disconnected")
-        #expect(try await Self.seen(service, "teller-enr_1") == Seen(status: .needsReauth, lastError: r1[0].error, lastSync: nil, imports: 0))
-        #expect(await service.sync.syncAll().isEmpty)
-
+        #expect(r1.map(\.ok) == [false] && r1[0].error?.contains("Teller has shut down") == true)
+        #expect(try await Self.seen(service, "teller-enr_1") == Seen(status: .connected, lastError: r1[0].error, lastSync: nil, imports: 0))
         let r2 = try await service.sync.sync(linkID: "teller-enr_1")
-        #expect(r2.ok)
-        let s2 = try await Self.seen(service, "teller-enr_1")
-        #expect(s2.status == .connected && s2.lastError == nil && s2.lastSync != nil && s2.imports == 0)
+        #expect(!r2.ok && r2.error == r1[0].error)
     }
 
     @Test("SimpleFIN: a stored access URL that won't parse fails the sync without asking for a sign-in")

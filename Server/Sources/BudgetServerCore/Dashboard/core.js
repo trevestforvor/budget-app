@@ -593,6 +593,10 @@ export function institutionGroups() {
 function groupState(g, hours) {
   const via = [...new Set(g.links.map((l) => SOURCE[l.provider] || l.provider))].join(" and ");
   const lastSync = g.links.map((l) => l.lastSync).filter(Boolean).sort().pop();
+  // Teller withdrew its API in July 2026: a link stored before then can't sync or reconnect, only be removed (⋯ menu).
+  if (g.links.some((l) => l.provider === "teller")) {
+    return { tone: "watch", label: "Teller has shut down — remove this link", detail: [lastSync ? `last updated ${dateShort(lastSync)}` : null, "its transactions stay"], lastSync };
+  }
   const reauth = g.links.find((l) => l.status === "needsReauth");
   if (reauth) return { tone: "act", label: "Needs sign-in", detail: [lastSync ? `last updated ${dateShort(lastSync)}` : null, via && `via ${via}`], lastSync, problem: reauth };
   const failing = g.links.find((l) => l.lastError);

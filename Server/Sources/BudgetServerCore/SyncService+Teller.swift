@@ -2,11 +2,13 @@ import BudgetKit
 import Foundation
 
 extension SyncService {
-    /// Teller: by date window, like SimpleFIN.
+    /// Teller withdrew its API in July 2026 and its code is gone. A Teller link stored before then still decodes
+    /// (`SourceKind.teller`), and syncing one says what to do about it.
+    // The integrator removes this file with the `.teller` branch in `SyncService.sync` (SPEC §10, item I2).
     func syncTeller(_ link: inout StoredLink, token: String, batchID: String, trigger: SyncTrigger) async throws -> ProviderSyncOutcome {
-        guard let teller = await providers.teller() else { throw BudgetAPIError.rejected("Teller isn't set up on the server.") }
-        let snapshot = try await TellerSource(accessToken: token, transport: teller.transport).fetch(since: window(link))
-        let report = try await api.ingest(snapshot, batchID: batchID)
-        return ProviderSyncOutcome(report: report)
+        throw BudgetAPIError.rejected(Self.tellerGone)
     }
+
+    /// What a stored Teller link says on the dashboard and in its last error.
+    static let tellerGone = "Teller has shut down — remove this link. Its transactions stay."
 }

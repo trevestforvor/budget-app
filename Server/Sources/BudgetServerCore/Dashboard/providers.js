@@ -1,9 +1,11 @@
-// Bank providers: Plaid, Teller and SimpleFIN. The key forms here are shared by the Connect-a-bank drawer
-// (Accounts) and Settings → Bank providers, and the Link flows run only in this dashboard.
-import { fill, h, api, store, heavy, cached, forget, afterWrite, toast, callout, button, busy, armed, tag, plural, reportError, secretAttrs } from "./core.js";
+// Bank providers: Plaid and SimpleFIN, side by side for the person to choose; neither is the recommended one. Plaid's
+// key form is shared by the Connect-a-bank drawer (Accounts) and Settings → Bank providers, and Plaid Link runs only in
+// this dashboard. SimpleFIN needs no keys here: a setup token from SimpleFIN Bridge, and its banks are managed there.
+import { fill, h, api, store, heavy, cached, forget, afterWrite, toast, callout, button, busy, armed, tag, plural, reportError, secretAttrs,
+  dateTime } from "./core.js";
 
 const PLAID_JS = "https://cdn.plaid.com/link/v2/stable/link-initialize.js";
-const TELLER_JS = "https://cdn.teller.io/connect/connect.js";
+const BRIDGE = "https://beta-bridge.simplefin.org";
 
 /// Loads a provider's script once, only when someone presses Link. A second call while it loads waits for the same
 /// load; a failed load can be tried again.
@@ -26,14 +28,12 @@ export function providerStates() {
   const body = cached("providers");
   const sealing = !!(store.summary && store.summary.settings.linkingEnabled) && (!body || body.providers.sealingAvailable);
   const noKey = { label: "Needs encryption key", tone: "watch", ready: false };
-  if (!body) return { plaid: { label: "Checking", tone: "", ready: false }, teller: { label: "Checking", tone: "", ready: false }, simplefin: sealing ? { label: "Ready", tone: "ok", ready: true } : noKey };
-  const p = body.providers.plaid, t = body.providers.teller;
+  const simplefin = sealing ? { label: "Ready", tone: "ok", ready: true } : noKey;
+  if (!body) return { plaid: { label: "Checking", tone: "", ready: false }, simplefin };
+  const p = body.providers.plaid;
   const plaid = !sealing ? noKey : p.origin === "none" ? { label: "Needs keys", tone: "", ready: false }
     : { label: p.environment === "production" ? "Ready" : "Ready · sandbox", tone: "ok", ready: true };
-  const teller = !sealing ? noKey : t.origin === "none" || !t.applicationID ? { label: "Needs keys", tone: "", ready: false }
-    : t.environment !== "sandbox" && !t.hasCertificate ? { label: "Needs certificate", tone: "watch", ready: false }
-    : { label: t.environment === "sandbox" ? "Ready · sandbox" : "Ready", tone: "ok", ready: true };
-  return { plaid, teller, simplefin: sealing ? { label: "Ready", tone: "ok", ready: true } : noKey };
+  return { plaid, simplefin };
 }
 
 /// Where a provider's keys come from, said only when it isn't the default.
@@ -91,38 +91,6 @@ export function plaidForm({ onChange } = {}) {
   };
 }
 
-/// Teller's application and client certificate.
-export function tellerForm({ onChange } = {}) {
-  const t = cached("providers").providers.teller;
-  const app = h("input", { class: "input", placeholder: "app_…", autocomplete: "off", spellcheck: "false", value: t.applicationID || "" });
-  const env = h("select", { class: "input" }, h("option", { value: "sandbox" }, "Sandbox (test data)"), h("option", { value: "development" }, "Development (real banks, free)"),
-    h("option", { value: "production" }, "Production"));
-  env.value = t.environment || "sandbox";
-  const cert = h("input", { class: "input", type: "file", accept: ".pem,.crt" }), key = h("input", { class: "input", type: "file", accept: ".pem,.key" });
-  const initial = { app: app.value, env: env.value };
-  for (const el of [app, env, cert, key]) { el.addEventListener("input", () => onChange && onChange()); el.addEventListener("change", () => onChange && onChange()); }
-  const el = h("div", { class: "stack" },
-    h("div", { class: "form" },
-      field("Application ID", app), field("Environment", env),
-      field("Certificate (certificate.pem)", cert, t.hasCertificate ? "One is saved. Choose a file only to replace it." : null),
-      field("Private key (private_key.pem)", key, "Sealed on the server as soon as it's saved.")),
-    h("p", { class: "help" }, "From ", h("a", { href: "https://teller.io/dashboard", target: "_blank", rel: "noopener" }, "https://teller.io/dashboard"),
-      ": the application ID and the two files in teller.zip. Sandbox needs no certificate; real banks do."),
-    originNote(t.origin) ? h("p", { class: "help" }, originNote(t.origin)) : null);
-  return {
-    el,
-    changes: () => [app.value.trim() !== initial.app, env.value !== initial.env, !!cert.files.length, !!key.files.length].filter(Boolean).length,
-    validate: () => (!app.value.trim() ? "Add Teller's application ID." : !!cert.files.length !== !!key.files.length ? "Choose both the certificate and the private key." : null),
-    async save() {
-      const summary = await api("/dash/providers/teller", { method: "PUT", body: { applicationID: app.value.trim(), environment: env.value,
-        certificatePEM: cert.files[0] ? await cert.files[0].text() : null, keyPEM: key.files[0] ? await key.files[0].text() : null } });
-      cert.value = ""; key.value = "";
-      forget("providers");
-      return { ok: true, message: summary.teller.hasCertificate ? "Saved, with the certificate." : "Saved. Sandbox works without a certificate." };
-    },
-  };
-}
-
 /// "Remove saved keys" for keys saved on this dashboard (environment keys stay).
 export function removeKeysButton(provider, done) {
   const origin = cached("providers").providers[provider].origin;
@@ -131,7 +99,7 @@ export function removeKeysButton(provider, done) {
     try {
       await api(`/dash/providers/${provider}`, { method: "DELETE" });
       forget("providers");
-      toast(provider === "plaid" ? "Plaid keys removed" : "Teller setup removed");
+      toast("Plaid keys removed");
       await heavy("providers");
       done && done();
     } catch (error) { reportError(error); }
@@ -214,70 +182,53 @@ export async function linkPlaid({ resume = false, update = null, grant = false, 
 }
 // [end lane P] linkPlaid
 
-/// Teller's reconnect: Connect reopens the same enrollment, and the access token it hands back replaces the stored
-/// one (PUT /v1/links/:id/token), which syncs the link. Resolves once Connect closes and its outcome is shown.
-export async function relinkTeller(link, { where } = {}) {
-  store.pending++;
-  try { await Promise.all([loadScript(TELLER_JS), heavy("providers")]); }
-  catch (error) { reportError(error, where); return; }
-  finally { store.pending--; }
-  const t = cached("providers").providers.teller;
-  if (!t.applicationID) { reportError({ message: "Teller isn't set up on this server anymore. Add its application ID in Settings, under Bank providers." }, where); return; }
-  if (!link.externalID) { reportError({ message: `This server doesn't know which Teller connection ${link.institution} is, so it can't reopen it. Remove the connection and connect ${link.institution} again; its history stays.` }, where); return; }
-  await new Promise((finish) => {
-    window.TellerConnect.setup({
-      applicationId: t.applicationID, environment: t.environment || "sandbox", products: ["transactions", "balance"], enrollmentId: link.externalID,
-      onSuccess: async (enrollment) => {
-        toast("Signed in. Syncing…");
-        try {
-          const e = enrollment.enrollment || {};
-          const result = await api(`/v1/links/${encodeURIComponent(link.id)}/token`, { method: "PUT", body: { accessToken: enrollment.accessToken, enrollmentID: e.id || link.externalID } });
-          announce(reconnected(result), where);
-        } catch (error) { reportError(error, where); }
-        await afterWrite();
-        finish();
-      },
-      onExit: () => finish(),
-      onFailure: (failure) => { reportError({ message: "Teller couldn't finish signing in.", detail: failure && failure.message }, where); finish(); },
-    }).open();
-  });
-}
+/// Teller withdrew its API in July 2026 and its code is gone; a Teller link stored before then can only be removed.
+/// accounts.js still imports these two, so they stay as stubs until that import goes (SPEC §10, I2).
+export const TELLER_GONE = "Teller has shut down — remove this link. Its transactions stay.";
+export async function relinkTeller(link, { where } = {}) { reportError({ message: TELLER_GONE }, where); }
+export const linkTeller = relinkTeller;
 
-export async function linkTeller({ where } = {}) {
-  store.pending++;
-  try {
-    await loadScript(TELLER_JS);
-    const t = cached("providers").providers.teller;
-    window.TellerConnect.setup({
-      applicationId: t.applicationID, environment: t.environment || "sandbox", products: ["transactions", "balance"],
-      onSuccess: async (enrollment) => {
-        toast("Linking and syncing…");
-        try {
-          const e = enrollment.enrollment || {};
-          const result = await api("/v1/links/teller", { method: "POST", body: { accessToken: enrollment.accessToken, enrollmentID: e.id,
-            institution: (e.institution && e.institution.name) || "Teller" } });
-          announce(linked(result), where);
-        } catch (error) { reportError(error, where); }
-        await afterWrite();
-      },
-      onFailure: (failure) => reportError({ message: "Teller couldn't finish linking.", detail: failure && failure.message }, where),
-    }).open();
-  } catch (error) { reportError(error, where); }
-  finally { store.pending--; }
+// MARK: The choice (one comparison, the same in docs/INSTALL-SERVER.md §6, docs/SETUP.md and setup.sh)
+
+/// Plaid and SimpleFIN on the points that differ. Neither column is the recommended one: it's the person's choice,
+/// and either can be added later.
+const COMPARE = [
+  ["Cost", "Your own Plaid account. Free Trial: 10 bank logins for the life of the account (removing one doesn't free it). Paid plans bill per bank",
+    "$15 a year (or $1.50 a month) to SimpleFIN, up to 25 banks"],
+  ["Setup", "Developer sign-up, keys and an identity check. Banks that sign in on their own site need an https return address; approval can take days",
+    "Sign up, add your banks on their site, paste one token"],
+  ["Card bills (statement, minimum, due date)", "Yes", "No"],
+  ["Merchant names and bank categories", "Yes", "Raw bank descriptions"],
+  ["History", "Up to 2 years at link", "About 90 days per request; Budget walks back further where the bank allows"],
+  ["Freshness", "Several times a day", "About once a day"],
+  ["Investments", "Holdings by position", "Balances only"],
+];
+
+/// The comparison as a compact table (rows stack on a phone), in a fold that starts open until a bank is linked.
+export function compareTable({ open } = {}) {
+  const table = h("table", { class: "table stack-phone compare" },
+    h("thead", {}, h("tr", {}, h("th", { scope: "col" }, h("span", { class: "sr-only" }, "What")), h("th", { scope: "col" }, "Plaid"), h("th", { scope: "col" }, "SimpleFIN"))),
+    h("tbody", {}, COMPARE.map(([what, plaid, simplefin]) => h("tr", {},
+      // Row labels wrap (the table's headers don't by default), so the two answers get the drawer's width.
+      h("th", { scope: "row", css: { "white-space": "normal", "vertical-align": "top", width: "28%", padding: "var(--s-sm) var(--s-sm) var(--s-sm) 0", "border-bottom-color": "var(--divider)" } }, what), h("td", { "data-label": "Plaid:" }, plaid), h("td", { "data-label": "SimpleFIN:" }, simplefin)))));
+  return h("details", { class: "fold", open: open ?? !((store.summary && store.summary.links) || []).length },
+    h("summary", {}, h("span", { class: "grow" }, "Plaid or SimpleFIN? Either works, and you can add the other later")),
+    h("div", { class: "fold-body" }, h("div", { class: "table-wrap" }, table)));
 }
 
 // MARK: The Connect panes (drawer)
 
 const PANES = [
-  ["plaid", "Plaid", "Most US and Canadian banks, cards and brokerages."],
-  ["teller", "Teller", "Chase and other large US banks, with no approval wait."],
-  ["simplefin", "SimpleFIN", "Any bank SimpleFIN Bridge supports, for a small yearly fee paid to them."],
+  ["plaid", "Plaid", "Through your own Plaid developer account: card bills, merchant names and two years of history."],
+  ["simplefin", "SimpleFIN", "Through SimpleFIN Bridge, a service you subscribe to: one token covers every bank you add there."],
 ];
 
-/// Tabs for the three providers, each with its status, a Link button and (for Plaid and Teller) its keys.
+/// The comparison, then a tab per provider with its status, its three steps and a Link button. The tab that opens
+/// first is the one already Ready; with both or neither, the first by name. No badge on either.
 export function connectPanes({ where, selected } = {}) {
   const states = providerStates();
-  const first = selected || (states.plaid.ready ? "plaid" : states.teller.ready ? "teller" : "plaid");
+  const ready = PANES.map(([id]) => id).filter((id) => states[id].ready);
+  const first = selected || (ready.length === 1 ? ready[0] : PANES[0][0]);
   const root = h("div", { class: "stack" });
   const tabs = h("div", { class: "tabs", role: "tablist", "aria-label": "Provider" });
   const panels = {};
@@ -290,7 +241,7 @@ export function connectPanes({ where, selected } = {}) {
     tabs.append(h("button", { class: "chip", type: "button", role: "tab", id: `tab-${id}`, "aria-controls": `pane-${id}`, dataset: { id },
       onclick: () => select(id), onkeydown: (e) => arrowKeys(e, tabs, select) }, name, tag(s.label, s.tone)));
   }
-  root.append(tabs);
+  root.append(compareTable(), tabs);
   if (!store.summary.settings.linkingEnabled || (cached("providers") && !cached("providers").providers.sealingAvailable)) root.append(noSealing());
   for (const [id, name, blurb] of PANES) {
     const panel = h("div", { class: "pane", role: "tabpanel", id: `pane-${id}`, "aria-labelledby": `tab-${id}` });
@@ -302,35 +253,27 @@ export function connectPanes({ where, selected } = {}) {
   return root;
 }
 
+const extLink = (href, text) => h("a", { href, target: "_blank", rel: "noopener" }, text || href);
+const steps = (...items) => h("ol", { class: "steps" }, items.map((item) => h("li", {}, item)));
+
 function renderPane(panel, id, name, blurb, where, rerender) {
   const state = providerStates()[id];
   panel.append(h("p", { class: "t-callout muted" }, blurb));
-  if (id === "simplefin") {
-    const input = h("input", { class: "input", placeholder: "Setup token", ...secretAttrs, "aria-label": "SimpleFIN setup token" });
-    panel.append(
-      h("p", { class: "help" }, "Get a setup token from ", h("a", { href: "https://beta-bridge.simplefin.org", target: "_blank", rel: "noopener" }, "https://beta-bridge.simplefin.org"),
-        ". It works once: the server trades it for an access address and seals it."),
-      h("div", { class: "secret-row" }, input, button("Link", { kind: "primary", disabled: !state.ready, onclick: (e) => busy(e.currentTarget, "Linking…", async () => {
-        const token = input.value.trim();
-        if (!token) throw new Error("Paste the setup token first.");
-        const result = await api("/v1/links/simplefin", { method: "POST", body: { setupToken: token } });
-        input.value = "";
-        announce(linked(result), where);
-        await afterWrite();
-      }, { errorTarget: where }) })));
-    return;
-  }
-  const link = button("Link an account", { kind: "primary", disabled: !state.ready,
-    onclick: () => (id === "plaid" ? linkPlaid({ where }) : linkTeller({ where })) });
-  panel.append(h("div", { class: "actions" }, link));
+  if (id === "simplefin") { renderSimpleFIN(panel, state, where); return; }
+  panel.append(steps(
+    ["Make a Plaid account at ", extLink("https://dashboard.plaid.com"), ". Sandbox is free with made-up banks; real banks need the free Trial (or a paid plan), with an identity check."],
+    "Enter its client ID and secret under Keys below, and add the return address shown there to Plaid's allowed redirect URIs.",
+    "Link a bank: Plaid's window opens here, and you sign in to the bank there."));
+  const linkButton = button("Link an account", { kind: "primary", disabled: !state.ready, onclick: () => linkPlaid({ where }) });
+  panel.append(h("div", { class: "actions" }, linkButton));
   if (!cached("providers")) return;
-  const form = id === "plaid" ? plaidForm() : tellerForm();
+  const form = plaidForm();
   const result = h("div");
   const keys = h("details", { class: "fold", open: !state.ready && state.label !== "Needs encryption key" },
-    h("summary", {}, h("span", { class: "grow" }, id === "plaid" ? "Keys" : "Application and certificate")),
+    h("summary", {}, h("span", { class: "grow" }, "Keys")),
     h("div", { class: "fold-body" }, form.el,
       h("div", { class: "actions" },
-        button(id === "plaid" ? "Save and test" : "Save", { kind: "secondary", disabled: !cached("providers").providers.sealingAvailable, onclick: (e) => busy(e.currentTarget, "Saving…", async () => {
+        button("Save and test", { kind: "secondary", disabled: !cached("providers").providers.sealingAvailable, onclick: (e) => busy(e.currentTarget, "Saving…", async () => {
           const problem = form.validate();
           if (problem) { fill(result, callout({ tone: "watch", title: problem })); return; }
           const outcome = await form.save();
@@ -342,6 +285,80 @@ function renderPane(panel, id, name, blurb, where, rerender) {
         removeKeysButton(id, rerender)),
       result));
   panel.append(keys);
+}
+
+// MARK: SimpleFIN
+
+/// The server's hard stop on SimpleFIN requests in a rolling 24 hours (SimpleFIN asks for no more than about 24 a day).
+const SIMPLEFIN_DAILY_LIMIT = 20;
+
+/// SimpleFIN's pane: three steps with their links, the token box, then each bank already linked with its state.
+function renderSimpleFIN(panel, state, where) {
+  const input = h("input", { class: "input", placeholder: "Setup token", ...secretAttrs, "aria-label": "SimpleFIN setup token" });
+  panel.append(
+    steps(
+      ["Sign up at ", extLink(BRIDGE), " ($15 a year, or $1.50 a month, paid to SimpleFIN)."],
+      ["Add your banks there. Check that yours are covered first: ", extLink(`${BRIDGE}/search-institutions`), "."],
+      "Create a setup token there and paste it here. It works once: the server trades it for an access address and seals it."),
+    h("div", { class: "secret-row" }, input, button("Link", { kind: "primary", disabled: !state.ready, onclick: (e) => busy(e.currentTarget, "Linking…", async () => {
+      const token = input.value.trim();
+      if (!token) throw new Error("Paste the setup token first.");
+      const result = await api("/v1/links/simplefin", { method: "POST", body: { setupToken: token } });
+      input.value = "";
+      announce(linked(result), where);
+      await afterWrite();
+    }, { errorTarget: where }) })));
+  const links = ((store.summary && store.summary.links) || []).filter((l) => l.provider === "simplefin");
+  if (links.length) panel.append(...links.map((l) => simplefinLinkPanel(l, where)));
+  panel.append(h("p", { class: "help" }, "SimpleFIN gives no warning before a bank wants you to sign in again: the first sync that fails is the signal, and this page and the phone name the bank. ",
+    "SimpleFIN refreshes about once a day, so the server asks a few times a day at most."));
+}
+
+/// One SimpleFIN link: its banks (or the link itself, until the server reports banks), the day's requests, and for a
+/// link SimpleFIN no longer accepts, the box for a new setup token.
+function simplefinLinkPanel(l, where) {
+  const banks = l.banks && l.banks.length ? l.banks
+    : [{ id: l.id, name: l.institution, status: l.status, lastGoodAt: l.lastSync }];
+  const rows = banks.map((b) => {
+    const signIn = b.status === "needsReauth";
+    return h("div", { class: "row" },
+      h("div", { class: "grow" },
+        h("div", { class: "title" }, b.name),
+        h("div", { class: "sub" }, [signIn ? "Needs you to sign in on SimpleFIN Bridge" : "Connected",
+          b.lastGoodAt ? `last good data ${dateTime(b.lastGoodAt)}` : "no data yet"].join(" · "))),
+      signIn ? h("a", { class: "btn secondary compact", href: BRIDGE, target: "_blank", rel: "noopener", "aria-label": `Fix ${b.name} on SimpleFIN Bridge` }, "Fix on SimpleFIN Bridge") : null);
+  });
+  return h("section", { class: "stack", "aria-label": `${l.institution} banks` },
+    h("div", { class: "rows" }, rows),
+    l.requestsToday != null ? h("p", { class: "help" }, `Requests today: ${l.requestsToday} of ${SIMPLEFIN_DAILY_LIMIT}`) : null,
+    simplefinReconnectAction(l, { where }),
+    h("p", { class: "help" }, unlinkNote(l)));
+}
+
+/// For a SimpleFIN link whose access SimpleFIN withdrew: "Paste a new setup token", which keeps the link (and its
+/// accounts and history) and only replaces the sealed access address (PUT /v1/links/:id/token). Null for any other
+/// link. accounts.js can show it in place of the generic Reconnect.
+export function simplefinReconnectAction(l, { where } = {}) {
+  if (l.provider !== "simplefin" || l.errorKind !== "revoked") return null;
+  const input = h("input", { class: "input", placeholder: "New setup token", ...secretAttrs, "aria-label": `New SimpleFIN setup token for ${l.institution}` });
+  return callout({ tone: "act", title: "SimpleFIN no longer accepts this server's access",
+    body: ["Create a new setup token at ", extLink(BRIDGE), " and paste it here. The link keeps its accounts and history."],
+    actions: [h("div", { class: "secret-row" }, input, button("Paste a new setup token", { kind: "primary", compact: true, onclick: (e) => busy(e.currentTarget, "Linking…", async () => {
+      const token = input.value.trim();
+      if (!token) throw new Error("Paste the new setup token first.");
+      const result = await api(`/v1/links/${encodeURIComponent(l.id)}/token`, { method: "PUT", body: { setupToken: token } });
+      input.value = "";
+      announce(reconnected(result), where);
+      if (result.note) toast(result.note);
+      await afterWrite();
+    }, { errorTarget: where }) }))] });
+}
+
+/// What removing a link here doesn't do at the provider, or null. SimpleFIN has no call to revoke an access address,
+/// so the server forgets it and the person removes the app at the Bridge.
+export function unlinkNote(l) {
+  if (l.provider !== "simplefin") return null;
+  return `Removing this link deletes the server's access. To stop SimpleFIN sharing with this server too, remove it from your apps at ${BRIDGE}.`;
 }
 
 /// Left/right arrows move between tabs (the ARIA tabs pattern).

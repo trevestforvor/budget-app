@@ -209,8 +209,6 @@ struct PlaidTokenBody: Decodable {
     /// With `linkID`: update mode asking the person to consent to liabilities (the dashboard's "Grant card-bill access").
     var grantCardBills: Bool? = nil
 }
-struct TellerBody: Decodable { let accessToken: String; let enrollmentID: String?; let institution: String }
-struct TellerTokenBody: Decodable { let accessToken: String; let enrollmentID: String? }
 struct SimpleFINBody: Decodable { let setupToken: String }
 struct ImportBody: Decodable {
     let content: String
@@ -354,7 +352,7 @@ public func buildRouter(_ service: BudgetService, surface: Surface = .api) -> Ro
     return router
 }
 
-// MARK: - Links (Plaid, Teller, SimpleFIN) and sync
+// MARK: - Links (Plaid, SimpleFIN) and sync
 
 func addLinkRoutes(_ router: Router<BasicRequestContext>, _ service: BudgetService) {
     @Sendable func requireSealer() throws -> TokenSealer {
@@ -403,17 +401,6 @@ func addLinkRoutes(_ router: Router<BasicRequestContext>, _ service: BudgetServi
 
     // MARK: - [lane S] SimpleFIN and Teller link routes
 
-    router.post("/v1/links/teller") { request, _ in
-        guard await service.providers.teller() != nil else { throw BudgetAPIError.rejected("Teller isn't set up yet — add its application ID on the dashboard (Connect a bank → Teller).") }
-        let body = try await HTTP.body(TellerBody.self, request)
-        let id = "teller-" + (body.enrollmentID ?? UUID().uuidString)
-        let link = StoredLink(id: id, provider: .teller, institution: body.institution, externalID: body.enrollmentID,
-                              sealedToken: try requireSealer().seal(body.accessToken), cursor: nil, status: .connected,
-                              lastSync: nil, lastError: nil, createdAt: Date())
-        try await service.store.upsertLink(link)
-        return try HTTP.json(try await service.sync.sync(linkID: id, trigger: .afterLink), status: .created)
-    }
-
     router.post("/v1/links/simplefin") { request, _ in
         let body = try await HTTP.body(SimpleFINBody.self, request)
         let accessURL = try await SimpleFINSource.claim(setupToken: body.setupToken)
@@ -425,18 +412,12 @@ func addLinkRoutes(_ router: Router<BasicRequestContext>, _ service: BudgetServi
         return try HTTP.json(try await service.sync.sync(linkID: id, trigger: .afterLink), status: .created)
     }
 
-    // A link id is never "plaid", "teller" or "simplefin" (it's "<provider>-<id>"), so these parameter routes never
+    // A link id is never "plaid" or "simplefin" (it's "<provider>-<id>"), so these parameter routes never
     // meet the static segments above — the router takes a matching static segment and doesn't fall back.
 
     /// Syncs one link now; for a link waiting for a sign-in, a retry. Plaid's reconnect ends here.
     router.post("/v1/links/:id/sync") { _, context in
         try HTTP.json(try await service.sync.sync(linkID: try HTTP.rowID(context), trigger: .personLink))
-    }
-
-    /// Teller's reconnect: the new access token for the enrollment replaces the stored one, then the link syncs.
-    router.put("/v1/links/:id/token") { request, context in
-        let body = try await HTTP.body(TellerTokenBody.self, request)
-        return try HTTP.json(try await service.sync.replaceToken(linkID: try HTTP.rowID(context), accessToken: body.accessToken, enrollmentID: body.enrollmentID))
     }
     // MARK: - [end lane S] SimpleFIN and Teller link routes
 

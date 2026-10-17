@@ -17,7 +17,6 @@ struct DashboardSummary: Encodable {
         var decisionBaseURL: String?
         var modelName: String
         var plaid: String?
-        var teller: Bool
         var jev: Bool
         var linkingEnabled: Bool
         var demoAllowed: Bool
@@ -97,7 +96,7 @@ func addDashboardRoutes(_ router: Router<BasicRequestContext>, _ service: Budget
             database: config.database.map { "Postgres · \($0.host)/\($0.database)" } ?? "In memory (nothing survives a restart)",
             inMemory: config.database == nil,
             modelBaseURL: await live.modelBaseURL?.absoluteString, decisionBaseURL: await live.decisionBaseURL?.absoluteString,
-            modelName: await live.modelName, plaid: (try? await service.providers.plaid())?.environment.rawValue, teller: await service.providers.teller() != nil,
+            modelName: await live.modelName, plaid: (try? await service.providers.plaid())?.environment.rawValue,
             jev: await live.openRouterKey != nil, linkingEnabled: service.sealer != nil, demoAllowed: config.allowDemo,
             syncIntervalHours: await live.syncIntervalHours, timeZone: await live.timeZone.identifier, apiURL: await live.publicURL, cardBills: await live.cardBillsEnabled)
         let imports = try await service.store.imports().sorted { $0.createdAt > $1.createdAt }.map { $0.annotated() }
@@ -121,7 +120,7 @@ func addDashboardRoutes(_ router: Router<BasicRequestContext>, _ service: Budget
         return try HTTP.json(DashboardReviewGroups.build(queue: try await service.api.reviewQueue(), categories: state.categories))
     }
 
-    /// Plaid and Teller setup — what's configured and where from, never a secret. `suggestedRedirectURI`
+    /// Plaid's setup — what's configured and where from, never a secret. `suggestedRedirectURI`
     /// is this dashboard's own URL: registered with Plaid, it lets OAuth banks (Chase, Schwab) finish here.
     router.get("/dash/providers") { request, _ in
         struct Body: Encodable { var providers: ProviderSummary; var suggestedRedirectURI: String? }
@@ -138,24 +137,10 @@ func addDashboardRoutes(_ router: Router<BasicRequestContext>, _ service: Budget
         return try HTTP.json(await service.providers.summary())
     }
 
-    router.put("/dash/providers/teller") { request, _ in
-        struct Body: Decodable { var applicationID: String; var environment: String; var certificatePEM: String?; var keyPEM: String? }
-        let body = try await HTTP.body(Body.self, request)
-        try await service.providers.saveTeller(applicationID: body.applicationID, environment: body.environment,
-                                               certificatePEM: body.certificatePEM, keyPEM: body.keyPEM)
-        await BudgetServerApp.apply(service)
-        return try HTTP.json(await service.providers.summary())
-    }
-
     // Exact paths, not "/dash/providers/:provider": the router matches the static "plaid" segment the PUT
     // registered and never falls back to a parameter route, so a wildcard DELETE answered 404.
     router.delete("/dash/providers/plaid") { _, _ in
         try await service.providers.clearPlaid()
-        await BudgetServerApp.apply(service)
-        return try HTTP.json(await service.providers.summary())
-    }
-    router.delete("/dash/providers/teller") { _, _ in
-        try await service.providers.clearTeller()
         await BudgetServerApp.apply(service)
         return try HTTP.json(await service.providers.summary())
     }
@@ -383,17 +368,18 @@ enum DashboardAssets {
         "icon-180.png": Asset(PackageResources.icon_180_png, "image/png"),
     ]
 
-    /// Scripts only from this server and the two bank-linking CDNs (loaded when you press Link). Styles allow
-    /// inline because Plaid Link and Teller Connect style their own overlays; the dashboard itself uses none
-    /// (a test checks). `frame-ancestors` lets the Olares desktop show the dashboard in its window.
+    /// Scripts only from this server and Plaid's CDN (loaded when you press Link). Styles allow inline because
+    /// Plaid Link styles its own overlay; the dashboard itself uses none (a test checks). Plaid Link needs script,
+    /// connect and frame; nothing loads images from Plaid. `frame-ancestors` lets the Olares desktop show the
+    /// dashboard in its window.
     static let contentSecurityPolicy = [
         "default-src 'self'",
-        "script-src 'self' https://cdn.plaid.com https://*.plaid.com https://cdn.teller.io https://*.teller.io",
+        "script-src 'self' https://cdn.plaid.com https://*.plaid.com",
         "style-src 'self' 'unsafe-inline'",
-        "img-src 'self' data: https://*.plaid.com https://*.teller.io",
+        "img-src 'self' data:",
         "font-src 'self' data:",
-        "connect-src 'self' https://*.plaid.com https://*.teller.io",
-        "frame-src https://*.plaid.com https://teller.io https://*.teller.io",
+        "connect-src 'self' https://*.plaid.com",
+        "frame-src https://*.plaid.com",
         "frame-ancestors 'self' https://*.olares.com https://*.olares.cn https://*.olares.local http://*.olares.local",
         "base-uri 'none'",
         "form-action 'self'",

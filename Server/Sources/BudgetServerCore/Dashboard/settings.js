@@ -5,7 +5,7 @@
 // action at the bottom and never rides the save bar.
 import { fill, h, api, store, heavy, cached, loadCore, pageHead, sectionHead, button, busy, armed, callout, details, tag, afterWrite,
   reportError, toast, plural, ago, duration, dateTime, nextSyncIn, skeleton, loadInto, dot, money, drawer, closeDrawer, secretAttrs } from "./core.js";
-import { plaidForm, tellerForm, removeKeysButton, providerStates } from "./providers.js";
+import { plaidForm, removeKeysButton, providerStates, compareTable } from "./providers.js";
 
 /// Plain names for the server's settings (the server's own label and help are the fallback).
 const LABELS = {
@@ -782,7 +782,7 @@ function combobox(input, what) {
 }
 
 function providerControl(id, onChange) {
-  const form = id === "plaid" ? plaidForm({ onChange }) : tellerForm({ onChange });
+  const form = plaidForm({ onChange });
   return { id, form, el: form.el, changes: () => form.changes(), validate: () => form.validate(), save: () => form.save() };
 }
 
@@ -882,7 +882,7 @@ function removeDataSection() {
     ["ledger", "All transactions and accounts", "The ledger starts empty. Categories, rules and targets go with it."],
     ["links", "Linked banks", "Each is signed out at the bank, so syncing stops."],
     ["imports", "Import and sync history", "Undo stops working for past imports."],
-    ["keys", "Saved Plaid and Teller keys", "Keys from the install settings stay."],
+    ["keys", "Saved Plaid keys", "Keys from the install settings stay."],
   ].map(([id, label, help]) => ({ id, input: h("input", { type: "checkbox", id: `rm-${id}` }), label, help }));
   const confirm = h("input", { class: "input", id: "rm-confirm", autocomplete: "off", spellcheck: "false", placeholder: phrase, "aria-describedby": "rm-help" });
   const result = h("div");
@@ -964,12 +964,12 @@ export default {
     const picks = { ...saved, saved };
     const policy = policyControl(onChange, { picks, hasJevKey: () => !!(cached("models") && cached("models").jev.hasKey) });
     const models = modelsCard({ picks, policy, onChange, otherChanges: () => this.dirty(), rerender: () => this.render(), current: () => this.models });
-    const plaid = providerControl("plaid", onChange), teller = providerControl("teller", onChange);
-    this.providerControls = [plaid, teller];
+    const plaid = providerControl("plaid", onChange);
+    this.providerControls = [plaid];
     this.policy = policy;
     this.models = models;
     this.settingControls = settingControls;
-    this.controls = [models, policy, plaid, teller, ...settingControls];
+    this.controls = [models, policy, plaid, ...settingControls];
     const states = providerStates();
     const sealing = cached("providers") ? cached("providers").providers.sealingAvailable : true;
 
@@ -998,8 +998,8 @@ export default {
           !sealing ? callout({ tone: "watch", title: "The server can't protect saved keys yet", body: "Add an encryption key (BUDGET_TOKEN_KEY) to the server's install settings (budget.env on a Mac, the app's settings on an Olares), then restart it.",
             detail: "Set BUDGET_TOKEN_KEY to the output of: openssl rand -base64 32" }) : null,
           h("div", {},
+            compareTable({ open: false }),
             fold("plaid", "Plaid", states.plaid, plaid.el, removeKeysButton("plaid", () => this.render())),
-            fold("teller", "Teller", states.teller, teller.el, removeKeysButton("teller", () => this.render())),
             fold("simplefin", "SimpleFIN", states.simplefin, h("p", { class: "t-callout muted" }, "SimpleFIN needs no keys here: paste a setup token when you connect a bank."),
               h("a", { class: "btn secondary compact", href: "#/accounts?connect=1" }, "Connect a bank")))),
         columns(phoneSection(byKey.publicURL ? (placed.add("publicURL"), byKey.publicURL) : null, rest("phone")),
