@@ -82,6 +82,7 @@ public struct StoredLink: Codable, Hashable, Sendable {
         summary.holdings = holdings
         plaid?.summaryFields(into: &summary)
         summary.banks = simplefin?.banksSummary()
+        summary.requestsToday = simplefin?.requestsToday(now: Date())  // [lane S] SimpleFIN's daily budget
         return summary
     }
 }

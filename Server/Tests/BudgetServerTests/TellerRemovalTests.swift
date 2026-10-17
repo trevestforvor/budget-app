@@ -50,7 +50,7 @@ struct TellerRemovalTests {
         #expect(csp.contains("img-src 'self' data:;"))
     }
 
-    @Test("Teller's routes are gone: keys, linking and the token swap all answer 404")
+    @Test("Teller's routes are gone: keys and linking answer 404, and the token swap takes no Teller token")
     func routesGone() async throws {
         let (dash, _) = try await TestServer.app(surface: .dashboard)
         try await dash.test(.router) { client in
@@ -59,10 +59,9 @@ struct TellerRemovalTests {
             try await client.execute(uri: "/dash/providers/teller", method: .delete, headers: Self.write) { #expect($0.status == .notFound) }
             try await client.execute(uri: "/v1/links/teller", method: .post, headers: Self.write,
                                      body: TestServer.body(#"{"accessToken":"t","institution":"Harbor"}"#)) { #expect($0.status == .notFound) }
-            // S2 brings this route back for SimpleFIN's {setupToken} only; it then retitles this check: 422 for Plaid and
-            // Teller links, and an {accessToken} body refused.
+            // The token swap is SimpleFIN's only now: a Teller {accessToken} body is refused (SimpleFINSyncTests has the rest).
             try await client.execute(uri: "/v1/links/teller-enr_1/token", method: .put, headers: Self.write,
-                                     body: TestServer.body(#"{"accessToken":"t","enrollmentID":"enr_1"}"#)) { #expect($0.status == .notFound) }
+                                     body: TestServer.body(#"{"accessToken":"t","enrollmentID":"enr_1"}"#)) { #expect($0.status == .badRequest) }
             try await client.execute(uri: "/dash/summary", method: .get) { response in
                 #expect(response.status == .ok)
                 let body = try #require(try JSONSerialization.jsonObject(with: Data(response.body.readableBytesView)) as? [String: Any])

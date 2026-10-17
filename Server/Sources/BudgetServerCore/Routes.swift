@@ -403,7 +403,7 @@ func addLinkRoutes(_ router: Router<BasicRequestContext>, _ service: BudgetServi
 
     router.post("/v1/links/simplefin") { request, _ in
         let body = try await HTTP.body(SimpleFINBody.self, request)
-        let accessURL = try await SimpleFINSource.claim(setupToken: body.setupToken)
+        let accessURL = try await SimpleFINSync.claim(body.setupToken, transport: service.providers.transport)
         let id = "simplefin-" + UUID().uuidString.prefix(8)
         let link = StoredLink(id: id, provider: .simplefin, institution: "SimpleFIN Bridge", externalID: nil,
                               sealedToken: try requireSealer().seal(accessURL.absoluteString), cursor: nil, status: .connected,
@@ -415,9 +415,18 @@ func addLinkRoutes(_ router: Router<BasicRequestContext>, _ service: BudgetServi
     // A link id is never "plaid" or "simplefin" (it's "<provider>-<id>"), so these parameter routes never
     // meet the static segments above — the router takes a matching static segment and doesn't fall back.
 
-    /// Syncs one link now; for a link waiting for a sign-in, a retry. Plaid's reconnect ends here.
+    /// Syncs one link now; for a link waiting for a sign-in, a retry. Plaid's reconnect ends here. One bank's row of a
+    /// SimpleFIN link (`<linkID>~<bank>`, what an app before 0.6.0 sends back) syncs the link.
     router.post("/v1/links/:id/sync") { _, context in
-        try HTTP.json(try await service.sync.sync(linkID: try HTTP.rowID(context), trigger: .personLink))
+        try HTTP.json(try await service.sync.sync(linkID: SimpleFINLinkState.linkID(fromRowID: try HTTP.rowID(context)), trigger: .personLink))
+    }
+
+    /// A SimpleFIN link SimpleFIN stopped accepting: a new setup token, the same link (its accounts and history carry on).
+    /// Answers the sync's result, plus `note` when the accounts came back under new ids.
+    router.put("/v1/links/:id/token") { request, context in
+        let body = try await HTTP.body(SimpleFINBody.self, request)
+        let (result, note) = try await service.sync.replaceSimpleFINToken(linkID: try HTTP.rowID(context), setupToken: body.setupToken)
+        return try HTTP.json(ReplacedToken(result: result, note: note))
     }
     // MARK: - [end lane S] SimpleFIN and Teller link routes
 

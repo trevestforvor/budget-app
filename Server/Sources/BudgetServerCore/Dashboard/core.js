@@ -567,8 +567,14 @@ export function institutionGroups() {
   }
   // [lane S] grouping
   const loose = [];
-  for (const l of links) { const g = groups.get(norm(l.institution)); if (g) g.links.push(l); else loose.push(l); }
-  // SimpleFIN Bridge is one link for several banks, whose accounts carry the banks' own names.
+  for (const l of links) {
+    // SimpleFIN Bridge is one link for several banks. Each bank the server names (banks[], with its accounts) joins
+    // that bank's card as its own view of the link: its status and last good data, the link's id (syncing it syncs
+    // the link), so only the bank that needs a sign-in says so.
+    if (l.provider === "simplefin" && l.banks && l.banks.length) { bridgeBanks(l, groups); continue; }
+    const g = groups.get(norm(l.institution)); if (g) g.links.push(l); else loose.push(l);
+  }
+  // A Bridge whose banks aren't known yet (not synced since 0.6.0): it serves every card of SimpleFIN accounts alone.
   const bridges = loose.filter((l) => l.provider === "simplefin");
   if (bridges.length === 1) {
     const claimed = [...groups.values()].filter((g) => !g.links.length && g.accounts.every((a) => a.source === "simplefin"));
@@ -590,6 +596,28 @@ export function institutionGroups() {
 }
 
 // [lane S] groupState
+/// One SimpleFIN bank as its card sees the link. A link SimpleFIN refused as a whole (a new setup token fixes it)
+/// keeps the link's own state on every card.
+function bankView(l, b) {
+  if (l.status === "needsReauth" || l.errorKind === "revoked") return { ...l, bank: b.name };
+  const signIn = b.status === "needsReauth";
+  return { ...l, bank: b.name, status: b.status, errorKind: signIn ? "needsSignIn" : l.errorKind,
+    lastSync: b.lastGoodAt || l.lastSync,
+    lastError: signIn ? `${b.name} needs you to sign in again on SimpleFIN Bridge.` : l.lastError };
+}
+function bridgeBanks(l, groups) {
+  for (const b of l.banks) {
+    const ids = new Set(b.accountIDs || []);
+    const cards = [...groups.values()].filter((g) => g.accounts.some((a) => ids.has(a.id)));
+    if (!cards.length) {
+      const key = `link:${l.id}~${b.id}`;
+      if (!groups.has(key)) groups.set(key, { key, name: b.name, accounts: [], links: [] });
+      cards.push(groups.get(key));
+    }
+    for (const g of cards) g.links.push(bankView(l, b));
+  }
+}
+
 function groupState(g, hours) {
   // Teller withdrew its API in July 2026: a link stored before then can't sync or reconnect, only be removed (⋯ menu).
   // It never hides another link's problem at the same bank; a group of Teller links only says so.

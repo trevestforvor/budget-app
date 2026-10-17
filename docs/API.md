@@ -384,7 +384,12 @@ Not built yet.
 
 ### Sync health and SimpleFIN
 
-Not built yet.
+- **One row per bank.** A SimpleFIN link that has synced since 0.6.0 is listed in `/v1/status` `institutions` as one row per bank behind it: id `<linkID>~<12 hex>` (never SimpleFIN's own connection id), `institution` the bank's name, `accountIDs` that bank's accounts, `syncLinkID` the link, `reconnect: "providerSite"`. A bank SimpleFIN reports `con.auth` for is `status: "needsReauth"`, `errorKind: "needsSignIn"`, `failingSince`, `reconnectURL: "https://beta-bridge.simplefin.org"`; the link and its other banks stay connected. A link SimpleFIN refuses as a whole (403 or `gen.auth`) is one row, `needsReauth`, `errorKind: "revoked"`, `reconnect: "dashboard"`.
+- **`POST /v1/links/:id/sync`** takes a bank's row id too and syncs its link, so an app that sends a row id back gets a 200.
+- **`PUT /v1/links/:id/token`** `{setupToken}`: a new SimpleFIN setup token for an existing SimpleFIN link. The link keeps its id, accounts and history. Answers the sync's `LinkSyncResult` plus `note` when none of the old account ids came back ("These accounts came in as new ones; your old ones keep their history."). 422 for a link that isn't SimpleFIN's or a token SimpleFIN won't take; 400 for any other body.
+- **Request budget.** Scheduled runs pull at most `simplefinDailyPulls` (default 4) times a day, at least 6 hours apart; between, the link's result is `ok` with `skipped` saying when the next pull runs. The person's syncs run until 20 requests in a rolling 24 hours; past that, `ok: false`, `errorKind: "rateLimited"`, and `error` says when the next pull can run. Each request is logged as `simplefin <linkID>: request N of 20 today (fresh|repair|backfill)`.
+- **Errors.** 403 or `gen.auth` → `revoked`; 402 or `gen.api` → `providerSetup`; the budget → `rateLimited`; anything else → `transient`. `errorCode` is `http-403`, `http-402`, `gen.api`, `budget` or `http-<status>`.
+- **`/v1/links` (dashboard)**: SimpleFIN links carry `banks: [{id, name, status, errorKind?, lastGoodAt?, accountIDs}]` and `requestsToday`.
 
 ### Imports: undo and hide
 
