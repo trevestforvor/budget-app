@@ -4,7 +4,7 @@ import { fill, h, api, store, heavy, pageHead, sectionHead, button, busy, armed,
   institutionGroups, syncProblem, providerDetail, syncNow, describeSync, afterWrite, reportError, toast, rowMoney, plural, dateShort, dateFull,
   dateTime, ago, KIND, SOURCE, TELLER_GONE, emptyState, drawer, closeDrawer } from "./core.js";
 import { needsNewLink, consentDaysLeft, RELINK_OVERLAP } from "./linkerrors.js";
-import { connectPanes, framedNote, linkPlaid, reconnected, announce } from "./providers.js";
+import { connectPanes, framedNote, linkPlaid, reconnected, announce, simplefinReconnectAction } from "./providers.js";
 import { netWorthSection } from "./networth.js";
 import { accountRowExtras, linkDetailsExtras } from "./health.js";
 import { accountMenuItems } from "./accounts-edit.js";
@@ -21,7 +21,12 @@ async function syncInstitution(g, buttonEl) {
 
 /// What the button that repairs a connection says: SimpleFIN's sign-in lives on its own site, so here it's a retry; a
 /// Plaid Item that's gone (or whose access was withdrawn) can only be linked again.
-export const reconnectLabel = (link) => (link.provider === "simplefin" ? "Try again" : needsNewLink(link) ? "Link again" : "Reconnect");
+/// A SimpleFIN link whose access SimpleFIN withdrew takes a new setup token instead (`simplefinReconnectAction`).
+export const reconnectLabel = (link) => (newSetupToken(link) ? "Paste a new setup token" : link.provider === "simplefin" ? "Try again"
+  : needsNewLink(link) ? "Link again" : "Reconnect");
+
+/// SimpleFIN refused this server's access as a whole: a sync can't fix it, a new setup token (PUT /v1/links/:id/token) does.
+const newSetupToken = (link) => link.provider === "simplefin" && link.errorKind === "revoked";
 
 /// Sign in to a bank again without losing its history. Plaid opens Link in update mode for the same Item and then
 /// syncs it (on a working link that's "Renew access": the same update mode, renewing the bank's consent); SimpleFIN is
@@ -30,6 +35,14 @@ export const reconnectLabel = (link) => (link.provider === "simplefin" ? "Try ag
 /// misbehave, so there it points to a full tab instead.
 export async function reconnect(link, buttonEl, where) {
   const flash = where || document.getElementById("flash");
+  if (newSetupToken(link)) {
+    // The field sits on the bank's card (Accounts); from anywhere else, go there.
+    const field = document.querySelector(`[data-setup-token="${CSS.escape(link.id)}"]`);
+    if (!field) { location.hash = "#/accounts"; return; }
+    field.scrollIntoView({ block: "center", behavior: "smooth" });
+    field.focus({ preventScroll: true });
+    return;
+  }
   if (link.provider !== "simplefin" && window.top !== window.self) {
     fill(flash, framedNote());
     flash.scrollIntoView({ block: "nearest", behavior: "smooth" });
@@ -207,7 +220,10 @@ function institutionCard(g, view) {
   const body = h("div", { class: "inst-body" },
     g.accounts.length ? h("div", { class: "rows" }, g.accounts.map((a) => accountRow(a, g)))
       : h("p", { class: "empty-line" }, g.state.problem ? "No accounts came in before the connection stopped." : "Its accounts show up after the first sync."));
-  if (act) {
+  const pasteToken = act ? simplefinReconnectAction(g.state.problem, { where: document.getElementById("flash") }) : null;
+  if (pasteToken) {
+    body.append(pasteToken);
+  } else if (act) {
     body.append(callout({ tone: "act", title: "Further action needed", body: reconnectHelp(g), detail: providerDetail(g.state.problem) }));
     body.append(button(`↻ ${reconnectLabel(g.state.problem)}${g.state.problem.provider === "simplefin" ? "" : ` ${g.name}`}`,
       { class: "btn secondary block", dataset: { reconnect: g.key }, onclick: (e) => reconnect(g.state.problem, e.currentTarget) }));
@@ -266,7 +282,8 @@ export default {
     const connect = button("Connect a bank", { kind: "primary", onclick: () => openDrawer() });
     const linked = groups.filter((g) => g.kind !== "statements"), statements = groups.filter((g) => g.kind === "statements");
     const banners = groups.filter((g) => g.state.tone === "act").map((g) => callout({ tone: "act",
-      title: needsNewLink(g.state.problem) ? `${g.name} needs to be linked again` : `${g.name} needs you to sign in again`,
+      title: needsNewLink(g.state.problem) ? `${g.name} needs to be linked again`
+        : newSetupToken(g.state.problem) ? `SimpleFIN needs a new setup token for ${g.name}` : `${g.name} needs you to sign in again`,
       body: g.state.lastSync ? `Nothing new has come in since ${dateShort(g.state.lastSync)}. Your history is safe.` : "Your history is safe.",
       actions: [button(reconnectLabel(g.state.problem), { compact: true, onclick: (e) => reconnect(g.state.problem, e.currentTarget) })] }));
     banners.push(...consentBanners());

@@ -292,6 +292,16 @@ public actor SyncService {
         link.cardBills = await CardBillSync.refresh(enabled: await settings.cardBillsEnabled, source: source, snapshot: snapshot,
                                                     previous: link.cardBills, requestedByPerson: trigger.retriesSignIn, api: api, now: Date(),
                                                     institution: link.institution, logger: logger)
+        // Holdings come from the daily Item check and HOLDINGS webhooks, never a routine sync. The one exception is the
+        // person's retry, on the same syncs that retry card bills: after Plaid wasn't ready, wanted consent or failed,
+        // one link's sync or a reconnect asks again (`HoldingsSync.isDue`), under the same `auto` rule as the daily check
+        // (from the billed products it stored). Never before a first check has run.
+        if trigger.retriesSignIn, let previous = link.holdings, [.notReady, .needsConsent, .failed].contains(previous.access) {
+            let mode = await settings.holdingsMode
+            let enabled = mode == .on || (mode == .auto && (link.plaid?.billedProducts ?? []).contains("investments"))
+            link.holdings = await HoldingsSync.refresh(enabled: enabled, source: source, previous: previous, requestedByPerson: true,
+                                                       webhookDue: false, api: api, now: Date(), institution: link.institution, logger: logger)
+        }
         return ProviderSyncOutcome(report: report, removed: removed)
     }
 
@@ -358,7 +368,11 @@ public actor SyncService {
         var style = Date.FormatStyle(date: .abbreviated, time: .shortened)
         style.timeZone = await settings.timeZone
         let accounts = await api.accountList()
-        let history = Self.recentSyncs((try? await store.imports()) ?? [])
+        let records = (try? await store.imports()) ?? []
+        let history = Self.recentSyncs(records)
+        // The same read prunes each link's old failed and warning-only records, so the history stays bounded.
+        let prunable = LinkHealthBook.prunableSyncRecords(records)
+        if !prunable.isEmpty { try? await store.deleteImports(prunable) }
         let phoneCapable = await ReconnectMethod.phoneCapable(settings: settings, providers: providers, sealer: sealer)
         let now = Date()
         let rows = links.flatMap { link in

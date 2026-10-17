@@ -149,6 +149,24 @@ struct ConnectionAlertCollectorTests {
         #expect(alerts.first?.linkID == nil)
     }
 
+    @Test("SimpleFIN refusing the server: its own setup push (402 names the subscription), next to Plaid's; a revoked SimpleFIN link asks for a new setup token")
+    func simplefinSetup() throws {
+        var paid = F.link("sfin-a", institution: "SimpleFIN", provider: .simplefin, kind: .providerSetup, since: F.noon)
+        paid.errorCode = SimpleFINError.paymentRequired.code
+        let alerts = ConnectionAlerts.linkAlerts([paid, F.link("plaid-a", kind: .providerSetup, since: F.noon)], now: F.noon)
+        #expect(alerts.count == 2 && alerts.allSatisfy { $0.kind == .providerSetup })
+        let sfin = try #require(alerts.first { $0.episodeKeys.first?.hasPrefix("setup|simplefin|") == true })
+        #expect(sfin.title == "Bank syncing through SimpleFIN has stopped")
+        #expect(sfin.body.contains("subscription"))
+        #expect(!sfin.body.contains("http"))
+        var other = F.link("sfin-b", provider: .simplefin, kind: .providerSetup, since: F.noon)
+        other.errorCode = "gen.api"
+        #expect(ConnectionAlerts.setupAlert([other], provider: .simplefin)?.body.contains("subscription") == false)
+        let revoked = ConnectionAlerts.linkAlerts([F.link("sfin-c", provider: .simplefin, kind: .revoked, since: F.noon)], now: F.noon)
+        #expect(revoked.first?.kind == .revoked)
+        #expect(revoked.first?.body.contains("setup token") == true)
+    }
+
     @Test("Most pressing first: setup, then sign-ins, then dates")
     func order() {
         let alerts = ConnectionAlerts.all(links: [

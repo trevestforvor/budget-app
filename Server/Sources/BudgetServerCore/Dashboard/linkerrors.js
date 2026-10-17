@@ -21,6 +21,7 @@ export function syncProblem(link) {
     case "needsSignIn":
       return "The bank ended this connection and needs you to sign in again.";
     case "revoked":
+      if (link.provider === "simplefin") return "SimpleFIN no longer accepts this server's access. A new setup token keeps the link, its accounts and history.";
       if (plaid && link.errorCode === "ITEM_NOT_FOUND") return "Plaid no longer has this connection. Linking the bank again brings its accounts in as new ones next to these, which keep their history." + RELINK_OVERLAP;
       return "Access to this bank was withdrawn. Linking it again brings its accounts in as new ones next to these, which keep their history." + RELINK_OVERLAP;
     case "providerSetup":

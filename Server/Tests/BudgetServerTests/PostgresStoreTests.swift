@@ -123,6 +123,12 @@ struct PostgresStoreTests {
             let record = ImportRecord(batchID: "b1", kind: .file, linkID: nil, label: "summit.csv", report: IngestReport(batchID: "b1", source: .fileImport), createdAt: Date(), rolledBack: false)
             try await store.upsertImport(record)
             #expect(try await store.imports().map(\.batchID) == ["b1"])
+            // Pruning deletes only the named history entries.
+            var failed = record
+            failed.batchID = "b2-failed-1"; failed.kind = .sync; failed.linkID = "l1"; failed.outcome = .failed
+            try await store.upsertImport(failed)
+            try await store.deleteImports(["b2-failed-1", "missing"])
+            #expect(try await store.imports().map(\.batchID) == ["b1"])
         }
     }
 

@@ -40,7 +40,11 @@ It publishes the API on `127.0.0.1:8080` and the dashboard on `127.0.0.1:8081`, 
 | Restore | `docker compose -f deploy/docker/compose.yaml stop server`, then `docker compose -f deploy/docker/compose.yaml exec -T db pg_restore --clean --if-exists -U budget -d budget < deploy/docker/backups/budget-<date>.dump`, then `start server` |
 | Stop | `docker compose -f deploy/docker/compose.yaml down`. The data stays in the volume; `down -v` deletes it |
 
-**Olares**: the `budgetapi` app is installed from your own Market repo; the chart isn't in this repo ([SERVER.md → Deploy](SERVER.md#deploy)). `./setup.sh server olares` runs `deploy/olares/budgetapi/deploy.sh`, which builds this checkout on the box, backs up the ledger, installs it and restarts the app. It needs `OLARES_SSH` and `APP_NS` in `deploy/olares/budgetapi/deploy.env`. The app's API entrance is the phone's address, so step 5 is already done; its settings are in the Olares app.
+**Olares**: the `budgetapi` app is installed from your own Market repo; the chart isn't in this repo ([SERVER.md → Deploy](SERVER.md#deploy)). `./setup.sh server olares` runs `deploy/olares/budgetapi/deploy.sh`, which builds this checkout on the box, backs up the ledger, installs it and restarts the app. It needs `OLARES_SSH` and `APP_NS` in `deploy/olares/budgetapi/deploy.env`. The app's API entrance is the phone's address, so step 5 is mostly done; its settings are in the Olares app. Two things to check for Plaid's webhooks and signing in again from the phone (server 0.6.0):
+- **The server URL is the API entrance.** Settings → "Server URL for the phone" (`BUDGET_PUBLIC_URL`) must be the public API entrance (`https://<appid>0.<you>.olares.com`), not the dashboard's (`<appid>1`).
+- **The API entrance lets three paths through without the Olares login:** `POST /v1/plaid/webhook` (with its `Plaid-Verification` header), `GET /.well-known/apple-app-site-association` and `GET /plaid/oauth-return`. From outside, the first should answer 400 to an empty POST and the second 200 (404 until `BUDGET_IOS_APP_ID` is set), never the Olares login page ([SERVER.md → Olares and Plaid](SERVER.md#olares-and-plaid-server-060)).
+
+Upgrading an Olares install to 0.6.0 stops the API for a few seconds: `deploy.sh` scales it to 0 before the backup, so no old server writes while the new one upgrades the ledger's ids on its first start.
 
 ## 1. Prerequisites
 
@@ -111,6 +115,8 @@ For an agent: `BUDGET_ADDRESS=caddy BUDGET_DOMAIN=budget.example.com ./setup.sh 
 
 **Check from outside:** with Wi-Fi off, open `https://<address>/health` in the phone's Safari. It should say `"status":"ok"`.
 
+**Plaid and this address (server 0.6.0).** `BUDGET_PUBLIC_URL` is also where Plaid sends its webhooks (`/v1/plaid/webhook`) and where a bank's app hands the phone back after signing in again (`/plaid/oauth-return`, opened as a Universal Link with `/.well-known/apple-app-site-association`). Those three paths carry no bearer token, so whatever serves the address must pass them to the API as they are. Caddy and the Cloudflare tunnel above forward everything on the API port, so they do. With Tailscale, Plaid can't reach the server: webhooks and the phone's reconnect stay off, and the 6-hourly sync and the dashboard's Reconnect work as before. SimpleFIN needs none of this.
+
 ## 6. Link banks
 
 On the dashboard, go to Accounts → **Connect a bank**. Choose either; you can add the other later. The dashboard shows the same comparison above its two tabs.
@@ -128,11 +134,14 @@ On the dashboard, go to Accounts → **Connect a bank**. Choose either; you can 
 - **Plaid.** Use your own [Plaid account](https://dashboard.plaid.com) and enter its client ID and secret on the dashboard.
   - Start in Sandbox, which is free and uses made-up data.
   - Then request the free Trial plan for real banks. It allows 10 bank logins for the life of the account, and removing one doesn't free its slot.
-  - OAuth banks (Chase and others) also need an `https://` redirect URI: [SERVER.md → Plaid step by step](SERVER.md#plaid-step-by-step).
-- **SimpleFIN.** Sign up at [SimpleFIN Bridge](https://beta-bridge.simplefin.org), add your banks there (check yours at https://beta-bridge.simplefin.org/search-institutions), then create a setup token and paste it in. The dashboard lists each bank behind the token, and a bank that wants you to sign in again is fixed on SimpleFIN Bridge, then retried from the dashboard or the phone. SimpleFIN gives no warning before that happens; the first failed sync is the signal. SimpleFIN refreshes about once a day and allows about 24 requests a day, so the server pulls at most four times a day on its schedule and stops at 20 requests in any 24 hours; the first sync also brings about a year of history, and older history follows over the next day or two, as far back as SimpleFIN has it (two years at most). Removing the link on the dashboard deletes the server's access; remove the app at SimpleFIN Bridge too, to stop the sharing there.
+  - OAuth banks (Chase and others) also need an `https://` redirect URI: the dashboard's own address, shown prefilled ([SERVER.md → Plaid step by step](SERVER.md#plaid-step-by-step)).
+  - To sign in to a bank again from the phone (server 0.6.0, optional), also add `https://<your API address>/plaid/oauth-return` to the allowed redirect URIs in the [Plaid Dashboard](https://dashboard.plaid.com/team/api), exactly as written, and set `BUDGET_IOS_APP_ID` (`<TEAMID>.<bundle id>`) in the install settings. The app needs Associated Domains and `BUDGET_API_HOST` ([INSTALL-APP.md](INSTALL-APP.md)). Without them, a bank that wants a sign-in is fixed on the dashboard.
+  - Investment holdings follow Settings → Sync → Investment holdings (`BUDGET_PLAID_HOLDINGS`): `auto` (the default) only for bank logins Plaid already bills for Investments, `on` for every login with investments (Plaid may start billing Investments on the others), `off` for none.
+  - One Plaid link per bank: the dashboard and the server refuse a second one at a bank that already has a working link, because each is a separate (and on the Trial, irreversible) Item. Use Reconnect on the existing one.
+- **SimpleFIN.** Sign up at [SimpleFIN Bridge](https://beta-bridge.simplefin.org), add your banks there (check yours at https://beta-bridge.simplefin.org/search-institutions), then create a setup token and paste it in. The dashboard lists each bank behind the token, and a bank that wants you to sign in again is fixed on SimpleFIN Bridge, then retried from the dashboard or the phone. SimpleFIN gives no warning before that happens; the first failed sync is the signal. SimpleFIN refreshes about once a day and allows about 24 requests a day, so the server pulls at most four times a day on its schedule (Settings → Sync → "SimpleFIN pulls a day", `BUDGET_SIMPLEFIN_DAILY_PULLS`, 1–20) and stops at 20 requests in any 24 hours; the first sync also brings about a year of history, and older history follows over the next day or two, as far back as SimpleFIN has it (two years at most). Removing the link on the dashboard deletes the server's access; remove the app at SimpleFIN Bridge too, to stop the sharing there. If SimpleFIN stops accepting the server's access altogether, the bank's card asks for a new setup token, which keeps the link, its accounts and history.
 - **Statements.** CSV or OFX/QFX files go in under Imports, to fill in history from before a link's reach. Each import can be undone.
 
-Linked accounts sync every 6 hours (`BUDGET_SYNC_INTERVAL_HOURS`), and **Sync now** pulls right away.
+Linked accounts sync every 6 hours (`BUDGET_SYNC_INTERVAL_HOURS`, from 0.25 to 24), and **Sync now** pulls right away. An account that goes 2 days without a good pull shows as stale. Banks are added and removed only on the dashboard: from 0.6.0 the phone's token can sync, sign in again and import files, but can't add or remove a bank link or erase data.
 
 ## 7. AI (optional)
 

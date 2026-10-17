@@ -167,6 +167,23 @@ enum LinkHealthBook {
         return Set(report.warnings) != (await lastRecordedWarnings())
     }
 
+    /// How many sync records that wrote no rows (failed, or warnings only) each link keeps; older ones are pruned.
+    static let rowFreeRecordsKept = 50
+
+    /// Sync records that wrote no rows (a failure, or warnings only: each has an id of its own, `-failed-` /
+    /// `-warning-`) beyond each link's newest `keep`. A record whose batch wrote rows is the unit of Undo and is never
+    /// pruned here, nor is a file import. A failing link backs off to every 6 hours, so without this its failures alone
+    /// would add about 1,500 records a year.
+    static func prunableSyncRecords(_ records: [ImportRecord], keep: Int = rowFreeRecordsKept) -> [String] {
+        let rowFree = records.filter { r in
+            r.kind == .sync && r.linkID != nil && r.report.rowsAdded + r.report.rowsUpdated == 0
+                && (r.outcome == .failed || r.batchID.contains("-failed-") || r.batchID.contains("-warning-"))
+        }
+        return Dictionary(grouping: rowFree) { $0.linkID ?? "" }.values.flatMap { list in
+            list.sorted { $0.createdAt > $1.createdAt }.dropFirst(keep).map(\.batchID)
+        }
+    }
+
     /// The warnings on the link's newest recorded sync: none when that one failed (a warning back after a failure is
     /// recorded again).
     static func lastRecordedWarnings(_ records: [ImportRecord], linkID: String) -> Set<String> {

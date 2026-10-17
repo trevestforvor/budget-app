@@ -100,6 +100,31 @@ extension NetWorthRouteTests {
         #expect(plaid.count(HoldingsScript.path) == 2)
     }
 
+    @Test("After Plaid wasn't ready, one link's sync asks for holdings again; a scheduled or sync-everything run doesn't")
+    func personRetryAsksAfterNotReady() async throws {
+        let plaid = CrossLaneScript.provider()
+        let f = try await ItemCheckTests.fixture(plaid, holdings: "auto", realHoldings: true)
+        #expect(try await f.service.sync.sync(linkID: ItemCheckTests.id, trigger: .personLink).ok)
+        #expect(await f.maintenance.checkDueItems() == 1)
+        #expect(plaid.count(HoldingsScript.path) == 1)
+        // Plaid said not ready an hour ago.
+        var link = try await f.link()
+        link.holdings = HoldingsCheck(access: .notReady, checkedAt: ItemCheckTests.start)
+        try await f.service.store.upsertLink(link)
+        f.clock.set(ItemCheckTests.start.addingTimeInterval(3600))
+
+        _ = await f.service.sync.syncAll()
+        _ = await f.service.sync.syncAll(trigger: .person)
+        #expect(plaid.count(HoldingsScript.path) == 1, "neither the schedule nor sync-everything retries holdings")
+
+        #expect(try await f.service.sync.sync(linkID: ItemCheckTests.id, trigger: .personLink).ok)
+        #expect(plaid.count(HoldingsScript.path) == 2)
+        #expect(try await f.link().holdings?.access == .ok)
+        // Once they came, another sync of the link doesn't ask again.
+        #expect(try await f.service.sync.sync(linkID: ItemCheckTests.id, trigger: .personLink).ok)
+        #expect(plaid.count(HoldingsScript.path) == 2)
+    }
+
     @Test("A HOLDINGS webhook makes holdings due: the Item check it starts asks the same day")
     func webhookMarkMakesHoldingsDue() async throws {
         let plaid = CrossLaneScript.provider()

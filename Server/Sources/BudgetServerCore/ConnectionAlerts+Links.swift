@@ -8,9 +8,10 @@ extension ConnectionAlerts {
     static let pendingDisconnectNotice: TimeInterval = 7 * 86_400
 
     /// The pushes the links call for now: a sign-in needed or access withdrawn (one per failure run), consent running out
-    /// (about 14 and 7 days ahead), and the server's Plaid setup refused (one per run, however many links it stops).
+    /// (about 14 and 7 days ahead), and the server's Plaid setup or SimpleFIN subscription refused (one per provider
+    /// per run, however many links it stops).
     /// `timeZone` is the phone's, for the date in the copy. `reconnect` is how each link is repaired, the same answer
-    /// `LinkSummary.reconnect` gives: only `.phone` makes a tap open signing in again. Never an amount, an account mask or a URL.
+    /// `InstitutionLink.reconnect` gives: only `.phone` makes a tap open signing in again. Never an amount, an account mask or a URL.
     static func linkAlerts(_ links: [StoredLink], now: Date, timeZone: TimeZone = utc,
                            reconnect: (StoredLink) -> ReconnectMethod = { ReconnectMethod.for($0, phoneCapable: false) }) -> [ConnectionAlert] {
         var alerts: [ConnectionAlert] = []
@@ -24,7 +25,7 @@ extension ConnectionAlerts {
                 alerts.append(alert)
             }
         }
-        if let alert = setupAlert(links) { alerts.append(alert) }
+        alerts += [SourceKind.plaid, .simplefin].compactMap { setupAlert(links, provider: $0) }
         return alerts
     }
 
@@ -33,6 +34,12 @@ extension ConnectionAlerts {
     static func signInAlert(_ link: StoredLink, fromPhone: Bool) -> ConnectionAlert? {
         guard LinkHealthBook.waitsForPerson(link), let since = link.firstFailedAt else { return nil }
         let key = signInKey(linkID: link.id, firstFailedAt: since)
+        if link.errorKind == .revoked, link.provider == .simplefin {
+            // A new setup token keeps the link, its accounts and history (PUT /v1/links/:id/token), unlike a Plaid relink.
+            return ConnectionAlert(kind: .revoked, episodeKeys: [key], title: "SimpleFIN stopped accepting this server",
+                                   body: "Paste a new SimpleFIN setup token on the Budget dashboard. The link keeps its accounts and history.",
+                                   linkID: link.id)
+        }
         if link.errorKind == .revoked {
             return ConnectionAlert(kind: .revoked, episodeKeys: [key], title: "\(link.institution) stopped sharing with Budget",
                                    body: "Link it again on the Budget dashboard. Its accounts come back as new ones; the old ones keep their history.",
@@ -76,15 +83,22 @@ extension ConnectionAlerts {
                                linkID: link.id, opensReconnect: fromPhone)
     }
 
-    /// The server's Plaid keys or setup refused: one push however many links it stops. Every stopped link's run is a key,
-    /// the earliest first: links fail and heal one by one, and the sender carries the later ones with the first, so the
-    /// earliest link healing first (or a link joining late) doesn't read as a new outage.
-    static func setupAlert(_ links: [StoredLink]) -> ConnectionAlert? {
-        let starts = links.filter { $0.provider == .plaid && $0.errorKind == .providerSetup }.compactMap(\.firstFailedAt).sorted()
+    /// The server's Plaid keys or setup refused, or SimpleFIN refusing this server (402: the subscription needs attention;
+    /// `gen.api`): one push per provider however many links it stops. Every stopped link's run is a key, the earliest
+    /// first: links fail and heal one by one, and the sender carries the later ones with the first, so the earliest link
+    /// healing first (or a link joining late) doesn't read as a new outage.
+    static func setupAlert(_ links: [StoredLink], provider: SourceKind = .plaid) -> ConnectionAlert? {
+        let stopped = links.filter { $0.provider == provider && $0.errorKind == .providerSetup }
+        let starts = stopped.compactMap(\.firstFailedAt).sorted()
         guard !starts.isEmpty else { return nil }
         var keys: [String] = []
-        for key in starts.map({ setupKey(provider: .plaid, firstFailedAt: $0) }) where !keys.contains(key) { keys.append(key) }
-        return ConnectionAlert(kind: .providerSetup, episodeKeys: keys, title: "Bank syncing through Plaid has stopped",
-                               body: "The server's Plaid setup was refused. Check it on the Budget dashboard.")
+        for key in starts.map({ setupKey(provider: provider, firstFailedAt: $0) }) where !keys.contains(key) { keys.append(key) }
+        let body = switch provider {
+        case .simplefin where stopped.contains(where: { $0.errorCode == SimpleFINError.paymentRequired.code }):
+            "SimpleFIN says the subscription needs attention. Renew it on SimpleFIN Bridge, then sync on the Budget dashboard."
+        case .simplefin: "SimpleFIN is refusing this server's requests. Check it on the Budget dashboard."
+        default: "The server's Plaid setup was refused. Check it on the Budget dashboard."
+        }
+        return ConnectionAlert(kind: .providerSetup, episodeKeys: keys, title: "Bank syncing through \(provider == .simplefin ? "SimpleFIN" : provider.displayName) has stopped", body: body)
     }
 }

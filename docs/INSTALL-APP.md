@@ -64,6 +64,7 @@ The app keeps both in the Keychain. You can change them later in Settings → Ad
 ## After it's connected
 
 - **Morning summary:** in the app's Settings, once the server's Notifications settings are filled in ([INSTALL-SERVER.md step 8](INSTALL-SERVER.md#8-morning-summary-optional)). The server needs the app's bundle ID, `<your prefix>.budget`.
+- **Signing in to a Plaid bank again from the phone (server 0.6.0, optional):** set `BUDGET_API_HOST` in `Config/Local.xcconfig` to the host of the server URL (no `https://`), turn on Associated Domains for the app's identifier at https://developer.apple.com/account/resources/identifiers/list (automatic signing can add it), then `xcodegen generate` and build again. The server needs `BUDGET_IOS_APP_ID` (`<team ID>.<your prefix>.budget`) and `https://<host>/plaid/oauth-return` in Plaid's allowed redirect URIs ([INSTALL-SERVER.md step 6](INSTALL-SERVER.md#6-link-banks)). Without the host, the build has no app links and a bank that wants a sign-in is fixed on the dashboard instead. Adding or removing a bank is always done on the dashboard.
 - **App lock:** Settings → Privacy & security → Face ID lock.
 - **Check a price:** the Action button and the camera price scanner show a price in hours of work.
 

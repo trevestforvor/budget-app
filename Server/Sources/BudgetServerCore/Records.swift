@@ -205,12 +205,18 @@ public protocol ServerStore: LedgerPersistence {
     func imports() async throws -> [ImportRecord]
     func upsertImport(_ record: ImportRecord) async throws
     func clearImports() async throws
+    /// Deletes these import records (only the history entry; rows are never touched). Used to prune sync records that
+    /// wrote no rows (`LinkHealthBook.prunableSyncRecords`).
+    func deleteImports(_ batchIDs: [String]) async throws
     /// Settings saved from the dashboard, one JSON document per key (nil = none saved).
     func setting(_ key: String) async throws -> Data?
     func saveSetting(_ key: String, _ document: Data) async throws
 }
 
 extension ServerStore {
+    /// A store that can't delete history entries keeps them (pruning is housekeeping, never correctness).
+    public func deleteImports(_ batchIDs: [String]) async throws {}
+
     public func providerSettings() async throws -> StoredProviderSettings? {
         try await setting("providers").map { try JSONDecoder().decode(StoredProviderSettings.self, from: $0) }
     }
@@ -252,6 +258,7 @@ public actor MemoryStore: ServerStore {
     public func imports() async throws -> [ImportRecord] { importTable.values.sorted { $0.createdAt > $1.createdAt } }
     public func upsertImport(_ record: ImportRecord) async throws { importTable[record.batchID] = record }
     public func clearImports() async throws { importTable = [:] }
+    public func deleteImports(_ batchIDs: [String]) async throws { for id in batchIDs { importTable[id] = nil } }
     public func setting(_ key: String) async throws -> Data? { settings[key] }
     public func saveSetting(_ key: String, _ document: Data) async throws { settings[key] = document }
 }

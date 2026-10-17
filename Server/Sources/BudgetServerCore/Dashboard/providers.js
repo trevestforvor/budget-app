@@ -363,10 +363,11 @@ function simplefinLinkPanel(l, where, { named = false } = {}) {
 
 /// For a SimpleFIN link whose access SimpleFIN withdrew: "Paste a new setup token", which keeps the link (and its
 /// accounts and history) and only replaces the sealed access address (PUT /v1/links/:id/token). Null for any other
-/// link. accounts.js can show it in place of the generic Reconnect.
+/// link. accounts.js shows it on the bank's card in place of the generic Try again, and its Reconnect buttons focus it.
 export function simplefinReconnectAction(l, { where } = {}) {
   if (l.provider !== "simplefin" || l.errorKind !== "revoked") return null;
-  const input = h("input", { class: "input", placeholder: "New setup token", ...secretAttrs, "aria-label": `New SimpleFIN setup token for ${l.institution}` });
+  const input = h("input", { class: "input", placeholder: "New setup token", ...secretAttrs, dataset: { setupToken: l.id },
+    "aria-label": `New SimpleFIN setup token for ${l.institution}` });
   return callout({ tone: "act", title: "SimpleFIN no longer accepts this server's access",
     body: ["Create a new setup token at ", extLink(BRIDGE), " and paste it here. The link keeps its accounts and history."],
     actions: [h("div", { class: "secret-row" }, input, button("Paste a new setup token", { kind: "primary", compact: true, onclick: (e) => busy(e.currentTarget, "Replacing…", async () => {

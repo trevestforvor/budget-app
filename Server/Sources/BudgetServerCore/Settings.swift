@@ -277,7 +277,8 @@ public actor ServerSettings {
               help: "Ask OpenRouter to route only to providers that keep nothing: Jev's requests, and a chat model's on OpenRouter.",
               configValue: { $0.openRouterZeroRetention ? "true" : "false" }, builtInDefault: "false"),
         .init(key: "syncIntervalHours", group: "Sync", label: "Sync every (hours)", kind: .number, environmentVariable: "BUDGET_SYNC_INTERVAL_HOURS",
-              help: "How often linked accounts are pulled. At least 0.25.", configValue: { String($0.syncIntervalHours) }, builtInDefault: "6.0"),
+              help: "How often linked accounts are pulled: from 0.25 to 24. An account counts as stale after 2 days without a good pull, so a longer gap would mark accounts stale between syncs.",
+              configValue: { String($0.syncIntervalHours) }, builtInDefault: "6.0", range: 0.25...Double(maxSyncIntervalHours)),
         .init(key: "cardBills", group: "Sync", label: "Card bills (Plaid Liabilities)", kind: .bool, environmentVariable: "BUDGET_PLAID_LIABILITIES",
               help: "Reads each Plaid-linked credit card's statement balance, minimum payment and due date, about once a day, for Upcoming and the morning summary. Plaid bills Liabilities per bank login once it's used, so it's off until you turn it on. A bank linked before needs one \"Grant card-bill access\" sign-in on Accounts; nothing is relinked or removed.",
               configValue: { $0.plaidLiabilities ? "true" : "false" }, builtInDefault: "false"),
@@ -425,7 +426,11 @@ public actor ServerSettings {
     public var decisionAPIKey: String? { decisionConnection.key }
     public var openRouterKey: String? { value("openRouterKey") }
     public var openRouterZeroRetention: Bool { value("openRouterZeroRetention") == "true" }
-    public var syncIntervalHours: Double { max(Double(value("syncIntervalHours") ?? "") ?? 6, 0.25) }
+    /// Between 15 minutes and a day, wherever it was set: an account is stale after 2 days without a good pull
+    /// (`AccountHealth`), so a scheduled gap of 2 days or more would mark accounts stale between syncs. A value saved
+    /// above 24 (0.5.x allowed a week) reads as 24.
+    public var syncIntervalHours: Double { min(max(Double(value("syncIntervalHours") ?? "") ?? 6, 0.25), Double(Self.maxSyncIntervalHours)) }
+    public static let maxSyncIntervalHours = 24
     public var timeZone: TimeZone { value("timeZone").flatMap(TimeZone.init(identifier:)) ?? config.timeZone }
     public var publicURL: String? { value("publicURL") }
     public var dashboardURL: String? { value("dashboardURL") }

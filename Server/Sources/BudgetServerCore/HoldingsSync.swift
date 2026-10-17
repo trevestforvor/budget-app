@@ -40,7 +40,7 @@ public enum HoldingsAccess: String, Codable, Hashable, Sendable {
 }
 
 /// Positions in investment accounts from Plaid Investments: once a day per Item, on a HOLDINGS webhook, or when a caller
-/// says the person asked after a failure (only the daily check and the webhook call it today) — never on every sync.
+/// says the person asked after a failure (one link's sync or a reconnect, `SyncService.syncPlaid`) — never on every sync.
 /// Best effort, like card bills: it never fails anything. It only reads: it never removes, replaces or re-links an Item,
 /// and never starts Link.
 enum HoldingsSync {

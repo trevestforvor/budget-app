@@ -241,6 +241,12 @@ public final class PostgresStore: ServerStore, Sendable {
         try await client.query("DELETE FROM budget_imports", logger: logger)
     }
 
+    public func deleteImports(_ batchIDs: [String]) async throws {
+        for id in batchIDs {
+            try await client.query("DELETE FROM budget_imports WHERE batch_id = \(id)", logger: logger)
+        }
+    }
+
     // MARK: Settings
 
     public func setting(_ key: String) async throws -> Data? {
