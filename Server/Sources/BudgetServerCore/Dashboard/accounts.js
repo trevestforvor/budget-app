@@ -102,9 +102,8 @@ async function removeLink(link) {
 // MARK: Rendering
 
 function accountRow(a, g) {
-  const stale = g.state.tone === "act" || g.state.stale;
-  const sub = [KIND[a.kind] || a.kind, a.kind === "investment" ? "balance only" : null,
-    stale && g.state.lastSync ? `balance as of ${dateShort(g.state.lastSync)}` : null].filter(Boolean).join(" · ");
+  // "balance as of" and a stale tag come per account from health.js.
+  const sub = [KIND[a.kind] || a.kind, a.kind === "investment" ? "balance only" : null].filter(Boolean).join(" · ");
   return h("div", { class: "row" },
     h("div", { class: "grow" }, h("div", { class: "title" }, a.name, a.mask ? h("span", { class: "mask" }, ` ••${a.mask}`) : null), h("div", { class: "sub" }, sub),
       accountRowExtras(a, g)),

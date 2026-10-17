@@ -1,15 +1,63 @@
 import Foundation
 
 extension Ledger {
-    /// How fresh each synced account is (`Overview.accountHealth`). Nil until sync health is built.
-    func accountHealth(institutions: [InstitutionLink]) -> [AccountHealth]? { nil }
+    /// How fresh each account is (`Overview.accountHealth`), in the ledger's order. A synced account is current until
+    /// two days pass without a clean pull of it (`Account.lastSyncedAt`), then stale; one under a row waiting for a
+    /// sign-in is `waitingForSignIn` instead (that row has its own push and repair button). A statement account is
+    /// overdue once its newest row is older than a month's statement plus time to import it. An account no link brings
+    /// any more, or one not pulled cleanly since the server started stamping (0.6.0), is `notSynced`.
+    /// - Parameter institutions: the deployment's links; which accounts each holds is worked out as the phone sees it.
+    func accountHealth(institutions: [InstitutionLink]) -> [AccountHealth]? {
+        // A row waiting for a sign-in wins over another that also names the account.
+        var holder: [String: InstitutionLink] = [:]
+        for row in institutionLinks(institutions) where row.primary != .fileImport {
+            for id in row.accountIDs ?? [] where holder[id] == nil || row.status == .needsReauth { holder[id] = row }
+        }
+        var newest: [String: Date] = [:]
+        for row in transactions where row.postedAt > newest[row.accountID] ?? .distantPast { newest[row.accountID] = row.postedAt }
+        return accounts.map { account in
+            if account.source == .fileImport {
+                // By day, as the quiet rule counts it, so both call the same statement overdue.
+                guard let latest = newest[account.id].map(calendar.startOfDay) else { return AccountHealth(id: account.id, state: .notSynced) }
+                let due = latest.addingTimeInterval(Self.statementStaleAfterDays * 86_400)
+                return AccountHealth(id: account.id, state: now > due ? .statementsOverdue : .current, lastGoodSync: latest,
+                                     balanceAsOf: account.balanceAsOf, staleSince: now > due ? due : nil)
+            }
+            var health = AccountHealth(id: account.id, state: .notSynced, lastGoodSync: account.lastSyncedAt, balanceAsOf: account.balanceAsOf)
+            guard let row = holder[account.id] else { return health }
+            if row.status == .needsReauth {
+                health.state = .waitingForSignIn
+            } else if let synced = account.lastSyncedAt {
+                let due = synced.addingTimeInterval(Self.syncStaleAfterDays * 86_400)
+                health.state = now > due ? .stale : .current
+                health.staleSince = now > due ? due : nil
+            }
+            return health
+        }
+    }
 
-    /// Each checking, savings or card account whose newest transaction is older than its own rhythm allows — for an
-    /// account that only comes from statements, once the next statement is overdue. After `linkAttention` in
-    /// `dataHealth`.
+    /// Each synced account not pulled cleanly for two days (`sync-stale-<id>`, reason `.syncStale`: we haven't heard
+    /// from the bank), then each checking, savings or card account whose newest transaction is older than its own rhythm
+    /// allows (`stale-<id>`, reason `.quiet`: the bank is quiet) — for an account that only comes from statements, once
+    /// the next statement is overdue. An account already stale, or waiting for a sign-in, isn't called quiet too. After
+    /// `linkAttention` in `dataHealth`.
     func staleAttention(_ institutions: [InstitutionLink]) -> [DataAttention] {
         let reauth = institutions.filter { $0.status == .needsReauth }
         var result: [DataAttention] = []
+        var dayStyle = Date.FormatStyle.dateTime.month(.abbreviated).day()
+        dayStyle.timeZone = calendar.timeZone
+        let health = Dictionary((accountHealth(institutions: institutions) ?? []).map { ($0.id, $0) }, uniquingKeysWith: { first, _ in first })
+        let rows = institutionLinks(institutions)
+        for account in accounts {
+            guard let item = health[account.id], item.state == .stale, let since = item.lastGoodSync else { continue }
+            let row = rows.first { $0.primary != .fileImport && $0.accountIDs?.contains(account.id) == true }
+            result.append(DataAttention(
+                id: "sync-stale-\(account.id)", kind: .stale,
+                title: "\(Self.fullName(account)) hasn't updated since \(since.formatted(dayStyle)).",
+                detail: "Its bank hasn't come through in over \(Int(Self.syncStaleAfterDays)) days, so its balance and transactions may be behind. Sync it, or check the connection on the Budget dashboard.",
+                institution: account.institution, accountID: account.id, reason: .syncStale, linkID: row.map { $0.syncLinkID ?? $0.id }))
+        }
+        let unheard = Set(health.values.filter { $0.state == .stale || $0.state == .waitingForSignIn }.map(\.id))
         // An institution waiting for a sign-in already says why its accounts went quiet.
         let paused = Set(reauth.map { Self.institutionKey($0.institution) })
         // One that synced cleanly in the last few days is being heard from, so a quiet account there with nothing on
@@ -20,9 +68,7 @@ extension Ledger {
         }.map { Self.institutionKey($0.institution) })
         var days: [String: Set<Date>] = [:]
         for row in transactions { days[row.accountID, default: []].insert(calendar.startOfDay(for: row.postedAt)) }
-        var dayStyle = Date.FormatStyle.dateTime.month(.abbreviated).day()
-        dayStyle.timeZone = calendar.timeZone
-        for account in accounts where account.kind != .investment && !paused.contains(Self.institutionKey(account.institution)) {
+        for account in accounts where account.kind != .investment && !paused.contains(Self.institutionKey(account.institution)) && !unheard.contains(account.id) {
             guard let active = days[account.id]?.sorted(), let latest = active.last else { continue }
             let gaps = zip(active.dropFirst(), active).map { $0.timeIntervalSince($1) / 86_400 }.sorted()
             let fromFiles = account.source == .fileImport
@@ -34,17 +80,20 @@ extension Ledger {
                 title: "Nothing new from \(Self.fullName(account)) since \(latest.formatted(dayStyle)).",
                 detail: fromFiles ? "Its transactions come from statements. Import a newer one on the Budget dashboard."
                                   : "It's still connected, but no transactions have arrived. Sync it, or check the connection on the Budget dashboard.",
-                institution: account.institution, accountID: account.id))
+                institution: account.institution, accountID: account.id, reason: .quiet))
         }
         return result
     }
 
     /// An account is stale once its newest row is at least this many days old (or three of its usual gaps, if longer).
     static let staleAfterDays: Double = 10
-    /// A statement-only account can't be newer than its last statement: it's stale once a month's statement plus a
-    /// week to import it has passed since its newest row. (The dashboard's coverage is a different, later signal: it
-    /// flags a calendar month with no rows at all once the 7th of the next month has passed.)
-    static let statementStaleAfterDays: Double = 38
+    /// A statement-only account can't be newer than its last statement: it's stale once a month's statement plus about
+    /// ten days to import it has passed since its newest row, here and in sync health (`statementsOverdue`). (The
+    /// dashboard's coverage is a different, later signal: it flags a calendar month with no rows at all once the 7th of
+    /// the next month has passed.)
+    static let statementStaleAfterDays: Double = 40
+    /// A synced account is stale once this many days pass without a clean pull of it (`AccountHealth.State.stale`).
+    static let syncStaleAfterDays: Double = 2
     /// A link that synced without an error this recently counts as heard from.
     static let recentSyncDays: Double = 3
 }

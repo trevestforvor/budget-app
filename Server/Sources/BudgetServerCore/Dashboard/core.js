@@ -618,6 +618,18 @@ function bridgeBanks(l, groups) {
   }
 }
 
+/// One account's freshness from the overview (`accountHealth`, server 0.6.0): current, stale, waitingForSignIn,
+/// statementsOverdue or notSynced. Null when the overview hasn't loaded.
+export function accountHealth(id) {
+  const list = (store.overview && store.overview.accountHealth) || [];
+  return list.find((x) => x.id === id) || null;
+}
+
+/// A failing link's words by its error kind; the provider's own text stays under Details.
+const FAILING = {
+  providerSetup: "the server's provider setup needs fixing", rateLimited: "rate limited, retrying later", transient: "last sync failed, retrying",
+};
+
 function groupState(g, hours) {
   // Teller withdrew its API in July 2026: a link stored before then can't sync or reconnect, only be removed (⋯ menu).
   // It never hides another link's problem at the same bank; a group of Teller links only says so.
@@ -628,16 +640,31 @@ function groupState(g, hours) {
   }
   const tellerNote = live.length < g.links.length ? "remove the old Teller link (Teller has shut down)" : null;
   const via = [...new Set(live.map((l) => SOURCE[l.provider] || l.provider))].join(" and ");
-  const reauth = live.find((l) => l.status === "needsReauth");
+  const reauth = live.find((l) => l.status === "needsReauth" || l.errorKind === "revoked");
   if (reauth) return { tone: "act", label: "Needs sign-in", detail: [lastSync ? `last updated ${dateShort(lastSync)}` : null, via && `via ${via}`, tellerNote], lastSync, problem: reauth };
-  const failing = live.find((l) => l.lastError);
-  if (failing) return { tone: "watch", label: lastSync ? `Updated ${ago(lastSync)}` : "Hasn't synced yet", detail: [via && `via ${via}`, "last sync failed, retrying", tellerNote], lastSync, problem: failing };
+  const failing = live.find((l) => l.lastError || (l.errorKind && l.errorKind !== "needsSignIn"));
+  if (failing) {
+    return { tone: "watch", label: lastSync ? `Updated ${ago(lastSync)}` : "Hasn't synced yet",
+      detail: [via && `via ${via}`, FAILING[failing.errorKind] || FAILING.transient, tellerNote], lastSync, problem: failing };
+  }
+  // Behind is the accounts' own health (no clean pull in 2 days; a statement overdue after 40), not a guess from the
+  // link's time.
+  const health = g.accounts.map((a) => accountHealth(a.id)).filter(Boolean);
   if (g.kind === "linked") {
     if (!lastSync) return { tone: tellerNote ? "watch" : "neutral", label: "Waiting for the first sync", detail: [via && `via ${via}`, tellerNote] };
-    const stale = Date.now() - new Date(lastSync) > (2 * hours + 1) * 3600 * 1000;
-    return { tone: stale || tellerNote ? "watch" : "ok", label: `Updated ${ago(lastSync)}`, detail: [via && `via ${via}`, tellerNote], lastSync, stale };
+    const stale = health.filter((x) => x.state === "stale");
+    if (stale.length) {
+      const since = stale.map((x) => x.lastGoodSync).filter(Boolean).sort()[0] || lastSync;
+      return { tone: "watch", label: `Updated ${ago(lastSync)}`,
+        detail: [via && `via ${via}`, stale.length === g.accounts.length ? `nothing new since ${dateShort(since)}` : `${plural(stale.length, "account")} behind since ${dateShort(since)}`, tellerNote],
+        lastSync: since, stale: true };
+    }
+    return { tone: tellerNote ? "watch" : "ok", label: `Updated ${ago(lastSync)}`, detail: [via && `via ${via}`, tellerNote], lastSync };
   }
-  if (g.kind === "statements") return { tone: "neutral", label: "From statements you import", detail: [] };
+  if (g.kind === "statements") {
+    const overdue = health.some((x) => x.state === "statementsOverdue");
+    return { tone: overdue ? "watch" : "neutral", label: "From statements you import", detail: [overdue ? "a newer statement is due" : null] };
+  }
   if (g.kind === "demo") return { tone: "neutral", label: "Demo data", detail: ["not a real connection"] };
   return { tone: "neutral", label: "Not linked", detail: [] };
 }
