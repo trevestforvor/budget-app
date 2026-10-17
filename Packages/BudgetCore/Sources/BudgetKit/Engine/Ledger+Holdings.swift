@@ -20,8 +20,9 @@ extension Ledger {
     static func accountHoldings(_ account: Account, _ positions: [SourceHolding], at date: Date) -> AccountHoldings {
         var seen: [String: Int] = [:]
         let kept = positions.filter { $0.marketValue.currencyCode == homeCurrency }.map { p -> Holding in
-            // Two lots of one security (or two without an id) still get ids of their own.
-            let key = account.id + "|" + (p.securityID ?? p.symbol ?? p.description)
+            // The ticker first: Plaid's security id can change on a corporate action (INV-008). Two lots of one security
+            // (or two without a ticker or id) still get ids of their own.
+            let key = account.id + "|" + (p.symbol ?? p.securityID ?? p.description)
             let n = seen[key, default: 0]
             seen[key] = n + 1
             return Holding(id: StableHash.short(n == 0 ? key : "\(key)#\(n)"), name: p.description, ticker: p.symbol, type: p.type,

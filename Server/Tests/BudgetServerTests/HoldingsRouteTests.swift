@@ -61,10 +61,13 @@ enum HoldingsScript {
     }
 
     /// One holdings check, as the Item check and webhooks call it.
+    /// `institution` is the name for logs; `sourceInstitution` is the Item's bank, which picks the ledger's accounts.
     static func refresh(_ service: BudgetService, _ plaid: ScriptedProvider, previous: HoldingsCheck?, enabled: Bool = true, person: Bool = false,
-                        webhook: Bool = false, now: Date = Date(), institution: String = "Northwind", log: LinesLogHandler? = nil) async -> HoldingsCheck? {
+                        webhook: Bool = false, now: Date = Date(), institution: String = "Northwind", sourceInstitution: String? = nil,
+                        log: LinesLogHandler? = nil) async -> HoldingsCheck? {
         let logger = log.map { handler in Logger(label: "test") { _ in handler } } ?? Logger(label: "test")
-        return await HoldingsSync.refresh(enabled: enabled, source: source(plaid, institution: institution), previous: previous, requestedByPerson: person,
+        return await HoldingsSync.refresh(enabled: enabled, source: source(plaid, institution: sourceInstitution ?? institution), previous: previous,
+                                          requestedByPerson: person,
                                           webhookDue: webhook, api: service.api, now: now, institution: institution, logger: logger)
     }
 
@@ -153,10 +156,13 @@ struct HoldingsRouteTests {
         #expect(check.access == .noInvestmentAccounts)
         // Asked again (even by a webhook or the person), it stays the same check without a call.
         #expect(await HoldingsScript.refresh(service, plaid, previous: check, person: true, webhook: true) == check)
-        // Another bank's brokerage doesn't count for this Item.
+        // Another bank's brokerage doesn't count for this Item: the Item's own bank decides, not the name it's logged by.
         let other = try await HoldingsScript.service()
-        #expect(await HoldingsScript.refresh(other, plaid, previous: nil, institution: "Harbor")?.access == .noInvestmentAccounts)
+        #expect(await HoldingsScript.refresh(other, plaid, previous: nil, institution: "Northwind", sourceInstitution: "Harbor")?.access
+            == .noInvestmentAccounts)
         #expect(plaid.count(HoldingsScript.path) == 0)
+        #expect(await HoldingsScript.refresh(other, plaid, previous: nil, institution: "Harbor", sourceInstitution: "Northwind")?.access == .ok)
+        #expect(plaid.count(HoldingsScript.path) == 1)
     }
 
     @Test("Plaid not ready yet: recorded, not retried by schedule the same day, retried when the person asks")

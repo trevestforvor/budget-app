@@ -53,8 +53,10 @@ struct NetWorthView: View {
         .navigationTitle("Net worth")
         .navigationBarTitleDisplayMode(.inline)
         .reloadable {
-            await loadHoldings()
-            return await load()
+            async let holdingsLoaded: Void = loadHoldings()
+            let message = await load()
+            await holdingsLoaded
+            return message
         }
         .toolbar {
             ToolbarItem(placement: .primaryAction) {
@@ -102,10 +104,14 @@ struct NetWorthView: View {
         }
     }
 
-    /// Holdings don't depend on the range. A server before 0.6.0 has none, and the section stays away; a failed read keeps
-    /// what's on screen (or the phone's saved copy).
+    /// Holdings don't depend on the range. A server known to be before 0.6.0 has none, and the section stays away; one
+    /// that can't be asked yet (offline at a cold start) shows the phone's saved copy. A failed read keeps what's on screen.
     private func loadHoldings() async {
-        guard await app.serverSupports(ServerStatus.holdingsSince), let api = app.api as? any HoldingsAPI else {
+        guard let api = app.api as? any HoldingsAPI else {
+            holdings = nil
+            return
+        }
+        if let version = await app.knownServerVersion(), !ServerStatus.version(version, isAtLeast: ServerStatus.holdingsSince) {
             holdings = nil
             return
         }

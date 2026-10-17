@@ -52,10 +52,12 @@ extension PlaidSource {
     }
 
     /// The broker's price or the prior session's close, whichever says it's newer; the broker's when neither or both say
-    /// the same, since it matches the value. A price with no date only wins when the other is missing too.
+    /// the same, since it matches the value. A price with no date only wins when the other is missing too. A foreign
+    /// currency held as cash has its close priced in dollars (INV-007).
     static func fresherPrice(holding h: [String: JSONValue], security s: [String: JSONValue], currency code: String?) -> (Money?, Date?) {
         let institution = number(h, "institution_price").map { (money($0, code), stamp(h, datetime: "institution_price_datetime", day: "institution_price_as_of")) }
-        let close = number(s, "close_price").map { (money($0, currency(s) ?? code), stamp(s, datetime: "update_datetime", day: "close_price_as_of")) }
+        let closeCode = string(s, "type") == "cash" && (currency(s) ?? code).map({ $0 != "USD" }) == true ? "USD" : currency(s) ?? code
+        let close = number(s, "close_price").map { (money($0, closeCode), stamp(s, datetime: "update_datetime", day: "close_price_as_of")) }
         switch (institution, close) {
         case let (i?, c?):
             if let closeDate = c.1, i.1.map({ closeDate > $0 }) ?? true { return (c.0, c.1) }

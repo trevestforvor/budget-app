@@ -236,6 +236,20 @@ struct HoldingsLedgerTests {
         let report = try await api.holdings()
         #expect(report.accounts.map(\.id) == ["plaid:ira", "plaid:inv"] && report.asOf == earlier)
         #expect(await api.state.holdings.count == 2)
+
+        // The brokerage marked as savings: its positions stay stored but leave the report.
+        var state = await api.state
+        state.accounts = state.accounts.map { account in
+            var account = account
+            if account.id == "plaid:inv" { account.kind = .savings }
+            return account
+        }
+        let changed = LedgerBudgetAPI(state: state, calendar: Fixture.calendar, clock: { EngineFixture.now }, chatModel: nil,
+                                      decisions: DecisionRouting(), persistence: nil,
+                                      deployment: DeploymentInfo(endpoint: "test", version: "t", sources: [.plaid], institutions: []))
+        let after = try await changed.holdings()
+        #expect(after.accounts.map(\.id) == ["plaid:ira"] && after.asOf == EngineFixture.now)
+        #expect(await changed.state.holdings.count == 2)
     }
 
     @Test("The demo shows two brokerages: one itemized to the cent, one with cash it doesn't list")

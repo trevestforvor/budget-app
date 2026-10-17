@@ -16,11 +16,19 @@ extension LedgerBudgetAPI: HoldingsAPI {
     }
 
     /// Positions in each investment account, as last checked, the largest account first. An account the ledger no
-    /// longer holds as an investment is left out; one whose link was removed keeps its last positions, dated.
+    /// longer holds as an investment is left out; one whose link was removed keeps its last positions, dated. What the
+    /// balance holds beyond the positions is worked out against today's balance, which every sync moves, so it adds up
+    /// to the line in Net worth.
     public func holdings() async throws -> HoldingsReport {
         tick()
-        let investments = Set(ledger.accounts.filter { $0.kind == .investment }.map(\.id))
-        let accounts = ledger.holdings.values.filter { investments.contains($0.id) }.sorted { ($0.total, $1.id) > ($1.total, $0.id) }
+        let investments = Dictionary(ledger.accounts.filter { $0.kind == .investment }.map { ($0.id, $0.balance) }) { first, _ in first }
+        let accounts = ledger.holdings.values.compactMap { stored -> AccountHoldings? in
+            guard let balance = investments[stored.id] else { return nil }
+            var current = stored
+            current.unitemized = Ledger.unitemized(balance: balance, total: stored.total)
+            return current
+        }
+        .sorted { ($0.total, $1.id) > ($1.total, $0.id) }
         return HoldingsReport(accounts: accounts, asOf: accounts.map(\.fetchedAt).min())
     }
 }

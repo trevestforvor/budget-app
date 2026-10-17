@@ -49,7 +49,7 @@ function render() {
     h("div", { class: "nw-list-head" }, h("h3", { class: "t-headline", id: "holdings-title" }, "Investments by holding")),
     problems.length ? h("div", { class: "card" }, problems.map((l) => h("div", {},
       h("div", { class: "title" }, l.institution), statusLine(ACCESS[l.holdings.access](l.holdings)),
-      l.holdings.access === "failed" && l.holdings.message ? details("What Plaid said", l.holdings.message) : null))) : null,
+      l.holdings.access === "failed" && l.holdings.message ? details("Details", l.holdings.message) : null))) : null,
     accounts.map(card));
 }
 
