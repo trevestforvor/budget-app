@@ -137,7 +137,9 @@ struct AuthMiddleware<Context: RequestContext>: RouterMiddleware {
     let allowedOrigins: [String]
 
     func handle(_ request: Request, context: Context, next: (Request, Context) async throws -> Response) async throws -> Response {
-        let path = request.uri.path
+        // Check the path the router will match: it drops empty segments, so "//v1/overview" and
+        // "v1/overview" both reach /v1/overview and must need the token just the same.
+        let path = "/" + request.uri.path.split(separator: "/", omittingEmptySubsequences: true).joined(separator: "/")
         guard path.hasPrefix("/v1") || path.hasPrefix("/dash") else { return try await next(request, context) }
         let isWrite = request.method != .get && request.method != .head
         switch surface {
