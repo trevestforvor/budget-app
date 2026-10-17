@@ -15,6 +15,9 @@ public struct DuplicateSweep: Hashable, Codable, Sendable {
     public var applied: Bool
     public var pairs: [Pair]
     public var removed: Int
+    /// Imported rows that look like more than one synced row, so the sweep leaves them for the person (Review). Optional
+    /// so sweeps from servers before 0.6.0 still decode.
+    public var ambiguous: Int?
 }
 
 public struct IngestReport: Hashable, Codable, Sendable {
@@ -48,8 +51,15 @@ public struct IngestReport: Hashable, Codable, Sendable {
     /// A few of the rows skipped as already in the ledger from another source, and what each matched,
     /// so a preview can be checked by eye.
     public var duplicateSamples: [DuplicateSample]?
+    /// Rows added that might be the same charge as one already here, so they wait in review naming it
+    /// (`LedgerState.possibleDuplicates`). Optional so reports saved before it existed still decode.
+    public var possibleDuplicates: Int?
+    /// Rows a provider sent again with a better description, merchant or category hint. Optional, as above.
+    public var namesImproved: Int?
     /// Internal hand-off to the categorizer; not part of the wire report.
     var newRowIDs: [String] = []
+    /// Internal: the rows `possibleDuplicates` counts, flagged for review once they're categorized.
+    var possibleDuplicateIDs: [String] = []
 
     public init(batchID: String, source: SourceKind, warnings: [String] = []) {
         self.batchID = batchID
@@ -60,6 +70,7 @@ public struct IngestReport: Hashable, Codable, Sendable {
     enum CodingKeys: String, CodingKey {
         case batchID, source, accountsAdded, accountsUpdated, rowsAdded, rowsUpdated, duplicatesSkipped, byRule, byMemory, byModel, needsReview, modelCalls, warnings
         case modelMilliseconds, addedFrom, addedThrough, duplicateSamples, byTransferMatch, byStatement, notes
+        case possibleDuplicates, namesImproved
     }
 
     public struct DuplicateSample: Hashable, Codable, Sendable {
@@ -154,6 +165,7 @@ extension Ledger {
     mutating func prepareIngest(_ snapshot: SourceSnapshot, batchID: String, into targetAccountID: String?) throws -> IngestReport {
         var report = IngestReport(batchID: batchID, source: snapshot.source, warnings: snapshot.warnings)
         var touched = Set<String>()
+        var skipped: [RowMergeRecord] = []
         let byID = Dictionary(uniqueKeysWithValues: transactions.enumerated().map { ($1.id, $0) })
 
         for sourceAccount in snapshot.accounts {
@@ -216,17 +228,30 @@ extension Ledger {
                 let legacy = snapshot.source == .fileImport ? byID["\(snapshot.source.rawValue):\(row.externalID)"].flatMap { transactions[$0].accountID == accountID ? $0 : nil } : nil
                 if let index = byID[id] ?? legacy {
                     // Same provider row seen again: pending → posted, or an amended amount.
+                    var updated = false
                     if transactions[index].isPending != row.isPending || transactions[index].amount != row.amount || transactions[index].postedAt != row.posted {
                         transactions[index].isPending = row.isPending
                         transactions[index].amount = row.amount
                         transactions[index].postedAt = row.posted
-                        report.rowsUpdated += 1
+                        updated = true
                     }
+                    // A provider often names a row better once it posts. A statement file says what it said.
+                    if snapshot.source != .fileImport, improveName(index, from: row) {
+                        report.namesImproved = (report.namesImproved ?? 0) + 1
+                        updated = true
+                    }
+                    if updated { report.rowsUpdated += 1 }
                     continue
                 }
                 guard addedIDs.insert(id).inserted else { continue }
-                if let match = Deduplicator.bestMatch(account: accountID, date: row.posted, amount: row.amount,
-                                                      descriptions: [row.payee, row.description].compactMap { $0 }, in: candidates) {
+                let name = merchant(for: row)
+                var transaction = LedgerTransaction(
+                    id: id, accountID: accountID, postedAt: row.posted, merchant: name.merchant, rawDescription: row.description,
+                    amount: row.amount, categorization: nil, isPending: row.isPending, source: snapshot.source,
+                    batchID: batchID, providerCategory: row.providerCategory, originalMerchant: name.original)
+                switch Deduplicator.decide(account: accountID, date: row.posted, amount: row.amount,
+                                           descriptions: [row.payee, row.description].compactMap { $0 }, in: candidates) {
+                case let .match(match):
                     let matched = candidates.remove(at: match)
                     report.duplicatesSkipped += 1
                     if (report.duplicateSamples?.count ?? 0) < 12 {
@@ -234,13 +259,17 @@ extension Ledger {
                             date: row.posted, amount: row.amount, description: row.description,
                             matchedDate: matched.postedAt, matchedDescription: matched.rawDescription, matchedSource: matched.source)]
                     }
+                    // Logged with both ids and the row it would have been, so the person can bring it back.
+                    skipped.append(RowMergeRecord(id: "", kind: .skippedIncoming, at: now, batchID: batchID, keptID: matched.id,
+                                                  droppedID: id, dropped: transaction))
                     continue
+                case let .ambiguous(indices):
+                    // Not dropped on a guess: added, and asked about. The candidates stay open to the file's other rows.
+                    possibleDuplicates[id] = indices.map { candidates[$0].id }
+                    report.possibleDuplicateIDs.append(id)
+                case .none:
+                    break
                 }
-                let name = merchant(for: row)
-                var transaction = LedgerTransaction(
-                    id: id, accountID: accountID, postedAt: row.posted, merchant: name.merchant, rawDescription: row.description,
-                    amount: row.amount, categorization: nil, isPending: row.isPending, source: snapshot.source,
-                    batchID: batchID, providerCategory: row.providerCategory, originalMerchant: name.original)
                 // A posted row that replaces its pending version (a new provider id) keeps what was done to it.
                 if let pendingID = row.replacesExternalID, let index = byID["\(snapshot.source.rawValue):\(pendingID)"],
                    transactions[index].accountID == accountID, Self.carryOver(from: transactions[index], to: &transaction) {
@@ -266,7 +295,27 @@ extension Ledger {
         }
         transactions.sort { $0.postedAt > $1.postedAt }
         for id in touched { reanchor(id) }
+        appendMerges(skipped)
+        if !report.possibleDuplicateIDs.isEmpty { report.possibleDuplicates = report.possibleDuplicateIDs.count }
         return report
+    }
+
+    /// Takes a provider's newer description, category hint and merchant for a row it sent again. A merchant the person
+    /// renamed (or an alias named) stays; only "what the bank calls it" follows. The category is never touched. Returns
+    /// whether anything changed.
+    mutating func improveName(_ index: Int, from row: SourceTransaction) -> Bool {
+        let before = transactions[index]
+        if let hint = row.providerCategory { transactions[index].providerCategory = hint }
+        if !row.description.trimmingCharacters(in: .whitespaces).isEmpty {
+            transactions[index].rawDescription = row.description
+            if before.originalMerchant == nil {
+                (transactions[index].merchant, transactions[index].originalMerchant) = merchant(for: row)
+            } else {
+                let bank = Self.merchantName(row)
+                transactions[index].originalMerchant = bank == before.merchant ? nil : bank
+            }
+        }
+        return transactions[index] != before
     }
 
     /// The merchant a new row shows: the name the person gave its descriptor, else the provider's (with the
@@ -305,17 +354,25 @@ extension Ledger {
 
     /// Imported (file) rows that a synced row also has — left when a provider's history arrived after
     /// the file under a stricter rule. Each pair: the file row and the synced row it duplicates.
-    func crossSourceDuplicates() -> [(file: LedgerTransaction, synced: LedgerTransaction)] {
+    func crossSourceDuplicates() -> [(file: LedgerTransaction, synced: LedgerTransaction)] { crossSourceSweep().pairs }
+
+    /// The pairs, and how many imported rows look like more than one synced row: those are left alone (the person can
+    /// tell them apart in Review; a sweep can't).
+    func crossSourceSweep() -> (pairs: [(file: LedgerTransaction, synced: LedgerTransaction)], ambiguous: Int) {
         var pairs: [(file: LedgerTransaction, synced: LedgerTransaction)] = []
+        var ambiguous = 0
         for (_, rows) in Dictionary(grouping: transactions, by: \.accountID) {
             var synced = rows.filter { $0.source != .fileImport }
             for row in rows where row.source == .fileImport {
-                guard let index = Deduplicator.bestMatch(account: row.accountID, date: row.postedAt, amount: row.amount,
-                                                         descriptions: [row.merchant, row.rawDescription], in: synced, similarOnly: true) else { continue }
-                pairs.append((row, synced.remove(at: index)))
+                switch Deduplicator.decide(account: row.accountID, date: row.postedAt, amount: row.amount,
+                                           descriptions: [row.merchant, row.rawDescription], in: synced, similarOnly: true) {
+                case let .match(index): pairs.append((row, synced.remove(at: index)))
+                case .ambiguous: ambiguous += 1
+                case .none: break
+                }
             }
         }
-        return pairs.sorted { $0.file.postedAt > $1.file.postedAt }
+        return (pairs.sorted { $0.file.postedAt > $1.file.postedAt }, ambiguous)
     }
 
     /// Drops the file copy of each pair; the synced row stays (the provider keeps updating it) and inherits
@@ -324,13 +381,13 @@ extension Ledger {
         let fileIDs = Set(pairs.map(\.file.id))
         // When both sides of a paired move are file copies, each synced row pairs with the other side's synced row.
         let replacement = Dictionary(pairs.map { ($0.file.id, $0.synced.id) }, uniquingKeysWith: { first, _ in first })
+        var swept: [RowMergeRecord] = []
         for pair in pairs {
             guard let index = transactions.firstIndex(where: { $0.id == pair.synced.id }) else { continue }
-            if pair.file.categorization?.tier == .user && pair.synced.categorization?.tier != .user {
-                transactions[index].categorization = pair.file.categorization
-            }
-            Self.carryUserFields(from: pair.file, to: &transactions[index])
-            if transactions[index].isHidden { transactions[index].categorization?.needsReview = false }
+            // The synced row as it was, so bringing the copy back can hand its fields back too.
+            swept.append(RowMergeRecord(id: "", kind: .sweptFileCopy, at: now, batchID: pair.file.batchID, keptID: pair.synced.id,
+                                        droppedID: pair.file.id, dropped: pair.file, keptBefore: transactions[index]))
+            Self.carryOnMerge(from: pair.file, to: &transactions[index], kind: .sweptFileCopy)
             if let filePeer = pair.file.transferPeerID, transactions[index].transferPeerID == nil,
                case let peer = replacement[filePeer] ?? filePeer, let other = transactions.firstIndex(where: { $0.id == peer }) {
                 transactions[index].transferPeerID = peer
@@ -342,6 +399,8 @@ extension Ledger {
         for id in fileIDs { suggestions[id] = nil; reviewReasons[id] = nil }
         for id in affected { reanchor(id) }
         unpairOrphans()
+        prunePossibleDuplicates()
+        appendMerges(swept)
         return fileIDs.count
     }
 
@@ -391,6 +450,7 @@ extension Ledger {
         for id in removedIDs { suggestions[id] = nil; reviewReasons[id] = nil }
         for id in affected { reanchor(id) }
         unpairOrphans()
+        prunePossibleDuplicates()
         return removedIDs.count
     }
 
@@ -403,6 +463,7 @@ extension Ledger {
         for id in ids { suggestions[id] = nil; reviewReasons[id] = nil }
         for id in affected { reanchor(id) }
         unpairOrphans()
+        prunePossibleDuplicates()
         return before - transactions.count
     }
 

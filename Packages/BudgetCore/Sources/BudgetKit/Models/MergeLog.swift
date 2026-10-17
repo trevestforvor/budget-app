@@ -36,3 +36,15 @@ public struct RowMergeRecord: Identifiable, Hashable, Codable, Sendable {
         self.dropped = dropped; self.keptBefore = keptBefore; self.undoneAt = undoneAt
     }
 }
+
+/// A row added that might be the same charge as one already here, with the rows it could be (`GET /v1/duplicates`).
+/// The person answers with `POST /v1/duplicates/:id`: Same charge (one of `candidates`) or Keep both.
+public struct PossibleDuplicate: Identifiable, Hashable, Codable, Sendable {
+    /// The added row's id.
+    public var id: String
+    public var row: LedgerTransaction
+    /// Best match first.
+    public var candidates: [LedgerTransaction]
+
+    public init(id: String, row: LedgerTransaction, candidates: [LedgerTransaction]) { self.id = id; self.row = row; self.candidates = candidates }
+}

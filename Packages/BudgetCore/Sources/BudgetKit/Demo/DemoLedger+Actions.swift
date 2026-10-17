@@ -362,11 +362,14 @@ extension DemoLedger {
             let indices = transactions.indices.filter { ids.contains(transactions[$0].id) }
             let undo = restoring(indices)
             for index in indices { file(index, under: p.categoryID) }
+            // Answering a possible duplicate's category means "keep it".
+            for id in ids { possibleDuplicates[id] = nil }
             return ActionResult(message: "Re-filed \(indices.count) transaction\(indices.count == 1 ? "" : "s").",
                                 affectedTransactions: indices.count, undo: undo)
 
         case let .editTransactions(p):
             let plan = try editPlan(p)
+            if plan.category != nil || plan.keep { for index in plan.rows { possibleDuplicates[transactions[index].id] = nil } }
             return apply(plan)
         // MARK: - [end lane L]
 

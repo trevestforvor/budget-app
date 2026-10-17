@@ -290,7 +290,12 @@ public actor LedgerBudgetAPI: BudgetAPI {
 
     public func confirmCategory(transactionID: String, categoryID: String) async throws -> ActionResult {
         tick(); await pause(0.5)
-        return try await write { try ledger.confirm(transactionID: transactionID, categoryID: categoryID) }
+        return try await write {
+            let result = try ledger.confirm(transactionID: transactionID, categoryID: categoryID)
+            // Answering the category of a possible duplicate means "keep it" (Lane L, P1.3).
+            ledger.possibleDuplicates[transactionID] = nil
+            return result
+        }
     }
 
     public func projection(horizonMonths: Int, goal: GoalQuery?) async throws -> Projection {
@@ -556,6 +561,8 @@ public actor LedgerBudgetAPI: BudgetAPI {
                     written.notes = (written.notes ?? []) + ["Asked again about \(asked.count) transaction\(asked.count == 1 ? "" : "s") an earlier sync couldn't file: \(filed) filed, \(settled.count - filed) waiting for you\(changed > 0 ? ", \(changed) changed meanwhile" : "")."]
                 }
             }
+            // Possible duplicates wait for the person even when a rule filed them (and rows asked again are flagged once filed).
+            ledger.flagPossibleDuplicates(written.possibleDuplicateIDs + (retry?.ids ?? []))
             return written
         }
         await recordBalances(from: snapshot, into: targetAccountID)
@@ -607,13 +614,13 @@ public actor LedgerBudgetAPI: BudgetAPI {
     /// rows stay); without, it only lists them.
     public func importDuplicates(apply: Bool) async throws -> DuplicateSweep {
         tick()
-        let pairs = ledger.crossSourceDuplicates()
+        let (pairs, ambiguous) = ledger.crossSourceSweep()
         let listed = pairs.map { DuplicateSweep.Pair(accountID: $0.file.accountID, amount: $0.file.amount, fileDate: $0.file.postedAt,
                                                       fileDescription: $0.file.rawDescription, syncedDate: $0.synced.postedAt,
                                                       syncedDescription: $0.synced.rawDescription, syncedSource: $0.synced.source) }
-        guard apply, !pairs.isEmpty else { return DuplicateSweep(applied: false, pairs: listed, removed: 0) }
+        guard apply, !pairs.isEmpty else { return DuplicateSweep(applied: false, pairs: listed, removed: 0, ambiguous: ambiguous) }
         let removed = try await write { ledger.removeDuplicates(ledger.crossSourceDuplicates()) }
-        return DuplicateSweep(applied: true, pairs: listed, removed: removed)
+        return DuplicateSweep(applied: true, pairs: listed, removed: removed, ambiguous: ambiguous)
     }
     // MARK: - [end lane L] importDuplicates
 

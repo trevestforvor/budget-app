@@ -59,3 +59,33 @@ extension LedgerBudgetAPI {
         return changed
     }
 }
+
+// MARK: Possible duplicates and the merge log (P1.3)
+
+extension LedgerBudgetAPI {
+    /// Rows added that might be the same charge as one already here, each with the rows it could be.
+    public func possibleDuplicates() -> [PossibleDuplicate] { ledger.possibleDuplicateList }
+
+    /// Same charge (`sameAs` one of the row's candidates) or Keep both (nil). Returns the merge, nil for Keep both.
+    public func resolveDuplicate(rowID: String, sameAs: String?) async throws -> RowMergeRecord? {
+        tick()
+        return try await write { try ledger.resolveDuplicate(rowID: rowID, sameAs: sameAs) }
+    }
+
+    /// The merge log, newest first; with `batchID`, only that batch's entries.
+    public func merges(batchID: String? = nil) -> [RowMergeRecord] {
+        ledger.mergeLog.filter { batchID == nil || $0.batchID == batchID }.sorted { ($0.at, $0.id) > ($1.at, $1.id) }
+    }
+
+    /// Brings one logged row back. Returns how many rows came back (1).
+    public func undoMerge(id: String) async throws -> Int {
+        tick()
+        return try await write { try ledger.undoMerge(id: id) }
+    }
+
+    /// Brings back every row a batch skipped as already here. Returns how many came back.
+    public func undoSkipped(batchID: String) async throws -> Int {
+        tick()
+        return try await write { ledger.undoSkipped(batchID: batchID) }
+    }
+}

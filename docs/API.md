@@ -416,7 +416,17 @@ The person's own corrections to an account (server 0.6.0, `ServerStatus.accountE
 
 ### Duplicates and merges
 
-Not built yet.
+Server 0.6.0 (`ServerStatus.possibleDuplicatesSince`). An incoming row is compared with rows already on the account from another source, same amount within 5 days (`Deduplicator.decide`). One that qualifies is a match and the incoming row is skipped, as before. With two or more, it's a match only when the best wording is near-identical (similarity ≥ 0.8) or clearly ahead of the next (by more than 0.25); otherwise it's **ambiguous**: the row is added, not dropped on a guess, and waits in review even if a rule filed it, with a reason naming the row it might be (old apps see it in the normal review queue). Answering its category on the phone means "keep it". The after-the-fact sweep (`POST /v1/imports/duplicates`) leaves ambiguous rows alone and counts them in `DuplicateSweep.ambiguous`. `IngestReport` gains `possibleDuplicates` (rows added and flagged) and `namesImproved` (rows a provider sent again with a newer description, merchant or category hint: taken unless the person renamed the merchant, which keeps their name and updates only "what the bank calls it"; the category is never changed).
+
+Every row skipped as already here, every statement copy the sweep removed, and every Same charge answer goes in the **merge log** (`RowMergeRecord {id, kind: skippedIncoming | sweptFileCopy | duplicateResolved | pendingSettled | pendingDropped, at, batchID?, keptID?, droppedID, dropped, keptBefore?, undoneAt?}`), with both ids and a full copy of what went. Entries are kept 400 days. On Postgres it's the `budget_merges` table (migration 5), not a ledger document.
+
+| Method | Path | Body | Returns |
+|---|---|---|---|
+| GET | `/v1/duplicates` | — | `[PossibleDuplicate {id, row, candidates}]`, newest first: rows waiting on Same charge or Keep both, each with the rows it might be (best first) |
+| POST | `/v1/duplicates/{id}` | `{sameAs: "<row id>" \| null}` | `{merged: RowMergeRecord \| null}`. On both listeners. `null` (Keep both) clears the question; the row stays in review for its category. A candidate's id (Same charge) merges the two: the provider's row stays (between two providers', the one here first) and takes the other's category if the person gave it (or a settled one when it was still waiting), hidden, note, tags, a renamed merchant and a transfer pairing. 404 for an unknown row, 422 for a row that isn't one of its candidates |
+| GET | `/v1/merges[?batch=<id>]` | — | Dashboard only. `[RowMergeRecord]`, newest first; `batch` gives one import's (rows it skipped, its rows swept or merged since) |
+| POST | `/v1/merges/{id}/undo` | — | Dashboard only. `{restored: 1}`: the row comes back. The kept row gets back what it had before the merge only if nobody changed it since. A skipped row comes back with no category, so the next ingest files it. 422 when it's already back, or its account is gone |
+| POST | `/v1/imports/{batch}/merges/undo` | — | Dashboard only. `{restored}`: "import the skipped rows anyway", every row the batch skipped as already here |
 
 ### Holdings
 
