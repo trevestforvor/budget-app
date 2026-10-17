@@ -80,7 +80,7 @@ public struct StoredLink: Codable, Hashable, Sendable {
         summary.lastAttemptAt = lastAttemptAt
         summary.nextAttemptAt = nextAttemptAt
         summary.holdings = holdings
-        plaid?.summaryFields(into: &summary)
+        plaid?.summaryFields(into: &summary, liveItem: hasLiveItem)
         summary.banks = simplefin?.banksSummary()
         return summary
     }

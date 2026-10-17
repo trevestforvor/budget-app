@@ -8,6 +8,10 @@ function retry(link) {
   return next && next > Date.now() ? ` It tries again ${AT.format(next)}.` : " It'll try again on its own.";
 }
 
+/// A new link is a new Plaid Item: Plaid gives its accounts new ids and up to two years of history again, and nothing
+/// carries the old link's accounts over yet (the deduplicator keys on the account), so the overlap shows twice.
+export const RELINK_OVERLAP = " Until the old accounts are hidden or merged into the new ones, the overlap counts twice.";
+
 /// What each kind of failure means for the person, in plain words. A link stored before 0.6.0 has no kind until it
 /// syncs again: it reads as waiting for a sign-in when it's parked, else as a sync that didn't finish.
 export function syncProblem(link) {
@@ -17,8 +21,8 @@ export function syncProblem(link) {
     case "needsSignIn":
       return "The bank ended this connection and needs you to sign in again.";
     case "revoked":
-      if (plaid && link.errorCode === "ITEM_NOT_FOUND") return "Plaid no longer has this connection. Link the bank again to carry on; its history stays.";
-      return "Access to this bank was withdrawn. Link it again to carry on; its history stays.";
+      if (plaid && link.errorCode === "ITEM_NOT_FOUND") return "Plaid no longer has this connection. Linking the bank again brings its accounts in as new ones next to these, which keep their history." + RELINK_OVERLAP;
+      return "Access to this bank was withdrawn. Linking it again brings its accounts in as new ones next to these, which keep their history." + RELINK_OVERLAP;
     case "providerSetup":
       if (/token-key|token-unsealable/.test(link.errorCode || "")) return "The server can't open its saved bank sign-ins.";
       return "This provider's setup on the server was refused. Check its keys under Settings → Bank providers.";
@@ -33,7 +37,9 @@ export function syncProblem(link) {
 }
 
 /// Whether a repair is a new link rather than a sign-in: the Item is gone or access was withdrawn (update mode can't
-/// bring it back, and the server refuses it).
+/// bring it back, and the server refuses it). The server only ever drops a Plaid token together with `errorKind`
+/// "revoked" (ITEM_NOT_FOUND), so this kind is also how the dashboard knows a link holds no Item any more: LinkSummary
+/// has no field for the token itself.
 export const needsNewLink = (link) => link.provider === "plaid" && link.errorKind === "revoked";
 
 /// Days until a Plaid link's consent runs out, rounded up (0 on the day, negative once past); null when unknown.
@@ -46,7 +52,8 @@ const norm = (s) => (s || "").trim().toLowerCase();
 /// The link that already holds a working Plaid Item at the bank Plaid Link just picked, so a second Item (one of the
 /// Trial plan's ten, and every account twice) isn't made. The same rule as the server's exchange check: Plaid's
 /// institution id when both sides have it, else the bank's name. A link whose Item is gone or whose access was
-/// withdrawn doesn't count; linking again is how those come back.
+/// withdrawn doesn't count; linking again is how those come back. The server also requires a live Item (a token); a
+/// link without one is always "revoked" (see needsNewLink), so the two rules agree.
 export function duplicatePlaidLink(links, institutionID, name) {
   return (links || []).find((l) => {
     if (l.provider !== "plaid" || l.errorKind === "revoked") return false;

@@ -106,14 +106,15 @@ public actor SyncService {
     /// call, not a token exchange), and it's marked as needing one only if the bank still refuses. Any other failure
     /// leaves it for the next scheduled sync. A webhook's sync keeps the stop rules (`LinkHealthBook.isDue`): a link
     /// whose access was withdrawn, or that has needed a sign-in three times running, is left alone.
-    public func sync(linkID: String, trigger: SyncTrigger = .personLink) async throws -> LinkSyncResult {
+    /// `afterUpdateMode`: the dashboard says Plaid Link just finished update mode on this link (see `noteUpdateMode`).
+    public func sync(linkID: String, trigger: SyncTrigger = .personLink, afterUpdateMode: Bool = false) async throws -> LinkSyncResult {
         try await serialized {
             guard let link = try await self.store.links().first(where: { $0.id == linkID }) else { throw BudgetAPIError.notFound }
             guard LinkHealthBook.isDue(link, trigger: trigger, now: Date()) else {
                 return LinkSyncResult(linkID: link.id, institution: link.institution, ok: false, error: link.lastError, errorKind: link.errorKind,
                                       skipped: "\(link.institution) is waiting for you to reconnect it, so the server didn't ask the bank.")
             }
-            return await self.syncAndPublish(link, trigger: trigger)
+            return await self.syncAndPublish(link, trigger: trigger, afterUpdateMode: afterUpdateMode)
         }
     }
 
@@ -157,19 +158,21 @@ public actor SyncService {
         }
     }
 
-    private func syncAndPublish(_ link: StoredLink, trigger: SyncTrigger) async -> LinkSyncResult {
-        let result = await sync(link, trigger: trigger)
+    private func syncAndPublish(_ link: StoredLink, trigger: SyncTrigger, afterUpdateMode: Bool = false) async -> LinkSyncResult {
+        let result = await sync(link, trigger: trigger, afterUpdateMode: afterUpdateMode)
         await publishInstitutions()
         return result
     }
 
-    /// Whether the person's sync of `link` may follow a sign-in on the dashboard (Plaid update mode) that renewed the
-    /// bank's consent: it was waiting for one, or its consent ends within 14 days. Its daily Item check is then made due,
-    /// so the next look (within 15 minutes) reads the new date and the "access ends" banner goes, instead of a day later.
-    static func mayHaveRenewedConsent(_ link: StoredLink, now: Date) -> Bool {
-        guard link.provider == .plaid, link.plaid?.lastItemCheckAt != nil else { return false }
-        if LinkHealthBook.waitsForPerson(link) { return true }
-        return link.plaid?.consentExpiresAt.map { $0.timeIntervalSince(now) < 14 * 86_400 } ?? false
+    /// A sync that follows Plaid's update mode: the phone's reconnect (its `/item/get` already ran), or the dashboard
+    /// saying Plaid Link just finished one (`afterUpdateMode`). Signing in again is what a PENDING_DISCONNECT asked for,
+    /// so its warning is cleared (the access-ends date then goes back to the consent date, if any). After the dashboard's,
+    /// the daily Item check is also made due, so the next look (within 15 minutes) reads the renewed consent date instead
+    /// of a day later. Only a sync that went through gets here.
+    static func noteUpdateMode(_ link: inout StoredLink, trigger: SyncTrigger, afterUpdateMode: Bool) {
+        guard link.provider == .plaid, afterUpdateMode || trigger == .reconnect else { return }
+        link.plaid?.pendingDisconnectAt = nil
+        if afterUpdateMode { link.plaid?.lastItemCheckAt = nil }
     }
 
     /// Runs `work` after every run already started. Not re-entrant: `work` must never call `serialized` again
@@ -185,7 +188,7 @@ public actor SyncService {
         return try await task.value
     }
 
-    private func sync(_ original: StoredLink, trigger: SyncTrigger) async -> LinkSyncResult {
+    private func sync(_ original: StoredLink, trigger: SyncTrigger, afterUpdateMode: Bool = false) async -> LinkSyncResult {
         var link = original
         if trigger.retriesSignIn, link.status == .needsReauth { link.status = .connected }
         let batchID = "\(link.provider.rawValue)-\(link.id)-\(Int(Date().timeIntervalSince1970))"
@@ -217,7 +220,7 @@ public actor SyncService {
             }
             let removed = outcome.removed
             LinkHealthBook.recordSuccess(&link, now: Date())
-            if trigger == .personLink, Self.mayHaveRenewedConsent(original, now: Date()) { link.plaid?.lastItemCheckAt = nil }
+            Self.noteUpdateMode(&link, trigger: trigger, afterUpdateMode: afterUpdateMode)
             try await store.upsertLink(link)
             let linkID = link.id
             if await LinkHealthBook.shouldRecordImport(report, failure: nil, lastRecordedWarnings: { await self.lastRecordedWarnings(linkID) }) {
@@ -333,7 +336,7 @@ public actor SyncService {
     }
 
     static func itemGoneMessage(_ link: StoredLink) -> String {
-        "Plaid no longer has this connection to \(link.institution). Link the bank again; its history stays."
+        "Plaid no longer has this connection to \(link.institution). Link the bank again on the dashboard; its accounts come back as new ones."
     }
 
     // MARK: - [end lane P]

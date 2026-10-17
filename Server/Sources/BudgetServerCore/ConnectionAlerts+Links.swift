@@ -35,7 +35,7 @@ extension ConnectionAlerts {
         let key = signInKey(linkID: link.id, firstFailedAt: since)
         if link.errorKind == .revoked {
             return ConnectionAlert(kind: .revoked, episodeKeys: [key], title: "\(link.institution) stopped sharing with Budget",
-                                   body: "Link it again on the Budget dashboard to keep its accounts up to date. Its history stays.",
+                                   body: "Link it again on the Budget dashboard. Its accounts come back as new ones; the old ones keep their history.",
                                    linkID: link.id)
         }
         return ConnectionAlert(kind: .needsSignIn, episodeKeys: [key], title: "\(link.institution) needs you to sign in again",
@@ -44,19 +44,20 @@ extension ConnectionAlerts {
                                linkID: link.id, opensReconnect: fromPhone)
     }
 
-    /// When a Plaid Item's access ends: the consent date, or a week after a PENDING_DISCONNECT, whichever comes first of
-    /// those still ahead. A warning's week that has passed while the Item stayed healthy doesn't hide a consent date to come.
+    /// When a Plaid Item's access ends (`PlaidLinkState.accessEnds`): the consent date, or a week after a
+    /// PENDING_DISCONNECT, whichever comes first of those still ahead. Nil without a live Item.
     static func accessEnds(_ link: StoredLink, now: Date) -> Date? {
-        guard link.hasLiveItem, let plaid = link.plaid else { return nil }
-        return [plaid.consentExpiresAt, plaid.pendingDisconnectAt.map { $0.addingTimeInterval(pendingDisconnectNotice) }]
-            .compactMap { $0 }.filter { $0 > now }.min()
+        guard link.hasLiveItem else { return nil }
+        return link.plaid?.accessEnds(now: now)
     }
 
     /// The date the phone and Home show as when access ends: the push's `accessEnds` (so a PENDING_DISCONNECT with no
     /// consent date still reads as a week away), else a consent date that has passed, for "has ended". One answer for the
-    /// push, Linked accounts' banner and `linkAttention`, so a tapped push always finds something to renew.
+    /// push, Linked accounts' banner, `linkAttention` and the dashboard's `LinkSummary.consentExpiresAt`, so a tapped push
+    /// always finds something to renew.
     static func shownAccessEnds(_ link: StoredLink, now: Date) -> Date? {
-        accessEnds(link, now: now) ?? (link.hasLiveItem ? link.plaid?.consentExpiresAt : nil)
+        guard link.hasLiveItem else { return nil }
+        return link.plaid?.shownAccessEnds(now: now)
     }
 
     /// Consent running out within 14 days (or 7: that push also covers the 14-day one, so a first look inside a week

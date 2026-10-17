@@ -3,7 +3,7 @@
 import { fill, h, api, store, heavy, pageHead, sectionHead, button, busy, armed, isArmed, callout, details, glyph, statusLine,
   institutionGroups, syncProblem, providerDetail, syncNow, describeSync, afterWrite, reportError, toast, rowMoney, plural, dateShort, dateFull,
   dateTime, ago, KIND, SOURCE, emptyState, drawer, closeDrawer } from "./core.js";
-import { needsNewLink, consentDaysLeft } from "./linkerrors.js";
+import { needsNewLink, consentDaysLeft, RELINK_OVERLAP } from "./linkerrors.js";
 import { connectPanes, framedNote, linkPlaid, relinkTeller, reconnected, announce } from "./providers.js";
 import { netWorthSection } from "./networth.js";
 import { accountRowExtras, linkDetailsExtras } from "./health.js";
@@ -61,8 +61,8 @@ function reconnectHelp(g) {
   }
   if (needsNewLink(link)) {
     return link.errorCode === "ITEM_NOT_FOUND"
-      ? `Plaid no longer has this connection to ${g.name}, so signing in again can't bring it back. Link ${g.name} again: your history here stays.`
-      : `Access to ${g.name} was withdrawn, at the bank or at Plaid. Link ${g.name} again to carry on; your history here stays. Then remove this old connection from its ⋯ menu.`;
+      ? `Plaid no longer has this connection to ${g.name}, so signing in again can't bring it back. Linking ${g.name} again makes a new connection: its accounts come in as new ones, with up to two years of history, next to these, which keep theirs.${RELINK_OVERLAP}`
+      : `Access to ${g.name} was withdrawn, at the bank or at Plaid. Linking ${g.name} again makes a new connection: its accounts come in as new ones, with up to two years of history, next to these, which keep theirs.${RELINK_OVERLAP} Removing this old connection stops it but keeps its accounts and transactions.`;
   }
   return `${g.name} ended this connection, which banks do every so often for security. Sign in again and it carries on where it stopped: your history is safe, and nothing new comes in until then.`;
 }

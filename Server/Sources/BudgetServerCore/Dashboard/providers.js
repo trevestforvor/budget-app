@@ -208,7 +208,9 @@ export async function linkPlaid({ resume = false, update = null, grant = false, 
         toast(grant ? "Card-bill access granted. Checking…" : linkID ? "Signed in. Syncing…" : "Linking and syncing…");
         try {
           const result = linkID
-            ? await api(`/v1/links/${encodeURIComponent(linkID)}/sync`, { method: "POST" })
+            // A sign-in or renewal (not the card-bill grant) tells the server update mode finished: it clears a
+            // PENDING_DISCONNECT warning and reads the new consent date at its next look.
+            ? await api(`/v1/links/${encodeURIComponent(linkID)}/sync`, { method: "POST", body: grant ? undefined : { afterUpdateMode: true } })
             : await api("/v1/links/plaid/exchange", { method: "POST", body: { publicToken, institution: (metadata.institution && metadata.institution.name) || "Plaid",
               institutionID: (metadata.institution && metadata.institution.institution_id) || undefined } });
           announce(grant ? granted(result) : linkID ? reconnected(result) : linked(result), where);

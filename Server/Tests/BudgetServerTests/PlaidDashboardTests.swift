@@ -8,8 +8,7 @@ import Logging
 import Testing
 
 /// Plaid on the dashboard (P8). One Item per bank: the exchange route refuses a second Item at a bank that already has
-/// a working one, before anything is exchanged. Update mode on a working link renews its consent, and the sync after it
-/// makes the Item check due so the new date shows soon.
+/// a working one, before anything is exchanged. Update mode on a working link renews its consent.
 @Suite("Plaid on the dashboard")
 struct PlaidDashboardTests {
     static let write: HTTPFields = [HTTPField.Name("X-Budget-Dashboard")!: "1", .contentType: "application/json"]
@@ -181,34 +180,7 @@ struct PlaidDashboardTests {
         let fresh = try await Self.tokenBody(repairApp, broken, "{}")
         #expect(!fresh.contains("reauthorization_enabled") && !fresh.contains("access_token"))
     }
-    // MARK: After a renewal
-
-    @Test("A person's sync of a link whose consent ends soon makes its Item check due; a far date or a scheduled sync doesn't",
-          arguments: [(5, "personLink", true), (60, "personLink", false), (5, "schedule", false)])
-    func renewalRechecksConsent(_ days: Int, _ trigger: String, _ due: Bool) async throws {
-        let plaid = Self.provider()
-        let checked = Date().addingTimeInterval(-3_600)
-        let (_, service) = try await Self.server(plaid) { link in
-            link.plaid?.lastItemCheckAt = checked
-            link.plaid?.consentExpiresAt = Date().addingTimeInterval(Double(days) * 86_400)
-        }
-        let result = try await service.sync.sync(linkID: "plaid-item-0", trigger: trigger == "schedule" ? .schedule : .personLink)
-        #expect(result.ok)
-        let link = try #require(try await service.store.links().first)
-        #expect((link.plaid?.lastItemCheckAt == nil) == due)
-        #expect(PlaidMaintenance.isDue(link, now: Date()) == due)
-    }
-
-    @Test("A sign-in repaired on the dashboard makes the Item check due too")
-    func repairRechecks() async throws {
-        let plaid = Self.provider()
-        let (_, service) = try await Self.server(plaid) { link in
-            link.plaid?.lastItemCheckAt = Date().addingTimeInterval(-3_600)
-            LinkHealthBook.recordFailure(&link, LinkFailure(kind: .needsSignIn, code: "ITEM_LOGIN_REQUIRED", message: "sign in"), now: Date())
-        }
-        #expect(try await service.sync.sync(linkID: "plaid-item-0", trigger: .personLink).ok)
-        #expect(try await service.store.links().first?.plaid?.lastItemCheckAt == nil)
-    }
+    // MARK: After a renewal (the sync that follows update mode: PlaidRenewalTests)
 
     @Test("The summary's access-ends date is the phone's: a PENDING_DISCONNECT week that ends first wins")
     func summaryAccessEnds() {
@@ -217,19 +189,19 @@ struct PlaidDashboardTests {
         state.consentExpiresAt = now.addingTimeInterval(60 * 86_400)
         var summary = LinkSummary(id: "plaid-x", provider: .plaid, institution: "Harbor", status: .connected, lastSync: nil, lastError: nil,
                                   createdAt: now, externalID: nil)
-        state.summaryFields(into: &summary, now: now)
+        state.summaryFields(into: &summary, liveItem: true, now: now)
         #expect(summary.consentExpiresAt == state.consentExpiresAt)
         state.pendingDisconnectAt = now.addingTimeInterval(-86_400)
-        state.summaryFields(into: &summary, now: now)
+        state.summaryFields(into: &summary, liveItem: true, now: now)
         #expect(summary.consentExpiresAt == now.addingTimeInterval(6 * 86_400))
         // A warning week that passed while the Item stayed healthy doesn't hide the consent date.
         state.pendingDisconnectAt = now.addingTimeInterval(-30 * 86_400)
-        state.summaryFields(into: &summary, now: now)
+        state.summaryFields(into: &summary, liveItem: true, now: now)
         #expect(summary.consentExpiresAt == state.consentExpiresAt)
         // A consent date that has passed still shows, for "has ended".
         state = PlaidLinkState()
         state.consentExpiresAt = now.addingTimeInterval(-86_400)
-        state.summaryFields(into: &summary, now: now)
+        state.summaryFields(into: &summary, liveItem: true, now: now)
         #expect(summary.consentExpiresAt == state.consentExpiresAt)
     }
 }
