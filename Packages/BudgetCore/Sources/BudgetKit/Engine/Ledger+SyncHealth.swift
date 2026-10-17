@@ -2,10 +2,16 @@ import Foundation
 
 extension Ledger {
     /// How fresh each account is (`Overview.accountHealth`), in the ledger's order. A synced account is current until
-    /// two days pass without a clean pull of it (`Account.lastSyncedAt`), then stale; one under a row waiting for a
-    /// sign-in is `waitingForSignIn` instead (that row has its own push and repair button). A statement account is
-    /// overdue once its newest row is older than a month's statement plus time to import it. An account no link brings
-    /// any more, or one not pulled cleanly since the server started stamping (0.6.0), is `notSynced`.
+    /// two days pass without a clean pull of it (`Account.lastSyncedAt`; before its first stamp, its link's last clean
+    /// sync), then stale; a SimpleFIN account whose bank date (`balanceAsOf`) is older than that goes by it instead, since
+    /// the Bridge can keep serving old data without an error. One under a row waiting for a sign-in is `waitingForSignIn`
+    /// instead (that row has its own push and repair button). A statement account is overdue once its newest row is
+    /// older than a month's statement plus time to import it; it has no balance date (the import stamps the day it ran,
+    /// not the statement's). An account no link brings any more, or under a link that hasn't synced cleanly yet, is
+    /// `notSynced`.
+    ///
+    /// The two days don't scale with the sync interval: with `syncIntervalHours` past about 47, every account would go
+    /// stale between scheduled syncs (SimpleFIN pulls at least once a day, so it can't).
     /// - Parameter institutions: the deployment's links; which accounts each holds is worked out as the phone sees it.
     func accountHealth(institutions: [InstitutionLink]) -> [AccountHealth]? {
         // A row waiting for a sign-in wins over another that also names the account.
@@ -21,13 +27,18 @@ extension Ledger {
                 guard let latest = newest[account.id].map(calendar.startOfDay) else { return AccountHealth(id: account.id, state: .notSynced) }
                 let due = latest.addingTimeInterval(Self.statementStaleAfterDays * 86_400)
                 return AccountHealth(id: account.id, state: now > due ? .statementsOverdue : .current, lastGoodSync: latest,
-                                     balanceAsOf: account.balanceAsOf, staleSince: now > due ? due : nil)
+                                     staleSince: now > due ? due : nil)
             }
             var health = AccountHealth(id: account.id, state: .notSynced, lastGoodSync: account.lastSyncedAt, balanceAsOf: account.balanceAsOf)
             guard let row = holder[account.id] else { return health }
+            // An account not stamped since 0.6.0 (its link failing ever since, or not bringing it) counts from the link's
+            // last clean sync, so it can still go stale.
+            let pulled = account.lastSyncedAt ?? row.lastSync
+            let banked = account.source == .simplefin ? account.balanceAsOf : nil
+            health.lastGoodSync = [pulled, banked].compactMap { $0 }.min()
             if row.status == .needsReauth {
                 health.state = .waitingForSignIn
-            } else if let synced = account.lastSyncedAt {
+            } else if pulled != nil, let synced = health.lastGoodSync {
                 let due = synced.addingTimeInterval(Self.syncStaleAfterDays * 86_400)
                 health.state = now > due ? .stale : .current
                 health.staleSince = now > due ? due : nil

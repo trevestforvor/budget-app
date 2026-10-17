@@ -169,7 +169,8 @@ struct DataHealthTests {
             return link
         }
         #expect(ledger.dataHealth(institutions: [chase(syncedDaysAgo: 0.1)]).map(\.id) == ["stale-owed"], "the unused card isn't flagged; the one with a balance is")
-        #expect(ledger.dataHealth(institutions: [chase(syncedDaysAgo: 9)]).map(\.id) == ["stale-united", "stale-owed"], "a link not heard from lately proves nothing")
+        #expect(ledger.dataHealth(institutions: [chase(syncedDaysAgo: 9)]).map(\.id) == ["sync-stale-united", "sync-stale-owed"],
+                "a link not heard from in 9 days leaves both behind (sync health counts from it before an account's first stamp)")
         #expect(ledger.dataHealth(institutions: [chase(syncedDaysAgo: 0.1, error: "timeout")]).map(\.id) == ["stale-united", "stale-owed"])
         #expect(ledger.dataHealth(institutions: []).map(\.id) == ["stale-united", "stale-owed"])
     }

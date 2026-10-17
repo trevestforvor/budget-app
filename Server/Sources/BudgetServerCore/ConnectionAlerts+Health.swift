@@ -4,14 +4,18 @@ import Foundation
 extension ConnectionAlerts {
     /// The pushes account health calls for now: one bank behind a SimpleFIN link needing a sign-in (keyed by when it
     /// began), and accounts gone stale (keyed by their last good sync, so the next good sync ends the episode). An
-    /// account waiting for a sign-in is never pushed as stale: its link's sign-in push covers it. Pure, so it's tested
-    /// directly; the sender calls it with the overview's health and accounts.
+    /// account waiting for a sign-in is never pushed as stale: its link's sign-in push covers it. Nor is one from a
+    /// provider whose setup is broken on the server (a link with `errorKind` providerSetup): that link's own push says
+    /// why everything stopped. Pure, so it's tested directly; the sender calls it with the overview's health and accounts.
     /// - Parameters:
     ///   - accounts: the ledger's accounts, to name them; without them the push says "An account".
     ///   - timeZone: the phone's zone, for the date in the copy.
     static func healthAlerts(_ health: [AccountHealth], links: [StoredLink], now: Date, accounts: [Account] = [],
                              timeZone: TimeZone = .current) -> [ConnectionAlert] {
-        bankAlerts(links) + staleAlerts(health, accounts: accounts, timeZone: timeZone)
+        let broken = Set(links.filter { $0.errorKind == .providerSetup }.map(\.provider))
+        let byID = Dictionary(accounts.map { ($0.id, $0) }, uniquingKeysWith: { first, _ in first })
+        let pushable = health.filter { item in byID[item.id].map { !broken.contains($0.source) } ?? true }
+        return bankAlerts(links) + staleAlerts(pushable, accounts: accounts, timeZone: timeZone)
     }
 
     static func bankAlerts(_ links: [StoredLink]) -> [ConnectionAlert] {
@@ -28,8 +32,11 @@ extension ConnectionAlerts {
     }
 
     /// One push per institution whose accounts went stale, so a bank that stops answering is one push, not one per
-    /// account. Its first key is the account longest unheard from; every stale account's key rides along, so one that
-    /// joins later, or the first one recovering, doesn't push again.
+    /// account. Its first key is the account longest unheard from; every stale account's key rides along. The sender
+    /// skips an alert whose first key went out and marks keys only when it sends, so accounts that go stale together
+    /// push once, and one still stale when the first recovers doesn't push again. One that goes stale later, while the
+    /// first is still stale, isn't announced then (its institution's push already went); it pushes once the first
+    /// recovers, if it's still behind.
     static func staleAlerts(_ health: [AccountHealth], accounts: [Account], timeZone: TimeZone) -> [ConnectionAlert] {
         let byID = Dictionary(accounts.map { ($0.id, $0) }, uniquingKeysWith: { first, _ in first })
         let stale = health.compactMap { item in item.state == .stale ? item.lastGoodSync.map { (item, $0) } : nil }

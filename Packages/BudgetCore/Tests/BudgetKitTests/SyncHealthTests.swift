@@ -2,8 +2,8 @@ import Foundation
 import Testing
 @testable import BudgetKit
 
-/// A clock a test moves forward.
-final class TestClock: @unchecked Sendable {
+/// A clock a sync-health test moves forward.
+final class SyncHealthClock: @unchecked Sendable {
     private let lock = NSLock()
     private var _now: Date
     init(_ now: Date) { _now = now }
@@ -22,9 +22,9 @@ enum HealthFixture {
     }
 
     static func link(_ id: String = "plaid-1", institution: String = "Harbor", provider: SourceKind = .plaid, status: ConnectionStatus = .connected,
-                     accountIDs: [String]? = nil, syncLinkID: String? = nil) -> InstitutionLink {
+                     accountIDs: [String]? = nil, syncLinkID: String? = nil, syncedDaysAgo: Double? = 0.1) -> InstitutionLink {
         InstitutionLink(id: id, institution: institution, primary: provider, fallback: nil, accountKinds: [], status: status, note: "",
-                        lastSync: day(0.1), accountIDs: accountIDs, syncLinkID: syncLinkID)
+                        lastSync: syncedDaysAgo.map(day), accountIDs: accountIDs, syncLinkID: syncLinkID)
     }
 
     static func health(_ accounts: [Account], rows: [LedgerTransaction] = [], links: [InstitutionLink]) -> [String: AccountHealth] {
@@ -39,7 +39,7 @@ enum HealthFixture {
                       ], holdings: [])
     }
 
-    static func api(clock: TestClock) -> LedgerBudgetAPI {
+    static func api(clock: SyncHealthClock) -> LedgerBudgetAPI {
         LedgerBudgetAPI(state: .empty, calendar: Fixture.calendar, clock: { clock.now }, chatModel: nil, decisions: DecisionRouting(),
                         persistence: nil, deployment: DeploymentInfo(endpoint: "test", version: "t", sources: [.plaid], institutions: []))
     }
@@ -49,7 +49,7 @@ enum HealthFixture {
 struct SyncHealthTests {
     @Test("A clean pull stamps the account as synced and keeps the bank's own balance date")
     func ingestStampsLastSyncedAndBalanceAsOf() async throws {
-        let clock = TestClock(HealthFixture.now)
+        let clock = SyncHealthClock(HealthFixture.now)
         let api = HealthFixture.api(clock: clock)
         let bankDate = HealthFixture.day(1)
         _ = try await api.ingest(SourceSnapshot(source: .plaid, accounts: [HealthFixture.source("a", balanceDate: bankDate)], warnings: []), batchID: "s1")
@@ -64,15 +64,17 @@ struct SyncHealthTests {
 
     @Test("An imported statement isn't a sync: it never stamps lastSyncedAt")
     func fileImportDoesNotStampLastSynced() async throws {
-        let api = HealthFixture.api(clock: TestClock(HealthFixture.now))
+        let api = HealthFixture.api(clock: SyncHealthClock(HealthFixture.now))
         _ = try await api.ingest(SourceSnapshot(source: .fileImport, accounts: [HealthFixture.source("stmt", balanceDate: HealthFixture.day(3))], warnings: []), batchID: "f1")
         let account = try #require(await api.accountList().first)
-        #expect(account.lastSyncedAt == nil && account.balanceAsOf == HealthFixture.day(3))
+        #expect(account.lastSyncedAt == nil)
+        // Nor does it give the account a balance date: the import's stamp is the day it ran, not the statement's.
+        #expect(try await api.overview().accountHealth?.first { $0.id == account.id }?.balanceAsOf == nil)
     }
 
     @Test("An account the provider had a problem with isn't stamped; the rest of the pull is")
     func accountWithProblemNotStamped() async throws {
-        let api = HealthFixture.api(clock: TestClock(HealthFixture.now))
+        let api = HealthFixture.api(clock: SyncHealthClock(HealthFixture.now))
         var snapshot = SourceSnapshot(source: .simplefin, accounts: [HealthFixture.source("ok", balanceDate: HealthFixture.now),
                                                                      HealthFixture.source("broken", name: "Card", balanceDate: HealthFixture.day(4))], warnings: [])
         snapshot.accountProblems = ["broken": .needsSignIn(code: "con.auth")]
@@ -122,6 +124,10 @@ struct SyncHealthTests {
         #expect(overdue.state == .statementsOverdue && overdue.staleSince != nil)
         #expect(overdue.lastGoodSync == Fixture.calendar.startOfDay(for: HealthFixture.day(41)))
         #expect(Ledger.statementStaleAfterDays == 40)
+        // A statement account has no balance date, whatever the import stamped on it.
+        let stamped = HealthFixture.account("stmt", institution: "Keystone", source: .fileImport, balanceDaysAgo: 0)
+        let rows = [MonthFixture.row("b", "stmt", daysAgo: 41, -30, source: .fileImport)]
+        #expect(HealthFixture.health([stamped], rows: rows, links: [])["stmt"]?.balanceAsOf == nil)
         // No rows at all yet: nothing to be overdue against.
         #expect(HealthFixture.health([HealthFixture.account("empty", source: .fileImport)], links: [])["empty"]?.state == .notSynced)
     }
@@ -145,17 +151,43 @@ struct SyncHealthTests {
         #expect(items.first { $0.id == "sync-stale-b" }?.linkID == "sf")
     }
 
-    @Test("Not synced: no link brings the account any more, or no clean pull since stamping began (0.6.0)")
+    @Test("Not synced: no link brings the account any more, or its link hasn't synced cleanly yet")
     func notSynced() {
         let health = HealthFixture.health([HealthFixture.account("unlinked", institution: "Gone", syncedDaysAgo: 30),
-                                           HealthFixture.account("unstamped")], links: [HealthFixture.link()])
+                                           HealthFixture.account("unstamped")], links: [HealthFixture.link(syncedDaysAgo: nil)])
         #expect(health["unlinked"]?.state == .notSynced && health["unlinked"]?.lastGoodSync == HealthFixture.day(30))
-        #expect(health["unstamped"]?.state == .notSynced)
+        #expect(health["unstamped"]?.state == .notSynced && health["unstamped"]?.lastGoodSync == nil)
         // Neither is pushed nor listed as stale.
         let attention = MonthFixture.ledger(accounts: [HealthFixture.account("unlinked", institution: "Gone", syncedDaysAgo: 30)],
                                             rows: [MonthFixture.row("r", "unlinked", daysAgo: 31, -5)])
             .dataHealth(institutions: [HealthFixture.link()])
         #expect(!attention.contains { $0.reason == .syncStale })
+    }
+
+    @Test("An account never stamped counts from its link's last clean sync: current after a recent one, stale after three days")
+    func unstampedCountsFromItsLink() throws {
+        let fresh = HealthFixture.health([HealthFixture.account("card")], links: [HealthFixture.link()])["card"]
+        #expect(fresh?.state == .current && fresh?.lastGoodSync == HealthFixture.day(0.1))
+        // Its link has failed for three days since 0.6.0 came up, so the account was never stamped: it's still behind.
+        let accounts = [HealthFixture.account("card", kind: .investment)]
+        let failing = HealthFixture.link(syncedDaysAgo: 3)
+        let old = try #require(HealthFixture.health(accounts, links: [failing])["card"])
+        #expect(old.state == .stale && old.lastGoodSync == HealthFixture.day(3) && old.staleSince == HealthFixture.day(1))
+        let attention = MonthFixture.ledger(accounts: accounts, rows: [MonthFixture.row("r", "card", daysAgo: 4, -5)]).dataHealth(institutions: [failing])
+        #expect(attention.contains { $0.id == "sync-stale-card" && $0.reason == .syncStale })
+    }
+
+    @Test("A SimpleFIN account whose bank date stopped moving goes stale though its pulls succeed; Plaid's doesn't count")
+    func simplefinBalanceDateStops() throws {
+        let link = HealthFixture.link("sf", provider: .simplefin)
+        let stuck = HealthFixture.account("sf-card", source: .simplefin, syncedDaysAgo: 0.1, balanceDaysAgo: 3)
+        let health = try #require(HealthFixture.health([stuck], links: [link])["sf-card"])
+        #expect(health.state == .stale && health.lastGoodSync == HealthFixture.day(3) && health.balanceAsOf == HealthFixture.day(3))
+        // Moving again (a day old) is current.
+        let moving = HealthFixture.account("sf-card", source: .simplefin, syncedDaysAgo: 0.1, balanceDaysAgo: 1)
+        #expect(HealthFixture.health([moving], links: [link])["sf-card"]?.state == .current)
+        let plaid = HealthFixture.account("p-card", syncedDaysAgo: 0.1, balanceDaysAgo: 3)
+        #expect(HealthFixture.health([plaid], links: [HealthFixture.link()])["p-card"]?.state == .current)
     }
 
     @Test("Investment accounts count: their balance feeds net worth")
@@ -164,11 +196,13 @@ struct SyncHealthTests {
         #expect(health["brokerage"]?.state == .stale)
     }
 
-    @Test("A ledger stored before 0.6.0 decodes without the new account fields, and its accounts read as not synced")
+    @Test("A ledger stored before 0.6.0 decodes without the new account fields, and its accounts go by their link")
     func oldLedgerDecodesWithoutNewFields() throws {
         let json = #"{"id":"plaid:x","name":"Freedom","institution":"Harbor","kind":"credit","balance":{"minor":-100,"currency":"USD"},"source":"plaid"}"#
         let account = try JSONDecoder().decode(Account.self, from: Data(json.utf8))
         #expect(account.lastSyncedAt == nil && account.balanceAsOf == nil)
-        #expect(HealthFixture.health([account], links: [HealthFixture.link()])[account.id]?.state == .notSynced)
+        // Until its first stamp it goes by its link's last clean sync; with no link, it isn't synced.
+        #expect(HealthFixture.health([account], links: [HealthFixture.link()])[account.id]?.state == .current)
+        #expect(HealthFixture.health([account], links: [])[account.id]?.state == .notSynced)
     }
 }

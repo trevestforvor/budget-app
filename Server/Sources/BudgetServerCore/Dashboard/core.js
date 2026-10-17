@@ -654,10 +654,14 @@ function groupState(g, hours) {
     if (!lastSync) return { tone: tellerNote ? "watch" : "neutral", label: "Waiting for the first sync", detail: [via && `via ${via}`, tellerNote] };
     const stale = health.filter((x) => x.state === "stale");
     if (stale.length) {
+      // The link may have synced since ("Updated 2 hours ago") without bringing these accounts, so the header says
+      // how far behind they are, not when the link last ran.
       const since = stale.map((x) => x.lastGoodSync).filter(Boolean).sort()[0] || lastSync;
+      if (stale.length === g.accounts.length) {
+        return { tone: "watch", label: `Not updated since ${dateShort(since)}`, detail: [via && `via ${via}`, tellerNote], lastSync: since, stale: true };
+      }
       return { tone: "watch", label: `Updated ${ago(lastSync)}`,
-        detail: [via && `via ${via}`, stale.length === g.accounts.length ? `nothing new since ${dateShort(since)}` : `${plural(stale.length, "account")} behind since ${dateShort(since)}`, tellerNote],
-        lastSync: since, stale: true };
+        detail: [via && `via ${via}`, `${plural(stale.length, "account")} not updated since ${dateShort(since)}`, tellerNote], lastSync: since, stale: true };
     }
     return { tone: tellerNote ? "watch" : "ok", label: `Updated ${ago(lastSync)}`, detail: [via && `via ${via}`, tellerNote], lastSync };
   }

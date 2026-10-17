@@ -108,6 +108,37 @@ struct StaleAlertTests {
         #expect(Self.deliver(later, sent: &sent).isEmpty)
     }
 
+    @Test("One that goes stale while the first still is isn't announced then; it pushes once the first recovers")
+    func lateJoinerPushesAfterFirstRecovers() {
+        let early = Self.start, late = Self.start.addingTimeInterval(86_400)
+        let accounts = [Self.account("a", "Freedom"), Self.account("b", "Sapphire")]
+        func alerts(_ health: [AccountHealth]) -> [ConnectionAlert] {
+            ConnectionAlerts.healthAlerts(health, links: [], now: late, accounts: accounts, timeZone: Self.zone)
+        }
+        var sent: Set<String> = []
+        #expect(Self.deliver(alerts([Self.stale("a", lastGoodSync: early)]), sent: &sent).count == 1)
+        // B joins: Harbor's push already went, so nothing new.
+        #expect(Self.deliver(alerts([Self.stale("a", lastGoodSync: early), Self.stale("b", lastGoodSync: late)]), sent: &sent).isEmpty)
+        // A recovers with B still behind: B's own push, once.
+        let joined = Self.deliver(alerts([Self.stale("b", lastGoodSync: late)]), sent: &sent)
+        #expect(joined.count == 1 && joined[0].accountID == "b" && joined[0].title.hasPrefix("Harbor Sapphire"))
+        #expect(Self.deliver(alerts([Self.stale("b", lastGoodSync: late)]), sent: &sent).isEmpty)
+    }
+
+    @Test("No stale push for a provider whose setup is broken on the server: that link's own push says why")
+    func noStalePushWhileProviderSetupBroken() throws {
+        var plaid = StoredLink(id: "plaid-1", provider: .plaid, institution: "Harbor", externalID: nil, sealedToken: "x",
+                               cursor: nil, status: .connected, lastSync: Self.start, lastError: "INVALID_API_KEYS", createdAt: Self.start)
+        plaid.errorKind = .providerSetup
+        var sfin = Self.account("simplefin:gold", "Gold Card", institution: "Summit")
+        sfin.source = .simplefin
+        let accounts = [Self.account("plaid:freedom", "Freedom"), Self.account("plaid:onyx", "Onyx", institution: "Keystone"), sfin]
+        let health = accounts.map { Self.stale($0.id, lastGoodSync: Self.start) }
+        let alerts = ConnectionAlerts.healthAlerts(health, links: [plaid], now: Self.start.addingTimeInterval(3 * 86_400), accounts: accounts, timeZone: Self.zone)
+        // Plaid's accounts at every bank are covered by the setup push; the SimpleFIN one is still its own news.
+        #expect(alerts.map(\.accountID) == ["simplefin:gold"])
+    }
+
     @Test("Without the accounts to name them, the push still goes, unnamed")
     func unnamedFallback() {
         let alerts = ConnectionAlerts.healthAlerts([Self.stale("x", lastGoodSync: Self.start)], links: [], now: Self.start, timeZone: Self.zone)

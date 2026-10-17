@@ -24,9 +24,11 @@ struct AccountHealthLabel: View {
         }
     }
 
-    /// "Balance as of Oct 16", from the bank's own date for it.
+    /// "Balance as of Oct 16", from the bank's own date for it. None for a statement account: its import stamps the
+    /// day it ran, not the statement's.
     static func asOf(account: Account, health: AccountHealth?) -> String? {
-        (health?.balanceAsOf ?? account.balanceAsOf).map { "Balance as of \($0.formatted(.dateTime.month(.abbreviated).day()))" }
+        guard account.source != .fileImport else { return nil }
+        return (health?.balanceAsOf ?? account.balanceAsOf).map { "Balance as of \($0.formatted(.dateTime.month(.abbreviated).day()))" }
     }
 
     static func tag(_ health: AccountHealth?) -> (text: String, symbol: String, tint: Color)? {
