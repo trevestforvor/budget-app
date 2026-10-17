@@ -165,22 +165,49 @@ function historyRow(record) {
       (r.warnings || []).map((w) => h("div", { class: "warn-line" }, h("span", { class: "dot watch", "aria-hidden": "true" }), h("span", {}, "Warning: ", w))),
       hideNote ? h("div", { class: "help" }, hideNote) : null,
       details("Details", how),
-      !record.rolledBack && !failed && r.duplicatesSkipped ? alreadyHere(record) : null),
+      !record.rolledBack && !failed && (r.duplicatesSkipped || mergeCounts[record.batchID]) ? alreadyHere(record) : null),
     h("div", { class: "row-actions" }, actions));
 }
 
-/// "N already here", opened: each row the batch skipped (and any statement copy swept or merged since), with what it
-/// matched and Bring back. Read from the merge log (server 0.6.0) when opened; an older server has none to show.
+/// Open merge-log entries per batch (GET /v1/merges/by-batch, server 0.6.0), so an import whose rows were swept or
+/// merged later lists them even when it skipped nothing. Reloaded with the history; an older server has none.
+let mergeCounts = {};
+async function loadMergeCounts() {
+  try { mergeCounts = (await api("/v1/merges/by-batch")) || {}; } catch { mergeCounts = {}; }
+}
+
+/// What Bring back did, in a toast: filed now, waiting in Review, or left for the decision model (`MergeUndoResult`).
+function broughtBack(r) {
+  if (r.restored === 1) {
+    return r.waiting ? "Brought back. The decision model files it when the server next syncs or imports."
+      : r.toReview ? "Brought back. It's waiting in Review for a category." : "Brought back and filed.";
+  }
+  const parts = [r.filed ? `${count(r.filed)} filed` : null, r.toReview ? `${count(r.toReview)} waiting in Review` : null,
+    r.waiting ? `${count(r.waiting)} for the decision model to file when the server next syncs or imports, a few hundred at a time` : null].filter(Boolean);
+  return `Brought back ${plural(r.restored, "transaction")}${parts.length ? `: ${parts.join(", ")}` : ""}.`;
+}
+
+/// "N already here" (or, for an import that skipped nothing, "N merged"), opened: each row the batch skipped and any
+/// statement copy swept or merged since, with what it matched and Bring back. Read from the merge log (server 0.6.0)
+/// when opened; an older server has none to show.
 function alreadyHere(record) {
+  const r = record.report;
   const list = h("div", { class: "rows" });
   const line = (t) => `${dateShort(t.postedAt)} · ${t.rawDescription} · ${money(t.amount)}`;
   const KIND_LABEL = { skippedIncoming: "Already here", sweptFileCopy: "Removed as a copy", duplicateResolved: "You said same charge" };
+  // Rows an earlier import skipped (or merged) first are listed under that import, not this one.
+  const before = r.duplicatesSkippedBefore || 0;
+  const beforeNote = before ? h("div", { class: "help" }, `${plural(before, "row")} ${before === 1 ? "was" : "were"} skipped or merged by an earlier import first; ${before === 1 ? "it's" : "they're"} listed under that import, with Bring back.`) : null;
   const load = async () => {
     fill(list, h("div", { class: "help" }, "Loading…"));
     try {
       const merges = await api(`/v1/merges?batch=${encodeURIComponent(record.batchID)}`);
       const open = merges.filter((m) => !m.undoneAt);
-      if (!open.length) { fill(list, h("div", { class: "help" }, merges.length ? "All of them were brought back." : "Rows skipped before this server kept a log can't be listed.")); return; }
+      if (!open.length) {
+        fill(list, beforeNote && !merges.length ? beforeNote
+          : h("div", { class: "help" }, merges.length ? "All of them were brought back." : "Rows skipped before this server kept a log can't be listed."));
+        return;
+      }
       const skipped = open.filter((m) => m.kind === "skippedIncoming").length;
       fill(list,
         open.map((m) => h("div", { class: "row" },
@@ -188,15 +215,14 @@ function alreadyHere(record) {
             m.keptID ? h("div", { class: "sub wrap" }, `Matched ${SOURCE[(m.keptBefore || {}).source] || "a row already in the ledger"}${m.keptBefore ? `: ${line(m.keptBefore)}` : ""}`) : null),
           button("Bring back", { kind: "quiet", compact: true, "aria-label": `Bring back ${m.dropped.rawDescription} on ${dateShort(m.dropped.postedAt)}`,
             onclick: (e) => busy(e.currentTarget, "Bringing back…", async () => {
-              await api(`/v1/merges/${encodeURIComponent(m.id)}/undo`, { method: "POST" });
-              toast("Brought back. It's filed at the next sync.");
+              toast(broughtBack(await api(`/v1/merges/${encodeURIComponent(m.id)}/undo`, { method: "POST" })));
               await afterWrite();
               await load();
             }) }))),
+        beforeNote,
         skipped > 1 ? h("div", { class: "card-foot" }, button(`Bring back all ${skipped}`, { compact: true, onclick: (e) => armed(e.currentTarget, `Click again to add ${plural(skipped, "row")} anyway`, async () => {
           try {
-            const r = await api(`/v1/imports/${encodeURIComponent(record.batchID)}/merges/undo`, { method: "POST" });
-            toast(`Brought back ${plural(r.restored, "transaction")}.`);
+            toast(broughtBack(await api(`/v1/imports/${encodeURIComponent(record.batchID)}/merges/undo`, { method: "POST" })));
             await afterWrite();
             await load();
           } catch (error) { reportError(error); }
@@ -206,8 +232,9 @@ function alreadyHere(record) {
     }
   };
   let loaded = false;
+  const merged = mergeCounts[record.batchID] || 0;
   return h("details", { class: "disclosure", ontoggle: (e) => { if (e.currentTarget.open && !loaded) { loaded = true; load(); } } },
-    h("summary", {}, `${count(record.report.duplicatesSkipped)} already here`), list);
+    h("summary", {}, r.duplicatesSkipped ? `${count(r.duplicatesSkipped)} already here` : `${count(merged)} merged or removed as copies`), list);
 }
 
 /// Undo, armed by a second click. With `ask` (a SimpleFIN sync) the first click asks the server what Undo would do, and
@@ -329,6 +356,7 @@ export default {
   navigate({ params }) { this.preselect = params.get("account") || ""; this.render(); },
   refresh({ after } = {}) {
     if (after && this.coverage && cached("coverage") === undefined) loadInto(this.coverage, () => heavy("coverage"), renderCoverage);
+    if (after) loadMergeCounts().then(() => this.refresh());
     if (!this.history || isArmed(this.history) || this.history.querySelector(".busy")) return;
     if (after) this.limit = Math.max(50, this.limit);
     this.renderHistory();
@@ -349,6 +377,7 @@ export default {
       this.history);
     this.renderFlow();
     this.renderHistory();
+    loadMergeCounts().then(() => this.refresh());
   },
 
   /// Accounts × the last 24 months (GET /dash/coverage): which months have transactions, and which don't.

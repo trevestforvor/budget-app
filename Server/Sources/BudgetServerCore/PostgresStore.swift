@@ -92,7 +92,11 @@ public final class PostgresStore: ServerStore, Sendable {
 
     /// Splits a state into (documents without rows or the merge log, rows by id).
     static func split(_ state: LedgerState) throws -> (docs: [String: JSONValue], rows: [String: LedgerTransaction]) {
-        guard case var .object(fields) = try JSONValue.parse(encoder.encode(state)) else { return ([:], [:]) }
+        // Rows and the merge log (full row copies) are stored apart, so they aren't encoded here on every save.
+        var rest = state
+        rest.transactions = []
+        rest.mergeLog = []
+        guard case var .object(fields) = try JSONValue.parse(encoder.encode(rest)) else { return ([:], [:]) }
         fields["transactions"] = nil
         fields["mergeLog"] = nil
         return (fields, Dictionary(uniqueKeysWithValues: state.transactions.map { ($0.id, $0) }))

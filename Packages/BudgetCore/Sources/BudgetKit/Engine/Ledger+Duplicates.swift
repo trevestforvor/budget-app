@@ -10,25 +10,39 @@ extension Ledger {
     /// The start of a possible-duplicate review reason; how a reason is recognized as one.
     static let possibleDuplicateLead = "This might be the same charge as one already here"
 
-    /// Adds entries to the merge log under ids of their own ("<kind>-<batch>-<row id>", numbered on a clash), and drops
-    /// entries older than `mergeLogDays`. A row skipped again is logged once: a window source (SimpleFIN) sends its
-    /// recent days on every sync, so the same incoming row is skipped each time until it's brought back.
+    /// The start of the reason a kept row carries when the person said it's the same charge but it still needs a category.
+    static let sameChargeLead = "You said this is the same charge as the one from"
+
+    /// Adds entries to the merge log under ids of their own ("<kind>-<batch>-<n>", numbered within the batch), and drops
+    /// entries older than `mergeLogDays`. The id never holds the row id: a row id made before the statement-id upgrade
+    /// can hold an account number, and `renameIDs` renames the row ids inside an entry, not the entry's own id. A row
+    /// skipped again is logged once: a window source (SimpleFIN) sends its recent days on every sync, so the same
+    /// incoming row is skipped each time until it's brought back (`IngestReport.duplicatesSkippedBefore` counts those).
     mutating func appendMerges(_ records: [RowMergeRecord]) {
         let cutoff = now.addingTimeInterval(-Double(Self.mergeLogDays) * 86_400)
         mergeLog.removeAll { $0.at < cutoff }
         guard !records.isEmpty else { return }
         // Built once per call: a statement import can log thousands of skipped rows.
         var taken = Set(mergeLog.map(\.id))
+        var next: [String: Int] = [:]
         var skipped = Set(mergeLog.filter { $0.kind == .skippedIncoming && $0.undoneAt == nil }.map(\.droppedID))
         for var record in records {
             if record.kind == .skippedIncoming { guard skipped.insert(record.droppedID).inserted else { continue } }
-            let base = "\(record.kind.rawValue)-\(record.batchID ?? "none")-\(record.droppedID)"
-            var id = base, n = 1
-            while taken.contains(id) { n += 1; id = "\(base)-\(n)" }
-            taken.insert(id)
-            record.id = id
+            let base = "\(record.kind.rawValue)-\(record.batchID ?? "none")"
+            var n = next[base] ?? 1
+            while taken.contains("\(base)-\(n)") { n += 1 }
+            next[base] = n + 1
+            record.id = "\(base)-\(n)"
+            taken.insert(record.id)
             mergeLog.append(record)
         }
+    }
+
+    /// Incoming row ids the ledger already let go of on purpose: rows the person said are the same charge as another, and
+    /// statement copies swept once the provider's own row arrived. The same file or sync sending one again doesn't add
+    /// it back; Bring back does.
+    var mergedAway: Set<String> {
+        Set(mergeLog.lazy.filter { $0.undoneAt == nil && ($0.kind == .duplicateResolved || $0.kind == .sweptFileCopy) }.map(\.droppedID))
     }
 
     /// What a merge carries from the row that goes onto the row that stays: the person's own category (and, when the
@@ -109,7 +123,7 @@ extension Ledger {
             suggestions[keptID] = nil
             reviewReasons[keptID] = nil
         } else if reviewReasons[keptID]?.hasPrefix(Self.possibleDuplicateLead) == true {
-            reviewReasons[keptID] = "You said this is the same charge as the one from \(dropped.source.displayName); it still needs a category."
+            reviewReasons[keptID] = "\(Self.sameChargeLead) \(dropped.source.displayName); it still needs a category."
         }
         // The dropped row's transfer pairing moves to the kept row, when it has none of its own.
         if transactions[keptIndex].transferPeerID == nil, let peer = dropped.transferPeerID,
@@ -147,51 +161,90 @@ extension Ledger {
         }
     }
 
-    /// Brings a logged row back. The kept row gets back what it had before the merge only if nobody changed it since;
-    /// otherwise the person's later edits stand. A skipped incoming row comes back with no category, so the next
-    /// ingest files it (`awaitingModel`). Returns 1.
-    mutating func undoMerge(id: String) throws -> Int {
-        guard let r = mergeLog.firstIndex(where: { $0.id == id }) else { throw BudgetAPIError.notFound }
-        var record = mergeLog[r]
+    /// Brings a logged row back, refusing with the reason when it can't. Returns the restored row's id.
+    mutating func undoMerge(id: String) throws -> [String] {
+        guard let record = mergeLog.first(where: { $0.id == id }) else { throw BudgetAPIError.notFound }
         guard record.undoneAt == nil else { throw BudgetAPIError.rejected("That transaction was already brought back.") }
         guard !transactions.contains(where: { $0.id == record.droppedID }) else { throw BudgetAPIError.rejected("That transaction is already in the ledger.") }
         guard accounts.contains(where: { $0.id == record.dropped.accountID }) else {
             throw BudgetAPIError.rejected("Its account isn't in the ledger anymore, so it can't come back.")
         }
-        var restored = record.dropped
-        restored.id = record.droppedID
-        if let keptID = record.keptID, let k = transactions.firstIndex(where: { $0.id == keptID }), let before = record.keptBefore {
-            var expected = before
-            Self.carryOnMerge(from: record.dropped, to: &expected, kind: record.kind)
-            if CarriedFields(transactions[k]) == CarriedFields(expected) {
-                CarriedFields(before).restore(onto: &transactions[k])
-                if transactions[k].categorization?.needsReview != true { reviewReasons[keptID] = nil }
-            }
-            // A pairing that moved onto the kept row goes back with its row.
-            if before.transferPeerID == nil, let peer = record.dropped.transferPeerID, transactions[k].transferPeerID == peer {
-                transactions[k].transferPeerID = nil
-            }
-        }
-        if let peer = restored.transferPeerID {
-            if let p = transactions.firstIndex(where: { $0.id == peer }),
-               transactions[p].transferPeerID == nil || transactions[p].transferPeerID == record.keptID {
-                transactions[p].transferPeerID = restored.id
-            } else {
-                restored.transferPeerID = nil
-            }
-        }
-        transactions.append(restored)
-        transactions.sort { $0.postedAt > $1.postedAt }
-        record.undoneAt = now
-        mergeLog[r] = record
-        reanchor(restored.accountID)
-        unpairOrphans()
-        return 1
+        return undoMerges([id])
     }
 
-    /// "Import the skipped rows anyway": brings back every row a batch skipped as already here. Returns how many came back.
-    mutating func undoSkipped(batchID: String) -> Int {
-        let ids = mergeLog.filter { $0.batchID == batchID && $0.kind == .skippedIncoming && $0.undoneAt == nil }.map(\.id)
-        return ids.reduce(0) { $0 + ((try? undoMerge(id: $1)) ?? 0) }
+    /// "Import the skipped rows anyway": brings back every row a batch skipped as already here. Returns the restored ids.
+    mutating func undoSkipped(batchID: String) -> [String] {
+        undoMerges(mergeLog.filter { $0.batchID == batchID && $0.kind == .skippedIncoming && $0.undoneAt == nil }.map(\.id))
+    }
+
+    /// Brings logged rows back, all in one pass: one sort, one re-anchor per account and one unpairing however many come
+    /// back (a big statement can have thousands of skipped rows, and this runs inside a ledger write). Entries that
+    /// can't come back (already back, their row is here, their account is gone) are passed over. The kept row gets back
+    /// what it had before the merge only if nobody changed it since; otherwise the person's later edits stand. A skipped
+    /// incoming row comes back with no category, for `LedgerBudgetAPI` to file. A Same charge undone asks the question
+    /// again. Returns the restored rows' ids.
+    mutating func undoMerges(_ entryIDs: [String]) -> [String] {
+        let entries = Dictionary(mergeLog.enumerated().map { ($1.id, $0) }, uniquingKeysWith: { first, _ in first })
+        let index = Dictionary(transactions.enumerated().map { ($1.id, $0) }, uniquingKeysWith: { first, _ in first })
+        let accountIDs = Set(accounts.map(\.id))
+        // Rows coming back in this pass, so a transfer whose two sides both come back keeps its pairing.
+        let returning = Set(entryIDs.compactMap { entries[$0] }.map { mergeLog[$0] }.filter { $0.undoneAt == nil }.map(\.droppedID))
+        var restored: [LedgerTransaction] = []
+        var restoredIDs = Set<String>()
+        var askAgain: [String: String] = [:]
+        for id in entryIDs {
+            guard let r = entries[id], case let record = mergeLog[r], record.undoneAt == nil, index[record.droppedID] == nil,
+                  !restoredIDs.contains(record.droppedID), accountIDs.contains(record.dropped.accountID) else { continue }
+            var row = record.dropped
+            row.id = record.droppedID
+            if let keptID = record.keptID, let k = index[keptID], let before = record.keptBefore {
+                var expected = before
+                Self.carryOnMerge(from: record.dropped, to: &expected, kind: record.kind)
+                if CarriedFields(transactions[k]) == CarriedFields(expected) {
+                    CarriedFields(before).restore(onto: &transactions[k])
+                    if transactions[k].categorization?.needsReview != true { reviewReasons[keptID] = nil }
+                }
+                // "You said this is the same charge…" no longer holds.
+                if reviewReasons[keptID]?.hasPrefix(Self.sameChargeLead) == true { reviewReasons[keptID] = nil }
+                // A pairing that moved onto the kept row goes back with its row.
+                if before.transferPeerID == nil, let peer = record.dropped.transferPeerID, transactions[k].transferPeerID == peer {
+                    transactions[k].transferPeerID = nil
+                }
+                if record.kind == .duplicateResolved { askAgain[row.id] = keptID }
+            }
+            if let peer = row.transferPeerID {
+                if let p = index[peer], transactions[p].transferPeerID == nil || transactions[p].transferPeerID == record.keptID {
+                    transactions[p].transferPeerID = row.id
+                } else if index[peer] != nil || !returning.contains(peer) {
+                    row.transferPeerID = nil
+                }
+            }
+            restored.append(row)
+            restoredIDs.insert(row.id)
+            mergeLog[r].undoneAt = now
+        }
+        guard !restored.isEmpty else { return [] }
+        transactions += restored
+        transactions.sort { $0.postedAt > $1.postedAt }
+        for account in Set(restored.map(\.accountID)) { reanchor(account) }
+        unpairOrphans()
+        // The person's Same charge is taken back, so the question is open again, with its reason.
+        for (dropped, kept) in askAgain { possibleDuplicates[dropped] = [kept] }
+        flagPossibleDuplicates(askAgain.keys)
+        return restored.map(\.id)
+    }
+}
+
+extension Categorizer.Outcome {
+    /// Only the rows filed outright (a rule, merchant memory, a transfer match, the statement): rows it would send to
+    /// review are left out, uncategorized, for the decision model to be asked about.
+    var filedOnly: Categorizer.Outcome {
+        let filed = Set(categorizations.filter { !$0.value.needsReview }.keys)
+        var out = self
+        out.categorizations = categorizations.filter { filed.contains($0.key) }
+        out.suggestions = suggestions.filter { filed.contains($0.key) }
+        out.reasons = reasons.filter { filed.contains($0.key) }
+        // Transfer pairs stay: a matched pair is always filed.
+        return out
     }
 }

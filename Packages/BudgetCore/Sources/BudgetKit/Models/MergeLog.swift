@@ -48,3 +48,19 @@ public struct PossibleDuplicate: Identifiable, Hashable, Codable, Sendable {
 
     public init(id: String, row: LedgerTransaction, candidates: [LedgerTransaction]) { self.id = id; self.row = row; self.candidates = candidates }
 }
+
+/// What Bring back did (`POST /v1/merges/:id/undo`, `POST /v1/imports/:batch/merges/undo`).
+public struct MergeUndoResult: Hashable, Codable, Sendable {
+    /// Rows that came back.
+    public var restored: Int
+    /// Of those, filed now: by a rule, merchant memory or a transfer match, or with the category they had when merged.
+    public var filed: Int
+    /// Waiting in Review for a category.
+    public var toReview: Int
+    /// Left for the decision model, which files them when the server next syncs or imports, a few hundred at a time.
+    public var waiting: Int
+
+    public init(restored: Int, filed: Int, toReview: Int, waiting: Int) {
+        self.restored = restored; self.filed = filed; self.toReview = toReview; self.waiting = waiting
+    }
+}

@@ -56,6 +56,9 @@ public struct IngestReport: Hashable, Codable, Sendable {
     public var possibleDuplicates: Int?
     /// Rows a provider sent again with a better description, merchant or category hint. Optional, as above.
     public var namesImproved: Int?
+    /// Of `duplicatesSkipped`, rows an earlier import already skipped (or the person merged, or a sweep removed as a
+    /// statement copy): the merge log lists them under that import, with Bring back. Optional, as above.
+    public var duplicatesSkippedBefore: Int?
     /// Internal hand-off to the categorizer; not part of the wire report.
     var newRowIDs: [String] = []
     /// Internal: the rows `possibleDuplicates` counts, flagged for review once they're categorized.
@@ -70,7 +73,7 @@ public struct IngestReport: Hashable, Codable, Sendable {
     enum CodingKeys: String, CodingKey {
         case batchID, source, accountsAdded, accountsUpdated, rowsAdded, rowsUpdated, duplicatesSkipped, byRule, byMemory, byModel, needsReview, modelCalls, warnings
         case modelMilliseconds, addedFrom, addedThrough, duplicateSamples, byTransferMatch, byStatement, notes
-        case possibleDuplicates, namesImproved
+        case possibleDuplicates, namesImproved, duplicatesSkippedBefore
     }
 
     public struct DuplicateSample: Hashable, Codable, Sendable {
@@ -167,6 +170,11 @@ extension Ledger {
         var touched = Set<String>()
         var skipped: [RowMergeRecord] = []
         let byID = Dictionary(uniqueKeysWithValues: transactions.enumerated().map { ($1.id, $0) })
+        // Rows let go of on purpose stay gone when sent again (an overlapping statement, a re-sent sync row), and rows an
+        // earlier import skipped are counted as skipped before: they're logged under that import.
+        let mergedAway = self.mergedAway
+        let skippedBefore = Set(mergeLog.lazy.filter { $0.kind == .skippedIncoming && $0.undoneAt == nil }.map(\.droppedID))
+        func countSkippedBefore() { report.duplicatesSkippedBefore = (report.duplicatesSkippedBefore ?? 0) + 1 }
 
         for sourceAccount in snapshot.accounts {
             let label = sourceAccount.name + (sourceAccount.mask.map { " ••" + $0 } ?? "")
@@ -244,6 +252,11 @@ extension Ledger {
                     continue
                 }
                 guard addedIDs.insert(id).inserted else { continue }
+                if mergedAway.contains(id) {
+                    report.duplicatesSkipped += 1
+                    countSkippedBefore()
+                    continue
+                }
                 let name = merchant(for: row)
                 var transaction = LedgerTransaction(
                     id: id, accountID: accountID, postedAt: row.posted, merchant: name.merchant, rawDescription: row.description,
@@ -259,7 +272,8 @@ extension Ledger {
                             date: row.posted, amount: row.amount, description: row.description,
                             matchedDate: matched.postedAt, matchedDescription: matched.rawDescription, matchedSource: matched.source)]
                     }
-                    // Logged with both ids and the row it would have been, so the person can bring it back.
+                    // Logged with both ids and the row it would have been, so the person can bring it back (once).
+                    if skippedBefore.contains(id) { countSkippedBefore() }
                     skipped.append(RowMergeRecord(id: "", kind: .skippedIncoming, at: now, batchID: batchID, keptID: matched.id,
                                                   droppedID: id, dropped: transaction))
                     continue
@@ -310,9 +324,10 @@ extension Ledger {
             transactions[index].rawDescription = row.description
             if before.originalMerchant == nil {
                 (transactions[index].merchant, transactions[index].originalMerchant) = merchant(for: row)
-            } else {
-                let bank = Self.merchantName(row)
-                transactions[index].originalMerchant = bank == before.merchant ? nil : bank
+            } else if case let bank = Self.merchantName(row), bank != before.merchant {
+                // When the bank's new name is the person's own, "what the bank calls it" is left as it was: clearing it
+                // would read as "never renamed", and the next re-send would put the bank's name over theirs.
+                transactions[index].originalMerchant = bank
             }
         }
         return transactions[index] != before

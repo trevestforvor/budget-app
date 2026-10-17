@@ -35,7 +35,7 @@ function renderDuplicates(panel, { force = false } = {}) {
 async function answerLookAlike(panel, item, sameAs, e) {
   await busy(e.currentTarget, "Saving…", async () => {
     const r = await api(`/v1/duplicates/${encodeURIComponent(item.id)}`, { method: "POST", body: { sameAs } });
-    toast(r.merged ? "Merged into one transaction. Bring it back from Imports if that was wrong." : "Kept both. File it as usual.");
+    toast(r.merged ? "Merged into one transaction. If that was wrong, Bring back is in Imports, under the import or sync it came in with." : "Kept both. File it as usual.");
     await afterWrite();
     renderDuplicates(panel, { force: true });
   });
@@ -78,7 +78,7 @@ function drawDuplicates(panel, r) {
     } catch (error) { reportError(error); }
   }) });
   fill(panel, alike, h("section", { class: "card stack" },
-    h("p", { class: "t-callout muted" }, `${plural(n, "transaction")} came in from an imported statement and again from a sync. Removing keeps the synced copy, which stays current; Imports lists each one, to bring back.`),
+    h("p", { class: "t-callout muted" }, `${plural(n, "transaction")} came in from an imported statement and again from a sync. Removing keeps the synced copy, which stays current; Imports lists each one under its statement, to bring back.`),
     unclear,
     h("table", { class: "table stack-phone dupes-table" },
       h("thead", {}, h("tr", {}, h("th", {}, "Account"), h("th", {}, "From the statement"), h("th", {}, "From the sync"), h("th", { class: "numcol" }, "Amount"))),

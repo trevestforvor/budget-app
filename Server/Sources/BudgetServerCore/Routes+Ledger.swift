@@ -29,15 +29,20 @@ func addLedgerSafetyRoutes(_ router: Router<BasicRequestContext>, _ service: Bud
             try HTTP.json(await service.api.merges(batchID: request.uri.queryParameters.get("batch")))
         }
 
-        /// Brings one logged row back → `{restored: 1}`. 404 for an unknown entry, 422 when it's already back.
+        /// Open merge-log entries per batch → `{"<batch id>": n}`: which imports have rows to bring back, so the history
+        /// can offer them even for an import that skipped nothing (its copies were swept later, or merged by Same charge).
+        router.get("/v1/merges/by-batch") { _, _ in try HTTP.json(await service.api.openMergeCounts()) }
+
+        /// Brings one logged row back → `MergeUndoResult {restored: 1, filed, toReview, waiting}`. 404 for an unknown
+        /// entry, 422 when it's already back.
         router.post("/v1/merges/:id/undo") { _, context in
-            try HTTP.json(["restored": try await service.api.undoMerge(id: try HTTP.rowID(context))])
+            try HTTP.json(try await service.api.undoMerge(id: try HTTP.rowID(context)))
         }
 
-        /// "Import the skipped rows anyway": every row the batch skipped as already here comes back → `{restored: n}`.
+        /// "Import the skipped rows anyway": every row the batch skipped as already here comes back → `MergeUndoResult`.
         router.post("/v1/imports/:batch/merges/undo") { _, context in
             let batch = try context.parameters.require("batch")
-            return try HTTP.json(["restored": try await service.api.undoSkipped(batchID: batch)])
+            return try HTTP.json(try await service.api.undoSkipped(batchID: batch))
         }
 
         /// What the statement-id upgrade would rename now (`LedgerMigrations.StatementIDCounts`), counts only. Useful

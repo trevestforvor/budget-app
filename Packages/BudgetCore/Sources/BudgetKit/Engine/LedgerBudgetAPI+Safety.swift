@@ -77,15 +77,43 @@ extension LedgerBudgetAPI {
         ledger.mergeLog.filter { batchID == nil || $0.batchID == batchID }.sorted { ($0.at, $0.id) > ($1.at, $1.id) }
     }
 
-    /// Brings one logged row back. Returns how many rows came back (1).
-    public func undoMerge(id: String) async throws -> Int {
-        tick()
-        return try await write { try ledger.undoMerge(id: id) }
+    /// Open merge-log entries per batch: which imports have rows to bring back, even ones that skipped nothing (a statement
+    /// whose copies were swept later, a row the person merged with Same charge).
+    public func openMergeCounts() -> [String: Int] {
+        ledger.mergeLog.reduce(into: [:]) { counts, record in
+            if record.undoneAt == nil, let batch = record.batchID { counts[batch, default: 0] += 1 }
+        }
     }
 
-    /// Brings back every row a batch skipped as already here. Returns how many came back.
-    public func undoSkipped(batchID: String) async throws -> Int {
+    /// Brings one logged row back.
+    public func undoMerge(id: String) async throws -> MergeUndoResult {
         tick()
-        return try await write { ledger.undoSkipped(batchID: batchID) }
+        return try await bringBack { try $0.undoMerge(id: id) }
+    }
+
+    /// Brings back every row a batch skipped as already here.
+    public func undoSkipped(batchID: String) async throws -> MergeUndoResult {
+        tick()
+        return try await bringBack { $0.undoSkipped(batchID: batchID) }
+    }
+
+    /// Runs `undo`, then files the rows that came back with no category right away, by rules, merchant memory and
+    /// transfer matches. With a decision model on, the rest are left for it (`awaitingModel`, at the next sync or
+    /// import); with none, they go to review as an ingest would send them. Worked out on a copy first, the way ingest
+    /// is, since filing is async and a write isn't; then the undo is made again on the ledger and the filing applied.
+    private func bringBack(_ undo: (inout Ledger) throws -> [String]) async throws -> MergeUndoResult {
+        var working = ledger
+        let ids = Set(try undo(&working))
+        let unfiled = working.transactions.filter { ids.contains($0.id) && $0.categorization == nil }.map(\.id)
+        var outcome = await Categorizer.categorize(newRowIDs: unfiled, in: working, model: nil, escalation: nil)
+        if working.decisionPolicy.isActive { outcome = outcome.filedOnly }
+        return try await write {
+            let ids = Set(try undo(&ledger))
+            ledger.apply(outcome.unchanged(since: working, in: ledger))
+            let rows = ledger.transactions.filter { ids.contains($0.id) }
+            let waiting = rows.filter { $0.categorization == nil }.count
+            let toReview = rows.filter { $0.categorization?.needsReview == true }.count
+            return MergeUndoResult(restored: rows.count, filed: rows.count - waiting - toReview, toReview: toReview, waiting: waiting)
+        }
     }
 }

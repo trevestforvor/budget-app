@@ -47,6 +47,10 @@ struct MergeLogTests {
     @Test("An ambiguous statement row is added and waits in review naming both candidates, even when a rule files it")
     func ambiguousWaitsInReview() async throws {
         let api = try await Self.api()
+        // A preview says so before anything changes.
+        let preview = try await api.previewIngest(try FileImport.parse(Self.statement, options: .init(accountKind: .credit)), into: Self.card)
+        #expect(preview.rowsAdded == 1 && preview.duplicatesSkipped == 1 && preview.possibleDuplicates == 1)
+        #expect(await api.possibleDuplicates().isEmpty)
         let report = try await Self.importStatement(api)
         #expect(report.rowsAdded == 1 && report.duplicatesSkipped == 1 && report.possibleDuplicates == 1)
         let flagged = try #require(await api.possibleDuplicates().first)
@@ -55,7 +59,7 @@ struct MergeLogTests {
         let item = try #require(try await api.reviewQueue().first { $0.transaction.id == flagged.id })
         #expect(item.reason.hasPrefix(Ledger.possibleDuplicateLead))
         #expect(item.suggestions.first?.categoryID == "shopping")
-        // A preview says so too, and changes nothing.
+        // Previewing the same statement again adds nothing.
         #expect(try await api.previewIngest(try FileImport.parse(Self.statement, options: .init(accountKind: .credit)), into: Self.card).rowsAdded == 0)
     }
 
@@ -75,7 +79,7 @@ struct MergeLogTests {
         #expect(await api.possibleDuplicates().isEmpty)
         #expect(await api.merges(batchID: "file-1").contains { $0.id == merged.id })
 
-        #expect(try await api.undoMerge(id: merged.id) == 1)
+        #expect(try await api.undoMerge(id: merged.id).restored == 1)
         rows = try await api.transactions(TransactionFilter())
         #expect(rows.count == before && rows.contains { $0.id == id })
         #expect(rows.first { $0.id == "plaid:p-park" }?.note == nil) // the kept row gets back what it had
@@ -121,7 +125,7 @@ struct MergeLogTests {
         }
     }
 
-    @Test("Every row skipped as already here is logged with both ids, and bringing one back adds it uncategorized for the next sync to file")
+    @Test("Every row skipped as already here is logged with both ids, and bringing one back files it right away")
     func skippedRowsLoggedAndBroughtBack() async throws {
         let api = try await Self.api()
         let report = try await Self.importStatement(api)
@@ -131,13 +135,12 @@ struct MergeLogTests {
         #expect(coffee.keptID == "plaid:p-coffee" && coffee.droppedID == coffee.dropped.id && coffee.dropped.categorization == nil)
         #expect(coffee.dropped.batchID == "file-1" && coffee.dropped.source == .fileImport)
 
-        #expect(try await api.undoSkipped(batchID: "file-1") == 1)
+        // No decision model is on here, so what rules and memory don't file goes to review, as an ingest would send it.
+        let result = try await api.undoSkipped(batchID: "file-1")
+        #expect(result.restored == 1 && result.waiting == 0 && result.filed + result.toReview == 1)
         let back = try #require(try await api.transactions(TransactionFilter()).first { $0.id == coffee.droppedID })
-        #expect(back.categorization == nil)
-        #expect(try await api.undoSkipped(batchID: "file-1") == 0) // nothing left to bring back
-        // The next ingest files it.
-        _ = try await api.ingest(Self.plaid([]), batchID: "sync-2")
-        #expect(try await api.transactions(TransactionFilter()).first { $0.id == coffee.droppedID }?.categorization != nil)
+        #expect(back.categorization != nil)
+        #expect(try await api.undoSkipped(batchID: "file-1").restored == 0) // nothing left to bring back
         // Undoing the batch takes it out again, with the batch's other row.
         #expect(try await api.rollback(batchID: "file-1") == 2)
         #expect(await api.possibleDuplicates().isEmpty)
@@ -207,7 +210,7 @@ struct MergeLogTests {
         var swept = record
         swept.kind = .sweptFileCopy
         ledger.appendMerges([swept, swept])
-        #expect(ledger.mergeLog.map(\.id) == ["sweptFileCopy-b-\(old.id)", "sweptFileCopy-b-\(old.id)-2"])
+        #expect(ledger.mergeLog.map(\.id) == ["sweptFileCopy-b-1", "sweptFileCopy-b-2"])
         // A row skipped again (a window source re-sends its last days every sync) is logged once.
         ledger.appendMerges([record])
         var again = record

@@ -87,14 +87,14 @@ struct MergeRouteTests {
             let undo = "/v1/merges/\(resolved.id.addingPercentEncoding(withAllowedCharacters: .urlPathAllowed.subtracting(["/", ":"]))!)/undo"
             try await client.execute(uri: undo, method: .post, headers: Self.dashWrite) { response in
                 #expect(response.status == .ok)
-                let restored = try Self.decode([String: Int].self, response)
-                #expect(restored == ["restored": 1])
+                let result = try Self.decode(MergeUndoResult.self, response)
+                #expect(result.restored == 1)
             }
             try await client.execute(uri: undo, method: .post, headers: Self.dashWrite) { #expect($0.status == .unprocessableContent) }
             // "Import the skipped rows anyway": the coffee comes back.
             try await client.execute(uri: "/v1/imports/\(batch)/merges/undo", method: .post, headers: Self.dashWrite) { response in
-                let restored = try Self.decode([String: Int].self, response)
-                #expect(restored == ["restored": 1])
+                let result = try Self.decode(MergeUndoResult.self, response)
+                #expect(result.restored == 1)
             }
         }
         let rows = try await service.api.transactions(TransactionFilter())
