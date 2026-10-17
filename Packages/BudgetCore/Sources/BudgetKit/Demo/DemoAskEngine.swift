@@ -384,6 +384,11 @@ struct DemoAskEngine {
             lines.append("\(name) \(when): \(left.formatted()) left on its statement"
                          + (bill.minimumPayment.map { " (minimum \($0.formatted()))" } ?? "") + ".")
         }
+        if q.contains("card"), upcoming.cardBills.isEmpty {
+            lines.append(ledger.accounts.contains { $0.kind == .credit }
+                         ? "I don't know your card bills: statements and due dates come only from Plaid's card bills, which aren't on for your cards."
+                         : "No credit cards are linked.")
+        }
         return reply(cid, text: lines.joined(separator: " "), figures: figures, tools: [call("findUpcoming", ["days": .number(30)])],
                      followUps: ["Open my recurring charges", "What's safe to spend this month?"])
     }
