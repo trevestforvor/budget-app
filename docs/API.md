@@ -404,7 +404,14 @@ Not built yet.
 
 ### Holdings
 
-Not built yet.
+| Method | Path | Returns |
+|---|---|---|
+| GET | `/v1/holdings` | `HoldingsReport {accounts, asOf?}`: each investment account's positions as the broker last reported them, the largest account first. `asOf` is the oldest check among them. Read-only, on both listeners. A server before 0.6.0 answers 404, and the app hides the section |
+
+- `accounts: [AccountHoldings {id, holdings, total, fetchedAt, unitemized?}]`. `id` is the ledger account id. `holdings` run largest first. `total` adds the positions in dollars; a position in another currency is set aside, so it isn't in `total`. `unitemized` is the balance less `total` when that's more than $1 and more than 1% of the balance: cash or positions the broker didn't list. Positions worth more than the balance leave it nil.
+- `Holding {id, name, ticker?, type?, quantity?, price?, priceAsOf?, value, costBasis?, isCash}`. `id` is a hash of the account and the security, never a Plaid id. `value` is the broker's own figure. `price` is the broker's price or the last close, whichever is newer by its timestamp. `costBasis` is the whole position's cost. `type` is Plaid's (`equity`, `etf`, `mutual fund`, `fixed income`, `cash`, `cryptocurrency`, `derivative`, `other`). The gain is `value − costBasis`, worked out by the client.
+- **When holdings are fetched:** never during a sync. The daily Item check calls `/investments/holdings/get` once per Item every 24 hours. A `HOLDINGS: DEFAULT_UPDATE` webhook makes the next check run at once, and so does the person asking again after `notReady`, `needsConsent` or `failed`. An Item whose bank has no investment account in the ledger is never asked. Which Items are asked follows Settings → Sync → Investment holdings (`auto`, `on`, `off`).
+- `LinkSummary.holdings: HoldingsCheck {access, checkedAt, accounts?, requestID?, message?, due?}`, with `access` one of `ok`, `needsConsent`, `notSupported`, `noInvestmentAccounts`, `notReady`, `failed`. An unknown value reads as `failed`. The dashboard shows a status line for `notReady`, `needsConsent` and `failed`.
 
 ### Actions: basis
 

@@ -445,6 +445,7 @@ public struct Ledger: Sendable {
         addPlanScenarios()
         addRecurringExamples(today: today)
         addDemoCardBill(owedByMonth: cardChargesByMonth)
+        addDemoHoldings()
         // The demo's rows include answers the model filed, so its settings say the model is on (Qwen Decide at 80%).
         decisionPolicy = DecisionPolicy(provider: .localDecide, autoAcceptPercent: 80, kinds: [.category])
     }
