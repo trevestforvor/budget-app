@@ -4,7 +4,7 @@ import SwiftUI
 
 /// Net worth over time, from Home's balances: today's figure and its change over the range, the chart (investments
 /// before their first recorded balance dashed, as estimated), and what you own and owe — accounts and the assets and
-/// debts you keep by hand, which open to edit.
+/// debts you keep by hand, which open to edit — with each investment account's holdings between the two (server 0.6.0).
 struct NetWorthView: View {
     @Environment(AppModel.self) private var app
     @Environment(\.dynamicTypeSize) private var dynamicTypeSize
@@ -14,34 +14,48 @@ struct NetWorthView: View {
     @State private var unavailable = false
     @State private var editing: ManualAssetSheet.Target?
     @State private var toast: DSToastMessage?
+    /// Positions in investment accounts; nil before a server that has them (0.6.0) answers.
+    @State private var holdings: HoldingsReport?
+    /// An investment line tapped: its holdings card, to scroll to.
+    @State private var scrollTarget: String?
 
     var body: some View {
-        ScrollView {
-            VStack(alignment: .leading, spacing: DSSpace.xl) {
-                if unavailable {
-                    DSStateView(systemImage: "chart.line.uptrend.xyaxis", title: "Not on your server yet",
-                                message: "Net worth history needs a newer Budget server. Update your server, then come back.")
-                } else {
-                    switch state {
-                    case .loading:
-                        LoadingPlaceholder(text: "Adding up what you own and owe…")
-                    case let .failed(message):
-                        DSStateView(systemImage: "wifi.slash", title: "Can't load net worth", message: message, actionTitle: "Try again") {
-                            Task { await load() }
+        ScrollViewReader { proxy in
+            ScrollView {
+                VStack(alignment: .leading, spacing: DSSpace.xl) {
+                    if unavailable {
+                        DSStateView(systemImage: "chart.line.uptrend.xyaxis", title: "Not on your server yet",
+                                    message: "Net worth history needs a newer Budget server. Update your server, then come back.")
+                    } else {
+                        switch state {
+                        case .loading:
+                            LoadingPlaceholder(text: "Adding up what you own and owe…")
+                        case let .failed(message):
+                            DSStateView(systemImage: "wifi.slash", title: "Can't load net worth", message: message, actionTitle: "Try again") {
+                                Task { await load() }
+                            }
+                        case let .loaded(worth):
+                            content(worth)
                         }
-                    case let .loaded(worth):
-                        content(worth)
                     }
                 }
+                .padding(.horizontal, DSSpace.gutter)
+                .padding(.bottom, DSSpace.xxl)
             }
-            .padding(.horizontal, DSSpace.gutter)
-            .padding(.bottom, DSSpace.xxl)
+            .scrollEdgeEffectStyle(.soft, for: .top)
+            .onChange(of: scrollTarget) { _, target in
+                guard let target else { return }
+                withAnimation(.snappy) { proxy.scrollTo(target, anchor: .top) }
+                scrollTarget = nil
+            }
         }
-        .scrollEdgeEffectStyle(.soft, for: .top)
         .dsScreenBackground(bloom: .data)
         .navigationTitle("Net worth")
         .navigationBarTitleDisplayMode(.inline)
-        .reloadable { await load() }
+        .reloadable {
+            await loadHoldings()
+            return await load()
+        }
         .toolbar {
             ToolbarItem(placement: .primaryAction) {
                 Button { editing = .new } label: { Image(systemName: "plus") }
@@ -51,6 +65,7 @@ struct NetWorthView: View {
             }
         }
         .task(id: "\(app.revision)-\(range.rawValue)") { await load() }
+        .task(id: app.revision) { await loadHoldings() }
         .sheet(item: $editing) { target in ManualAssetSheet(target: target, toast: $toast) }
         .dsToast($toast)
     }
@@ -87,6 +102,17 @@ struct NetWorthView: View {
         }
     }
 
+    /// Holdings don't depend on the range. A server before 0.6.0 has none, and the section stays away; a failed read keeps
+    /// what's on screen (or the phone's saved copy).
+    private func loadHoldings() async {
+        guard await app.serverSupports(ServerStatus.holdingsSince), let api = app.api as? any HoldingsAPI else {
+            holdings = nil
+            return
+        }
+        if holdings == nil { holdings = await app.saved(.holdings) }
+        if let fresh = try? await api.holdings() { holdings = fresh }
+    }
+
     // MARK: Content
 
     @ViewBuilder
@@ -97,6 +123,9 @@ struct NetWorthView: View {
             .accessibilityIdentifier("netWorthRange")
         chart(worth)
         breakdown(title: "What you own", total: worth.assets, lines: worth.assetLines, since: worth.start)
+        if let holdings, !holdings.accounts.isEmpty {
+            HoldingsSection(report: holdings, lines: Dictionary(worth.assetLines.map { ($0.id, $0) }, uniquingKeysWith: { first, _ in first }))
+        }
         breakdown(title: "What you owe", total: worth.liabilities, lines: worth.liabilityLines, since: worth.start)
         Button { editing = .new } label: {
             Label("Add an asset or debt", systemImage: "plus")
@@ -104,11 +133,13 @@ struct NetWorthView: View {
         .buttonStyle(.ds(.secondary, fullWidth: true))
         .accessibilityHint("A home, a car or a loan that no bank reports")
         .accessibilityIdentifier("addManualAsset")
-        Text("Cash and cards are traced back through their transactions. Investments hold the balance recorded at each sync. Assets and debts you add count from the day you add them.")
+        Text("Cash and cards are traced back through their transactions. Investments hold the balance recorded at each sync. Assets and debts you add count from the day you add them.\(hasHoldings ? " Holdings come from your broker once a day." : "")")
             .dsFont(.caption)
             .foregroundStyle(Color.ds.inkTertiary)
             .fixedSize(horizontal: false, vertical: true)
     }
+
+    private var hasHoldings: Bool { !(holdings?.accounts.isEmpty ?? true) }
 
     private func hero(_ worth: NetWorth) -> some View {
         let percent = worth.changePercent.map { " (\($0 >= 0 ? "+" : "−")\(abs($0).formatted(.number.precision(.fractionLength(1))))%)" } ?? ""
@@ -209,6 +240,10 @@ struct NetWorthView: View {
                 .buttonStyle(.plain)
                 .accessibilityHint("Edit \(line.name)")
                 .accessibilityIdentifier("manualAsset-\(line.id)")
+        } else if line.group == .investments, holdings?.accounts.contains(where: { $0.id == line.id }) == true {
+            Button { scrollTarget = HoldingsSection.anchor(line.id) } label: { label }
+                .buttonStyle(.plain)
+                .accessibilityHint("Shows its holdings")
         } else {
             label
         }

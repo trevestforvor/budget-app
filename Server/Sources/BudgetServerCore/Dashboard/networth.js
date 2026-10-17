@@ -1,8 +1,10 @@
 // Net worth on the Accounts page: today's figure and its change over a range, the history as a line (the stretch where
 // an investment holds a stand-in value dashed), what you own and owe, and the assets and debts kept by hand — added,
-// edited and removed here through POST /v1/actions (saveManualAsset, removeManualAsset), with Undo.
+// edited and removed here through POST /v1/actions (saveManualAsset, removeManualAsset), with Undo. Investment holdings
+// (holdings.js) sit under what you own and owe.
 import { h, fill, api, money, bigMoney, rowMoney, sectionHead, button, busy, armed, toast, reportError, afterWrite, dateShort, tag,
   skeleton } from "./core.js";
+import { holdingsSection } from "./holdings.js";
 
 const RANGES = ["1M", "3M", "YTD", "1Y", "ALL"];
 const CATEGORIES = { asset: [["realEstate", "Real estate"], ["vehicle", "Vehicle"], ["other", "Other"]], liability: [["loan", "Loan"], ["other", "Other"]] };
@@ -73,7 +75,7 @@ function render() {
   const lists = h("div", { class: "nw-lists" },
     breakdown("What you own", d.assets, d.assetLines, since),
     breakdown("What you owe", d.liabilities, d.liabilityLines, since));
-  fill(el, sectionHead("Net worth", segs, "networth-title"), summary, lists, form || editor());
+  fill(el, sectionHead("Net worth", segs, "networth-title"), summary, lists, holdingsSection(), form || editor());
 }
 
 function breakdown(title, total, lines, since) {
