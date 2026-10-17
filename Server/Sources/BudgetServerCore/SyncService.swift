@@ -365,11 +365,13 @@ public actor SyncService {
         style.timeZone = await settings.timeZone
         let accounts = await api.accountList()
         let history = Self.recentSyncs((try? await store.imports()) ?? [])
+        let phoneCapable = await ReconnectMethod.phoneCapable(settings: settings, providers: providers)
         let rows = links.flatMap { link in
             let base = InstitutionLink(id: link.id, institution: link.institution, primary: link.provider, fallback: nil, accountKinds: [],
                                        status: link.status, note: Self.note(link, style), lastSync: link.lastSync, lastError: link.lastError,
                                        errorKind: link.errorKind, failingSince: link.firstFailedAt, nextRetryAt: link.nextAttemptAt,
-                                       consentExpiresAt: link.plaid?.consentExpiresAt, recentSyncs: history[link.id])
+                                       consentExpiresAt: link.plaid?.consentExpiresAt,
+                                       reconnect: ReconnectMethod.for(link, phoneCapable: phoneCapable), recentSyncs: history[link.id])
             return link.provider == .simplefin ? SimpleFINLinkState.institutionRows(link, base: base, accounts: accounts) : [base]
         }
         await api.setInstitutions(rows)

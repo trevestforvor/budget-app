@@ -1,14 +1,53 @@
 import BudgetKit
 import Foundation
 import Hummingbird
+import HTTPTypes
+import NIOCore
 
-/// `POST /v1/links/:id/reconnect` and `GET /v1/links/:id/reconnect/:session`. Nothing yet.
-func addReconnectRoutes(_ router: Router<BasicRequestContext>, _ service: BudgetService) {}
+/// `POST /v1/links/:id/reconnect` and `GET /v1/links/:id/reconnect/:session`: signing in to a bank again from the phone
+/// (`ReconnectSessions`). Both answer `Cache-Control: no-store`: the start carries Plaid's hosted URL, which no cache keeps.
+/// The routes build their errors themselves, so nothing about a session reaches `ErrorMiddleware`'s log.
+func addReconnectRoutes(_ router: Router<BasicRequestContext>, _ service: BudgetService) {
+    router.post("/v1/links/:id/reconnect") { _, context in
+        let linkID = try HTTP.rowID(context)
+        return try await reconnectResponse(status: .created) { try await service.reconnects.start(linkID: linkID) }
+    }
+    router.get("/v1/links/:id/reconnect/:session") { _, context in
+        let linkID = try HTTP.rowID(context)
+        let session = try context.parameters.require("session")
+        return try await reconnectResponse(status: .ok) { try await service.reconnects.status(linkID: linkID, session: session) }
+    }
+}
+
+/// The session as JSON, or the refusal as `{"error", "errorKind"}` with its status; either way never stored by a cache.
+private func reconnectResponse(status: HTTPResponse.Status, _ work: () async throws -> ReconnectSession) async throws -> Response {
+    var response: Response
+    do {
+        response = try HTTP.json(try await work(), status: status)
+    } catch let refused as ReconnectError {
+        var body = ["error": refused.message]
+        if let kind = refused.kind { body["errorKind"] = kind.rawValue }
+        let data = (try? JSONEncoder().encode(body)) ?? Data()
+        response = Response(status: HTTPResponse.Status(code: refused.status), headers: [.contentType: "application/json"],
+                            body: ResponseBody(byteBuffer: ByteBuffer(bytes: data)))
+    }
+    response.headers[.cacheControl] = "no-store"
+    return response
+}
 
 extension ReconnectMethod {
-    /// How the person repairs `link`: SimpleFIN at the Bridge; everything else on the dashboard for now.
+    /// How the person repairs `link`. A Plaid link with a live Item signs in again from the phone (`.phone`) when this
+    /// install can, else on the dashboard; one whose Item Plaid deleted can only be linked again (`.newLink`). SimpleFIN
+    /// at the Bridge; everything else on the dashboard.
     static func `for`(_ link: StoredLink, phoneCapable: Bool) -> ReconnectMethod {
-        link.provider == .simplefin ? .providerSite : .dashboard
+        switch link.provider {
+        case .simplefin: return .providerSite
+        case .plaid:
+            if !link.hasLiveItem { return .newLink }
+            // Withdrawn access isn't update mode's to fix from the phone (the reconnect route refuses it).
+            return phoneCapable && link.errorKind != .revoked ? .phone : .dashboard
+        default: return .dashboard
+        }
     }
 
     /// Whether this install can repair a Plaid link from the phone at all: Plaid set up and a public URL, plus a mobile

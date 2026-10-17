@@ -96,6 +96,119 @@ public struct PlaidSource: TransactionSource {
         return token
     }
 
+    // MARK: Update mode from the phone (Hosted Link)
+
+    /// Plaid's Hosted Link: Link on Plaid's own page, which the phone opens in an in-app browser session.
+    public struct HostedLinkOptions: Hashable, Sendable {
+        /// Where Plaid's page sends the browser when the person is done: the app's custom scheme, which ends the session.
+        public var completionRedirectURI: String
+        /// The page opens in an `ASWebAuthenticationSession`, and OAuth banks return through the app's Universal Link.
+        public var isMobileApp: Bool
+        /// How long the hosted page stays usable.
+        public var urlLifetimeSeconds: Int
+
+        public init(completionRedirectURI: String, isMobileApp: Bool, urlLifetimeSeconds: Int) {
+            self.completionRedirectURI = completionRedirectURI; self.isMobileApp = isMobileApp; self.urlLifetimeSeconds = urlLifetimeSeconds
+        }
+    }
+
+    /// What `/link/token/create` gave for an update-mode session. The token and the URL are secrets: never logged.
+    public struct UpdateModeLink: Sendable {
+        public var linkToken: String
+        /// Plaid's hosted page for the session; nil when Hosted Link wasn't asked for (or isn't enabled for the client).
+        public var hostedLinkURL: String?
+        public var expiresAt: Date?
+        public var requestID: String?
+    }
+
+    /// `/link/token/create` in update mode for an existing Item, and nothing else: the access token isn't optional, so
+    /// this can never start a new Item (each one uses up a Plaid Trial slot). `products` is empty, no other product's
+    /// consent is asked for (the card-bill grant is the dashboard's), and the accounts the Item shares can't change here.
+    /// - Parameter redirectURI: sent on every call (OAuth banks need it in update mode too).
+    /// - Parameter reauthorization: renew the bank's consent on an Item that's still healthy (Plaid's reauthorization flow).
+    /// Plaid's errors come back as `PlaidAPIError`. An answer that doesn't parse throws without its body, which carries
+    /// the link token and the hosted URL.
+    public static func updateModeLinkToken(accessToken: String, environment: Environment, credentials: Credentials, userID: String,
+                                           redirectURI: String?, webhook: String?, hostedLink: HostedLinkOptions?, reauthorization: Bool = false,
+                                           transport: any HTTPTransport = URLSessionTransport()) async throws -> UpdateModeLink {
+        var body: [String: JSONValue] = [
+            "client_name": .string("Budget"), "language": .string("en"), "country_codes": .array([.string("US")]),
+            "user": .object(["client_user_id": .string(userID)]),
+            "access_token": .string(accessToken), "products": .array([]),
+        ]
+        if let redirectURI { body["redirect_uri"] = .string(redirectURI) }
+        if let webhook { body["webhook"] = .string(webhook) }
+        if let hostedLink {
+            body["hosted_link"] = .object([
+                "completion_redirect_uri": .string(hostedLink.completionRedirectURI),
+                "is_mobile_app": .bool(hostedLink.isMobileApp),
+                "url_lifetime_seconds": .number(Double(hostedLink.urlLifetimeSeconds)),
+            ])
+        }
+        if reauthorization { body["update"] = .object(["reauthorization_enabled": .bool(true)]) }
+        let json = try await secretAnswer(try request(environment, "link/token/create", body, credentials), transport)
+        guard case let .object(o) = json, let token = string(o, "link_token") else { throw DecisionError.malformed("no link_token") }
+        return UpdateModeLink(linkToken: token, hostedLinkURL: string(o, "hosted_link_url"), expiresAt: string(o, "expiration").flatMap(timestamp),
+                              requestID: string(o, "request_id"))
+    }
+
+    /// How a Link session ended, as `/link/token/get` reports it.
+    public enum LinkSessionOutcome: Sendable, Equatable {
+        /// Not finished yet (or not started).
+        case pending
+        /// Finished without leaving: the person went through. For update mode, `/item/get` has the last word.
+        case finished
+        /// The person left (Plaid's exit callback), with Plaid's error code when Link hit one.
+        case exited(code: String?)
+    }
+
+    /// `/link/token/get` for a Hosted Link session. Its answer holds the session's public token, so nothing of it but the
+    /// outcome comes back, and a body that doesn't parse throws without its text. Returns Plaid's request id too.
+    public static func linkSession(linkToken: String, environment: Environment, credentials: Credentials,
+                                   transport: any HTTPTransport = URLSessionTransport()) async throws -> (outcome: LinkSessionOutcome, requestID: String?) {
+        let json = try await secretAnswer(try request(environment, "link/token/get", ["link_token": .string(linkToken)], credentials), transport)
+        guard case let .object(o) = json else { throw DecisionError.malformed("no link session") }
+        return (parseLinkSessions(o), string(o, "request_id"))
+    }
+
+    /// Success wins over an exit (a person may leave once and come back); a finished session with neither counts as
+    /// finished, for `/item/get` to confirm. Reads the current `results`/`exit` fields and the deprecated
+    /// `on_success`/`on_exit` both.
+    static func parseLinkSessions(_ o: [String: JSONValue]) -> LinkSessionOutcome {
+        guard case let .array(sessions)? = o["link_sessions"] else { return .pending }
+        var exited = false
+        var exitCode: String?
+        var finished = false
+        for case let .object(session) in sessions {
+            if case .object? = session["on_success"] { return .finished }
+            if case let .object(results)? = session["results"] {
+                for key in ["item_add_results", "item_update_results"] {
+                    if case let .array(list)? = results[key], !list.isEmpty { return .finished }
+                }
+            }
+            for key in ["exit", "on_exit"] {
+                guard case let .object(exit)? = session[key] else { continue }
+                exited = true
+                if case let .object(error)? = exit["error"], let code = string(error, "error_code") { exitCode = code }
+            }
+            if string(session, "finished_at") != nil { finished = true }
+        }
+        if exited { return .exited(code: exitCode) }
+        return finished ? .finished : .pending
+    }
+
+    /// A Plaid answer whose body holds secrets (link and public tokens, a hosted URL): Plaid's errors as `PlaidAPIError`
+    /// (an error body holds none), and a success that doesn't parse as an error that quotes nothing of it.
+    static func secretAnswer(_ request: URLRequest, _ transport: any HTTPTransport) async throws -> JSONValue {
+        do {
+            return try await transport.json(request)
+        } catch let error as SourceHTTPError {
+            throw PlaidAPIError(error) ?? PlaidAPIError(status: error.status)
+        } catch is DecodingError {
+            throw DecisionError.malformed("Plaid's answer didn't parse")
+        }
+    }
+
     /// `/item/public_token/exchange` → (access token, item id). Store both server-side.
     public static func exchange(publicToken: String, environment: Environment, credentials: Credentials,
                                 transport: any HTTPTransport = URLSessionTransport()) async throws -> (accessToken: String, itemID: String) {
