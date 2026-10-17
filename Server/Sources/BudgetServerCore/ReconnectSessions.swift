@@ -35,8 +35,12 @@ public actor ReconnectSessions {
     /// The browser session ends on this scheme; it carries no query and no secret.
     static let callbackScheme = "budgetapp-plaid"
     static let completionURI = "budgetapp-plaid://reconnect-done"
-    /// How long Plaid's hosted page (and so a session) stays usable.
+    /// How long Plaid's hosted page can be opened: the session's `expiresAt`, what the phone sees.
     static let lifetime = 900
+    /// How long an update-mode link token lasts (DATA-004). A sign-in begun on the page before it closes can finish up to
+    /// then, so a waiting session is still asked about until this much after it started (or Plaid's own expiration, if
+    /// sooner), and only then counts as expired.
+    static let tokenLifetime: TimeInterval = 1800
     /// A waiting session with more than this left is handed out again instead of a new one.
     static let reuseIfLeft: TimeInterval = 5 * 60
     static let startsPerHour = 5
@@ -54,6 +58,8 @@ public actor ReconnectSessions {
         var tokenHash: String
         var sealedLinkToken: String
         var sealedURL: String?
+        /// The link token's end: past `session.expiresAt` a sign-in already under way can still finish until then.
+        var lookUntil: Date
         var lastCheckedAt: Date?
         var endedAt: Date?
         /// Renewing the bank's consent on a healthy Item, rather than repairing a broken sign-in.
@@ -110,13 +116,17 @@ public actor ReconnectSessions {
         }
         // OAuth banks come back through the app's Universal Link. Without one, production has no phone flow (the bank
         // would return to the dashboard's login page inside the in-app browser); the sandbox falls back to the
-        // dashboard's redirect, with the hosted page not told it's in an app.
+        // dashboard's redirect, with the hosted page not told it's in an app. Every link token carries a redirect
+        // (OAUTH-005), so a sandbox with neither has no phone flow either.
         let mobileRedirect = await settings.plaidMobileRedirectURI(sandbox: sandbox)
         guard mobileRedirect != nil || sandbox else {
             throw ReconnectError(status: 422, message: "Signing in again from the phone is off on this server (PLAID_MOBILE_REDIRECT_URI=off). Reconnect \(link.institution) on the Budget dashboard.",
                                  kind: .providerSetup)
         }
-        let redirect = mobileRedirect ?? plaid.redirectURI
+        guard let redirect = mobileRedirect ?? plaid.redirectURI.flatMap({ $0.isEmpty ? nil : $0 }) else {
+            throw ReconnectError(status: 422, message: "The server has no Plaid redirect URI (PLAID_MOBILE_REDIRECT_URI is off and PLAID_REDIRECT_URI isn't set), which every link token needs. Reconnect \(link.institution) on the Budget dashboard.",
+                                 kind: .providerSetup)
+        }
         guard let sealer else {
             throw ReconnectError(status: 422, message: "BUDGET_TOKEN_KEY isn't set on the server, so it can't open saved sign-ins.", kind: .providerSetup)
         }
@@ -155,11 +165,19 @@ public actor ReconnectSessions {
         for (key, entry) in sessions where entry.session.linkID == linkID && entry.session.state == .waiting {
             end(key, .expired, "A newer sign-in replaced this one.", now: now)
         }
-        let expiresAt = min(now.addingTimeInterval(TimeInterval(Self.lifetime)), created.expiresAt ?? .distantFuture)
+        // Plaid's expiration bounds both, unless it's already past by this server's clock (a skewed clock): then it's
+        // ignored rather than handing out a session that's over before it starts.
+        var tokenEnd = now.addingTimeInterval(Self.tokenLifetime)
+        if let plaidEnd = created.expiresAt {
+            if plaidEnd > now { tokenEnd = min(tokenEnd, plaidEnd) } else {
+                logger.warning("reconnect for \(link.institution): Plaid's link token expiration is already past by this server's clock; check the server's time")
+            }
+        }
+        let expiresAt = min(now.addingTimeInterval(TimeInterval(Self.lifetime)), tokenEnd)
         let session = ReconnectSession(id: id, linkID: linkID, institution: link.institution, state: .waiting, callbackScheme: Self.callbackScheme,
                                        expiresAt: expiresAt, pollAfterSeconds: Self.pollAfter)
         sessions[id] = Entry(session: session, tokenHash: PlaidWebhookVerifier.hex(SHA256.hash(data: Data(created.linkToken.utf8))),
-                             sealedLinkToken: try sealer.seal(created.linkToken), sealedURL: try sealer.seal(url), renewal: renewal)
+                             sealedLinkToken: try sealer.seal(created.linkToken), sealedURL: try sealer.seal(url), lookUntil: tokenEnd, renewal: renewal)
         logger.info("reconnect started for \(link.institution)\(renewal ? " (renewing access)" : "") (request_id \(created.requestID ?? "none"))")
         var answer = session
         answer.url = url
@@ -215,14 +233,17 @@ public actor ReconnectSessions {
     /// `GET /v1/links/:id/reconnect/:session`: where the session stands, never with its URL. While it waits, Plaid is
     /// asked at most every 5 seconds; a finished session moves to syncing (confirmed with `/item/get`, then synced) and
     /// on to done.
+    ///
+    /// Past `expiresAt` the page can't be opened any more, but a sign-in begun on it can still finish, so the session
+    /// keeps waiting (and asking) until the link token's own end, and only then is expired.
     func status(linkID: String, session id: String) async throws -> ReconnectSession {
         prune()
         guard let entry = sessions[id], entry.session.linkID == linkID else { throw ReconnectError.notFound }
         let now = clock()
         if entry.session.state == .waiting {
-            if now >= entry.session.expiresAt {
+            if now >= entry.lookUntil {
                 end(id, .expired, "That sign-in page expired. Start again to sign in to \(entry.session.institution).", now: now)
-            } else if entry.lastCheckedAt.map({ now.timeIntervalSince($0) >= Self.lookEvery }) ?? true {
+            } else if Self.due(entry, now: now) {
                 await look(id)
             }
         }
@@ -233,22 +254,30 @@ public actor ReconnectSessions {
     }
 
     /// A LINK/SESSION_FINISHED webhook for the Link session whose token hashes to `linkTokenHash` (SHA-256, lowercase
-    /// hex): a reconnect waiting on it looks now rather than at its next poll (still at most every 5 seconds). The
-    /// webhook's tokens are never passed in.
-    func check(linkTokenHash: String) async {
+    /// hex): a reconnect waiting on it looks now rather than at its next poll (still at most every 5 seconds). Returns
+    /// at once, the look running in its own task, so the webhook's answer never waits on Plaid. The webhook's tokens are
+    /// never passed in.
+    func check(linkTokenHash: String) {
         let now = clock()
         guard let match = sessions.first(where: { $0.value.tokenHash == linkTokenHash && $0.value.session.state == .waiting }),
-              now < match.value.session.expiresAt, match.value.lastCheckedAt.map({ now.timeIntervalSince($0) >= Self.lookEvery }) ?? true else { return }
-        await look(match.key)
+              now < match.value.lookUntil, Self.due(match.value, now: now) else { return }
+        // Stamped before the task starts, so a poll in the meantime doesn't ask Plaid as well.
+        sessions[match.key]?.lastCheckedAt = now
+        Task { await self.look(match.key) }
+    }
+
+    /// Whether a waiting session may ask Plaid again: it hasn't in the last 5 seconds.
+    private static func due(_ entry: Entry, now: Date) -> Bool {
+        entry.lastCheckedAt.map { now.timeIntervalSince($0) >= lookEvery } ?? true
     }
 
     /// Asks Plaid how the session went (`/link/token/get`). Not in the Item's turn: it reads no Item data, and a poll
     /// mustn't wait behind a long sync. A failure leaves it waiting for the next look.
     private func look(_ id: String) async {
-        guard var entry = sessions[id], let sealer, let plaid = try? await providers.plaid() else { return }
-        entry.lastCheckedAt = clock()
-        sessions[id] = entry
-        guard let token = try? sealer.open(entry.sealedLinkToken) else { return }
+        // Stamped before the first suspension, so two polls at once can't both get past the 5-second spacing.
+        guard sessions[id] != nil, let sealer else { return }
+        sessions[id]?.lastCheckedAt = clock()
+        guard let entry = sessions[id], let token = try? sealer.open(entry.sealedLinkToken), let plaid = try? await providers.plaid() else { return }
         let outcome: PlaidSource.LinkSessionOutcome
         do {
             let answer = try await PlaidSource.linkSession(linkToken: token, environment: plaid.environment,
@@ -277,18 +306,27 @@ public actor ReconnectSessions {
 
     /// The person went through Link: `/item/get` confirms the Item is healthy (that's what clears the link's error),
     /// then the link syncs. The access token is the same as before: nothing is exchanged.
+    ///
+    /// Only an `/item/get` that answered can say the sign-in didn't take. One that failed (Plaid or the bank down for a
+    /// moment) or didn't run confirms nothing either way, so the link syncs anyway: a reconnect's sync tries a link
+    /// waiting for a sign-in again and marks it from the bank's answer.
     private func finish(_ id: String) async {
         guard let entry = sessions[id] else { return }
         let linkID = entry.session.linkID, institution = entry.session.institution
-        await maintenance.checkItem(linkID, syncIfHealed: false)
+        let outcome = await maintenance.checkItem(linkID, syncIfHealed: false)
         guard let link = try? await store.links().first(where: { $0.id == linkID }) else {
             end(id, .failed, "\(institution) isn't linked any more.", now: clock())
             return
         }
-        if LinkHealthBook.waitsForPerson(link) {
+        switch outcome {
+        case .checked where LinkHealthBook.waitsForPerson(link):
             logger.warning("reconnect for \(institution) finished, but Plaid still reports \(link.errorCode ?? "an error")")
             end(id, .failed, "Plaid still says \(institution) needs you to sign in. Try again, or reconnect it on the Budget dashboard.", now: clock())
             return
+        case .failed, .skipped:
+            logger.info("reconnect for \(institution) finished; /item/get couldn't confirm it, so the sync decides")
+        case .checked, .healed:
+            break
         }
         do {
             let result = try await sync.sync(linkID: linkID, trigger: .reconnect)
@@ -321,7 +359,7 @@ public actor ReconnectSessions {
     private func prune() {
         let now = clock()
         sessions = sessions.filter { _, entry in
-            let over = entry.endedAt ?? (entry.session.state == .waiting ? entry.session.expiresAt : nil)
+            let over = entry.endedAt ?? (entry.session.state == .waiting ? entry.lookUntil : nil)
             return over.map { now.timeIntervalSince($0) < Self.keepEnded } ?? true
         }
         starts = starts.compactMapValues { dates in

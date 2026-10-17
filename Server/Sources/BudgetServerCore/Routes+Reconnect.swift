@@ -37,26 +37,28 @@ private func reconnectResponse(status: HTTPResponse.Status, _ work: () async thr
 
 extension ReconnectMethod {
     /// How the person repairs `link`. A Plaid link with a live Item signs in again from the phone (`.phone`) when this
-    /// install can, else on the dashboard; one whose Item Plaid deleted can only be linked again (`.newLink`). SimpleFIN
-    /// at the Bridge; everything else on the dashboard.
+    /// install can, else on the dashboard; one whose Item Plaid deleted, or whose access was withdrawn, can only be
+    /// linked again (`.newLink`). SimpleFIN at the Bridge; everything else on the dashboard.
     static func `for`(_ link: StoredLink, phoneCapable: Bool) -> ReconnectMethod {
         switch link.provider {
         case .simplefin: return .providerSite
         case .plaid:
-            if !link.hasLiveItem { return .newLink }
-            // Withdrawn access isn't update mode's to fix from the phone (the reconnect route refuses it).
-            return phoneCapable && link.errorKind != .revoked ? .phone : .dashboard
+            // Withdrawn access (USER_PERMISSION_REVOKED keeps the token) isn't update mode's to repair: Plaid's answer
+            // is removing the Item and linking again, and the reconnect route refuses it.
+            if !link.hasLiveItem || link.errorKind == .revoked { return .newLink }
+            return phoneCapable ? .phone : .dashboard
         default: return .dashboard
         }
     }
 
-    /// Whether this install can repair a Plaid link from the phone at all: Plaid set up and a public URL, plus a mobile
-    /// redirect in production (`PLAID_MOBILE_REDIRECT_URI` not `off`; the sandbox falls back to the dashboard one).
-    static func phoneCapable(settings: ServerSettings, providers: Providers) async -> Bool {
-        guard let plaid = try? await providers.plaid() else { return false }
+    /// Whether this install can repair a Plaid link from the phone at all: Plaid set up, a public URL and a
+    /// `BUDGET_TOKEN_KEY` to open the saved sign-in, plus a redirect for the link token: the mobile one
+    /// (`PLAID_MOBILE_REDIRECT_URI` not `off`), or in the sandbox the dashboard's (`PLAID_REDIRECT_URI`).
+    static func phoneCapable(settings: ServerSettings, providers: Providers, sealer: TokenSealer?) async -> Bool {
+        guard sealer != nil, let plaid = try? await providers.plaid() else { return false }
         let sandbox = plaid.environment == .sandbox
         guard await settings.providerCallbackBase(sandbox: sandbox) != nil else { return false }
-        if sandbox { return true }
-        return await settings.plaidMobileRedirectURI(sandbox: sandbox) != nil
+        if await settings.plaidMobileRedirectURI(sandbox: sandbox) != nil { return true }
+        return sandbox && !(plaid.redirectURI ?? "").isEmpty
     }
 }

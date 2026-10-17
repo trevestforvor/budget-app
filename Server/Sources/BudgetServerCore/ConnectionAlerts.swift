@@ -153,7 +153,7 @@ public actor ConnectionAlertSender {
         let listening = devices.filter { ConnectionAlerts.listens($0) && PaceAlertSender.awake($0, now: now) }
         guard !listening.isEmpty else { return }
         let health = await health()
-        let capable = await ReconnectMethod.phoneCapable(settings: settings, providers: sync.providers)
+        let capable = await ReconnectMethod.phoneCapable(settings: settings, providers: sync.providers, sealer: sync.sealer)
         let reconnect: (StoredLink) -> ReconnectMethod = { ReconnectMethod.for($0, phoneCapable: capable) }
 
         var sent = await sentLog()

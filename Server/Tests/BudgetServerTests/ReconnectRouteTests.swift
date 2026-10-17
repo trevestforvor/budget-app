@@ -334,15 +334,18 @@ struct ReconnectRouteTests {
         #expect(try await f.link().status == .needsReauth)
     }
 
-    @Test("Past its 15 minutes a waiting session is expired, without asking Plaid")
+    @Test("Past the page's 15 minutes a session still waits while the link token lasts; past the token's 30 it's expired, without asking Plaid")
     func expiry() async throws {
         let f = try await Self.fixture()
         try await f.app.test(.router) { client in
             let session = try Self.session(try await Self.post(client).1)
             f.clock.set(Self.start.addingTimeInterval(901))
+            #expect(try Self.session(try await Self.poll(client, session.id).1).state == .waiting)
+            #expect(f.plaid.count("/link/token/get") == 1)
+            f.clock.set(Self.start.addingTimeInterval(1800))
             #expect(try Self.session(try await Self.poll(client, session.id).1).state == .expired)
         }
-        #expect(f.plaid.count("/link/token/get") == 0)
+        #expect(f.plaid.count("/link/token/get") == 1)
     }
 
     @Test("Plaid is asked how the session went at most every 5 seconds")
@@ -393,6 +396,8 @@ struct ReconnectRouteTests {
         try await f.app.test(.router) { client in
             let session = try Self.session(try await Self.post(client).1)
             await f.service.reconnects.check(linkTokenHash: PlaidWebhookVerifier.hex(SHA256.hash(data: Data(Self.linkToken.utf8))))
+            // The look runs in its own task, after check has returned.
+            for _ in 0..<200 where f.plaid.count("/link/token/get") == 0 { try await Task.sleep(for: .milliseconds(5)) }
             #expect(f.plaid.count("/link/token/get") == 1)
             #expect(try await Self.settle(client, session.id).state == .done)
             // The settle polls didn't ask again: the webhook's look already moved it on.
@@ -465,7 +470,7 @@ struct ReconnectRouteTests {
         #expect(ReconnectMethod.for(gone, phoneCapable: true) == .newLink)
         var revoked = link
         revoked.errorKind = .revoked
-        #expect(ReconnectMethod.for(revoked, phoneCapable: true) == .dashboard)
+        #expect(ReconnectMethod.for(revoked, phoneCapable: true) == .newLink)
         var simplefin = link
         simplefin.provider = .simplefin
         #expect(ReconnectMethod.for(simplefin, phoneCapable: true) == .providerSite)

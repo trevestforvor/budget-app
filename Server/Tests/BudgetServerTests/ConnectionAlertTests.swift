@@ -406,12 +406,13 @@ struct ConnectionAlertTests {
             config.publicURL = "https://budget.example.com"
             edit(&config)
             let (service, _) = try await BudgetServerApp.makeService(config: config, store: MemoryStore(), logger: Logger(label: "test"))
-            return await ReconnectMethod.phoneCapable(settings: service.settings, providers: service.sync.providers)
+            return await ReconnectMethod.phoneCapable(settings: service.settings, providers: service.sync.providers, sealer: service.sealer)
         }
         #expect(try await capable { $0.plaid?.environment = .production; $0.plaidMobileRedirectURI = "off" } == false)
         #expect(try await capable { $0.publicURL = nil } == false)
         #expect(try await capable { $0.plaid?.environment = .production })
-        #expect(try await capable { $0.plaidMobileRedirectURI = "off" })
+        // The sandbox falls back to the dashboard's redirect, when there is one.
+        #expect(try await capable { $0.plaidMobileRedirectURI = "off"; $0.plaid?.redirectURI = "https://dash.example/plaid" })
 
         let alerts = ConnectionAlerts.linkAlerts([F.link(kind: .needsSignIn, since: F.noon)], now: F.noon,
                                                  reconnect: { ReconnectMethod.for($0, phoneCapable: false) })
