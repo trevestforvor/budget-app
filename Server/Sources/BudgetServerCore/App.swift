@@ -32,8 +32,7 @@ public enum BudgetServerApp {
         let (chat, routing) = models(await settings.modelSnapshot())
 
         let plaid = plaidTransport ?? AHCTransport.shared
-        let teller = try config.teller.map { try AHCTransport.mutualTLS(certificatePath: $0.certificatePath, keyPath: $0.keyPath) as any HTTPTransport }
-        let providers = Providers(config: config, store: store, sealer: sealer, transport: plaid, envTellerTransport: teller)
+        let providers = Providers(config: config, store: store, sealer: sealer, transport: plaid)
         let deployment = DeploymentInfo(endpoint: config.publicURL ?? "budget-api", version: BudgetServerVersion.current, sources: await providers.sources(), institutions: [],
                                         dashboardURL: config.dashboardURL)
 

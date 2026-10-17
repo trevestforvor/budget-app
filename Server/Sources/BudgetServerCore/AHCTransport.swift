@@ -7,10 +7,8 @@ import FoundationNetworking
 import NIOCore
 import NIOFoundationCompat
 import NIOHTTP1
-import NIOSSL
 
-/// `HTTPTransport` over AsyncHTTPClient — the server's network layer for providers. The mutual-TLS
-/// variant presents Teller's client certificate (from the teller.zip PEM files).
+/// `HTTPTransport` over AsyncHTTPClient — the server's network layer for providers.
 public struct AHCTransport: HTTPTransport {
     private let client: HTTPClient
 
@@ -18,22 +16,6 @@ public struct AHCTransport: HTTPTransport {
     public static let shared = AHCTransport(client: HTTPClient(eventLoopGroupProvider: .singleton))
 
     init(client: HTTPClient) { self.client = client }
-
-    public static func mutualTLS(certificatePath: String, keyPath: String) throws -> AHCTransport {
-        var tls = TLSConfiguration.makeClientConfiguration()
-        tls.certificateChain = try NIOSSLCertificate.fromPEMFile(certificatePath).map { .certificate($0) }
-        tls.privateKey = .privateKey(try NIOSSLPrivateKey(file: keyPath, format: .pem))
-        return AHCTransport(client: HTTPClient(eventLoopGroupProvider: .singleton, configuration: .init(tlsConfiguration: tls)))
-    }
-
-    /// The same, from PEM text (Teller's files uploaded through the dashboard).
-    public static func mutualTLS(certificatePEM: String, keyPEM: String) throws -> AHCTransport {
-        var tls = TLSConfiguration.makeClientConfiguration()
-        tls.certificateChain = try NIOSSLCertificate.fromPEMBytes(Array(certificatePEM.utf8)).map { .certificate($0) }
-        tls.privateKey = .privateKey(try NIOSSLPrivateKey(bytes: Array(keyPEM.utf8), format: .pem))
-        guard !(tls.certificateChain.isEmpty) else { throw BudgetAPIError.rejected("No certificate in the PEM.") }
-        return AHCTransport(client: HTTPClient(eventLoopGroupProvider: .singleton, configuration: .init(tlsConfiguration: tls)))
-    }
 
     public func send(_ request: URLRequest) async throws -> (Data, HTTPURLResponse) {
         guard let url = request.url else { throw BudgetAPIError.rejected("request has no URL") }

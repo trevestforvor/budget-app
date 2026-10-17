@@ -198,12 +198,6 @@ export async function linkPlaid({ resume = false, update = null, grant = false, 
 }
 // [end lane P] linkPlaid
 
-/// Teller withdrew its API in July 2026 and its code is gone; a Teller link stored before then can only be removed.
-/// accounts.js still imports these two, so they stay as stubs until that import goes (SPEC §10, I2).
-export const TELLER_GONE = "Teller has shut down — remove this link. Its transactions stay.";
-export async function relinkTeller(link, { where } = {}) { reportError({ message: TELLER_GONE }, where); }
-export const linkTeller = relinkTeller;
-
 // MARK: The choice (one comparison, the same in docs/INSTALL-SERVER.md §6, docs/SETUP.md and setup.sh)
 
 /// Plaid and SimpleFIN on the points that differ. Neither column is the recommended one: it's the person's choice,

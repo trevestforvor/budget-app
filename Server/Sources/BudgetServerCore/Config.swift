@@ -18,11 +18,6 @@ public struct ServerConfig: Sendable {
         public var redirectURI: String?
     }
 
-    public struct Teller: Sendable {
-        public var certificatePath: String
-        public var keyPath: String
-    }
-
     /// Loopback unless told otherwise; the Olares chart sets HOST=0.0.0.0 inside its pod.
     public var host = "127.0.0.1"
     public var port = 8080
@@ -46,9 +41,6 @@ public struct ServerConfig: Sendable {
     public var openRouterKey: String?
     public var openRouterZeroRetention = false
     public var plaid: Plaid?
-    public var teller: Teller?
-    public var tellerApplicationID: String?
-    public var tellerEnvironment = "development"
     public var syncIntervalHours = 6.0
     public var timeZone = TimeZone(identifier: "America/Los_Angeles")!
     /// Seed the demo ledger when the database is empty — for testing the app against a real server.
@@ -119,11 +111,6 @@ public struct ServerConfig: Sendable {
             }
             c.plaid = Plaid(clientID: id, secret: secret, environment: environment, redirectURI: value("PLAID_REDIRECT_URI"))
         }
-        if let cert = value("TELLER_CERT_PATH"), let key = value("TELLER_KEY_PATH") {
-            c.teller = Teller(certificatePath: cert, keyPath: key)
-        }
-        c.tellerApplicationID = value("TELLER_APPLICATION_ID")
-        c.tellerEnvironment = value("TELLER_ENV") ?? c.tellerEnvironment
         if let h = value("BUDGET_SYNC_INTERVAL_HOURS") { c.syncIntervalHours = Double(h) ?? c.syncIntervalHours }
         if let tz = value("BUDGET_TIMEZONE") {
             guard let zone = TimeZone(identifier: tz) else { throw ConfigError.invalid("Unknown BUDGET_TIMEZONE \(tz)") }

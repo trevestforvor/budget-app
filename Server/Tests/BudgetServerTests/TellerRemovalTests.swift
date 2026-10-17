@@ -7,7 +7,8 @@ import HummingbirdTesting
 import Testing
 
 /// Teller withdrew its API in July 2026, and 0.6.0 removes it (SPEC §10): no routes, no dashboard pane, nothing in the
-/// CSP. A Teller link stored before then still loads, and says to remove it.
+/// CSP, no keys or mTLS in the config. A Teller link (or saved Teller keys) stored before then still loads, and the link
+/// says to remove it.
 @Suite("Teller removed")
 struct TellerRemovalTests {
     static let write: HTTPFields = [HTTPField.Name("X-Budget-Dashboard")!: "1", .contentType: "application/json"]
@@ -23,10 +24,13 @@ struct TellerRemovalTests {
         let ids = panes.matches(of: #/\[\s*"(\w+)",/#).map { String($0.output.1) }
         #expect(ids == ["plaid", "simplefin"])
         #expect(!providers.contains("teller.io") && !providers.contains("TellerConnect") && !providers.contains("tellerForm"))
-        // Only the stubs accounts.js still imports remain.
-        let tellerLines = providers.split(separator: "\n").filter { $0.lowercased().contains("teller") }
-        #expect(tellerLines.count == 4)
+        #expect(!providers.lowercased().contains("teller"))
         #expect(!(try Self.asset("settings.js")).lowercased().contains("teller"))
+        // A stored Teller link's Reconnect only says what to do; there's nothing left to sign in to.
+        let accounts = try Self.asset("accounts.js")
+        #expect(!accounts.contains("relinkTeller") && !accounts.contains("linkTeller"))
+        #expect(accounts.contains(#"if (link.provider === "teller") return reportError({ message: TELLER_GONE }, flash);"#))
+        #expect(try Self.asset("core.js").contains(#"export const TELLER_GONE = "\#(SyncService.tellerGone)";"#))
     }
 
     @Test("The comparison is in the Connect drawer, with no recommended badge")
@@ -97,6 +101,56 @@ struct TellerRemovalTests {
             try await client.execute(uri: "/v1/links/teller-enr_1", method: .delete, headers: Self.write) { #expect($0.status == .noContent) }
         }
         #expect(try await service.store.links().isEmpty)
+    }
+
+    @Test("A Teller link and Teller keys saved before 0.6.0 decode from their stored JSON; the keys are dropped on the next save")
+    func legacyRecordsDecode() async throws {
+        // As 0.5.x stored them: Foundation's default coding, as the Postgres store uses (dates as seconds since 2001).
+        let link = try JSONDecoder().decode(StoredLink.self, from: Data(#"""
+        {"id": "teller-enr_1", "provider": "teller", "institution": "Harbor", "externalID": "enr_1", "sealedToken": "sealed-x",
+         "cursor": null, "status": "needsReauth", "lastSync": 780000000, "lastError": "Teller: enrollment disconnected", "createdAt": 770000000}
+        """#.utf8))
+        #expect(link.provider == .teller && link.provider.displayName == "Teller" && link.status == .needsReauth)
+        #expect(link.summary.provider == .teller)
+        let settings = try JSONDecoder().decode(StoredProviderSettings.self, from: Data(#"""
+        {"plaid": {"clientID": "cid", "sealedSecret": "sealed-p", "environment": "sandbox"},
+         "teller": {"applicationID": "app_1", "environment": "development", "certificatePEM": "-----BEGIN CERTIFICATE-----", "sealedKeyPEM": "sealed-k"},
+         "updatedAt": 780000000}
+        """#.utf8))
+        #expect(settings.plaid?.clientID == "cid")
+        let resaved = String(decoding: try JSONEncoder().encode(settings), as: UTF8.self)
+        #expect(!resaved.contains("teller") && !resaved.contains("app_1"))
+
+        // A server holding both starts, serves the phone and the dashboard, and never asks Teller anything.
+        let store = MemoryStore()
+        try await store.saveProviderSettings(settings)
+        try await store.upsertLink(link)
+        let (service, _) = try await BudgetServerApp.makeService(config: TestServer.config(), store: store, logger: .init(label: "test"))
+        try await BudgetServerApp.prepare(service)
+        let sources = await service.providers.sources()
+        #expect(!sources.contains(.teller) && sources.contains(.simplefin))
+        try await Application(router: buildRouter(service)).test(.router) { client in
+            try await client.execute(uri: "/v1/links", method: .get, headers: TestServer.auth) { response in
+                #expect(response.status == .ok)
+                let links = try RemoteBudgetAPI.decoder.decode([LinkSummary].self, from: Data(response.body.readableBytesView))
+                #expect(links.map(\.provider) == [.teller])
+            }
+            try await client.execute(uri: "/v1/overview", method: .get, headers: TestServer.auth) { #expect($0.status == .ok) }
+            try await client.execute(uri: "/v1/status", method: .get, headers: TestServer.auth) { #expect($0.status == .ok) }
+            // "Sync now" on the phone leaves it out; removing it isn't the phone's to do (P0.2).
+            try await client.execute(uri: "/v1/sync", method: .post, headers: TestServer.auth) { response in
+                #expect(response.status == .ok)
+                let results = try RemoteBudgetAPI.decoder.decode([LinkSyncResult].self, from: Data(response.body.readableBytesView))
+                #expect(results.isEmpty)
+            }
+            try await client.execute(uri: "/v1/links/teller-enr_1", method: .delete, headers: TestServer.auth) { #expect($0.status == .notFound) }
+        }
+        let synced = try await service.sync.sync(linkID: "teller-enr_1")
+        #expect(!synced.ok && synced.error == SyncService.tellerGone && synced.errorKind == .providerSetup)
+        try await Application(router: buildRouter(service, surface: .dashboard)).test(.router) { client in
+            try await client.execute(uri: "/v1/links/teller-enr_1", method: .delete, headers: Self.write) { #expect($0.status == .noContent) }
+        }
+        #expect(try await store.links().isEmpty)
     }
 
     @Test("The phone's note for a stored Teller link names the shut-down, not a retry")

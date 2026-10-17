@@ -63,7 +63,7 @@ final class ServerDraft {
 enum ConnectionMode { case demo, server, notConnected }
 
 extension InstitutionLink {
-    /// "Plaid", "Teller", or "statements" — how the data arrives, for "via …" lines.
+    /// "Plaid", "SimpleFIN", or "statements" — how the data arrives, for "via …" lines.
     var sourceName: String {
         switch primary {
         case .fileImport?: "statements"

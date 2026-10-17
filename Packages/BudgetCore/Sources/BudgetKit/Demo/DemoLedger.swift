@@ -312,7 +312,7 @@ public struct Ledger: Sendable {
                 id: id, accountID: account, postedAt: posted, merchant: merchant, rawDescription: raw, amount: money,
                 categorization: Categorization(categoryID: category, confidence: confidence, tier: tier, needsReview: false),
                 isPending: now.timeIntervalSince(posted) < 36 * 3600,
-                source: account == Self.checkingID ? .teller : .plaid))
+                source: account == Self.checkingID ? .simplefin : .plaid))
             if account == Self.cardID, money.isNegative {
                 cardChargesByMonth[monthKey(posted), default: 0] += -money.minorUnits
             }
@@ -424,7 +424,7 @@ public struct Ledger: Sendable {
         suggestions = suggestionMap
         reviewReasons = reasonMap
         accounts = [
-            Account(id: Self.checkingID, name: "Total Checking", institution: "Harbor", kind: .checking, balance: .zero, source: .teller),
+            Account(id: Self.checkingID, name: "Total Checking", institution: "Harbor", kind: .checking, balance: .zero, source: .simplefin),
             Account(id: Self.savingsID, name: "Cash Account", institution: "Meadow", kind: .savings, balance: .zero, source: .plaid),
             Account(id: Self.cardID, name: "Gold Card", institution: "Summit Card", kind: .credit, balance: .zero, source: .plaid),
             // Balance-only investment accounts: shown, never counted as cash.
@@ -454,8 +454,8 @@ public struct Ledger: Sendable {
     /// The demo's connections, as the server publishes real ones: four that sync, and Tidewater waiting for a sign-in.
     /// Keystone isn't here: its card only comes from statements, so the ledger lists it on its own (`institutionLinks`).
     static let institutionPlan: [InstitutionLink] = [
-        InstitutionLink(id: "harbor", institution: "Harbor", primary: .teller, fallback: nil, accountKinds: [.checking], status: .demo,
-                        note: "Demo data, as if connected through Teller."),
+        InstitutionLink(id: "harbor", institution: "Harbor", primary: .simplefin, fallback: nil, accountKinds: [.checking], status: .demo,
+                        note: "Demo data, as if connected through SimpleFIN."),
         InstitutionLink(id: "meadow", institution: "Meadow", primary: .plaid, fallback: nil, accountKinds: [.savings, .investment], status: .demo,
                         note: "Demo data, as if connected through Plaid."),
         InstitutionLink(id: "summit", institution: "Summit Card", primary: .plaid, fallback: nil, accountKinds: [.credit], status: .demo,

@@ -46,8 +46,8 @@ struct ProviderSyncOutcome: Sendable {
     var skipped: String? = nil
 }
 
-/// Pulls every linked provider into the ledger: Plaid incrementally by cursor, Teller and
-/// SimpleFIN by date window (two years on first sync). Each run is one rollback-able batch.
+/// Pulls every linked provider into the ledger: Plaid incrementally by cursor, SimpleFIN by date
+/// window (two years on first sync). Each run is one rollback-able batch.
 ///
 /// Runs happen one at a time — the schedule, "sync everything", one bank's "Sync now" and a reconnect — so two never
 /// pull the same link (and write its cursor) at once.
@@ -138,26 +138,6 @@ public actor SyncService {
         }
     }
 
-    /// Stores the access token Teller Connect hands back when the person reconnects an enrollment, marks the link
-    /// connected, and syncs it. The link keeps its id, so its accounts and history carry on.
-    public func replaceToken(linkID: String, accessToken: String, enrollmentID: String?) async throws -> LinkSyncResult {
-        try await serialized {
-            guard var link = try await self.store.links().first(where: { $0.id == linkID }) else { throw BudgetAPIError.notFound }
-            guard link.provider == .teller else {
-                throw BudgetAPIError.rejected("Only Teller connections take a new access token; \(link.institution) connects through \(link.provider.displayName).")
-            }
-            let token = accessToken.trimmingCharacters(in: .whitespacesAndNewlines)
-            guard !token.isEmpty else { throw BudgetAPIError.rejected("The access token is empty.") }
-            guard let sealer = self.sealer else { throw BudgetAPIError.rejected("Set BUDGET_TOKEN_KEY on the server before linking accounts.") }
-            link.sealedToken = try sealer.seal(token)
-            if let enrollmentID, !enrollmentID.isEmpty { link.externalID = enrollmentID }
-            link.status = .connected
-            link.lastError = nil
-            try await self.store.upsertLink(link)
-            return await self.syncAndPublish(link, trigger: .reconnect)
-        }
-    }
-
     private func syncAndPublish(_ link: StoredLink, trigger: SyncTrigger, afterUpdateMode: Bool = false) async -> LinkSyncResult {
         let result = await sync(link, trigger: trigger, afterUpdateMode: afterUpdateMode)
         await publishInstitutions()
@@ -200,6 +180,8 @@ public actor SyncService {
                 // Plaid deleted the Item (ITEM_NOT_FOUND, confirmed by /item/get) and the token was dropped: nothing to ask.
                 throw LinkFailure(kind: .revoked, code: "ITEM_NOT_FOUND", message: Self.itemGoneMessage(link))
             }
+            // Teller withdrew its API in July 2026 and its code is gone; a link stored before then only says so.
+            if link.provider == .teller { throw BudgetAPIError.rejected(Self.tellerGone) }
             let token: String
             do { token = try sealer.open(link.sealedToken) } catch {
                 throw LinkFailure(kind: .providerSetup, code: "token-unsealable",
@@ -208,7 +190,6 @@ public actor SyncService {
             let outcome: ProviderSyncOutcome
             switch link.provider {
             case .plaid: outcome = try await syncPlaid(&link, token: token, batchID: batchID, trigger: trigger)
-            case .teller: outcome = try await syncTeller(&link, token: token, batchID: batchID, trigger: trigger)
             case .simplefin: outcome = try await syncSimpleFIN(&link, token: token, batchID: batchID, trigger: trigger)
             default:
                 throw BudgetAPIError.rejected("\(link.provider.displayName) links don't sync.")
@@ -352,10 +333,10 @@ public actor SyncService {
         }
     }
 
-    /// Whether the provider refused the saved sign-in (Plaid's ITEM_LOGIN_REQUIRED, a disconnected Teller enrollment,
-    /// a 401 or 403): only the person signing in again fixes that.
+    /// Whether the provider refused the saved sign-in (Plaid's ITEM_LOGIN_REQUIRED, a 401 or 403): only the person
+    /// signing in again fixes that.
     static func needsSignIn(_ error: any Error) -> Bool {
-        let codes = ["ITEM_LOGIN_REQUIRED", "enrollment.disconnected"]
+        let codes = ["ITEM_LOGIN_REQUIRED"]
         if let e = error as? SourceHTTPError { return [401, 403].contains(e.status) || codes.contains { e.body.contains($0) } }
         let text = String(describing: error)
         return codes.contains { text.contains($0) }
@@ -410,9 +391,19 @@ public actor SyncService {
         }
     }
 
+    // MARK: A stored Teller link
+
+    /// Teller withdrew its API in July 2026, and 0.6.0 removed its code (SPEC §10). A Teller link stored before then still
+    /// decodes (`SourceKind.teller` stays, decode-only): it lists, says this, and can be removed on the dashboard.
+    static let tellerGone = "Teller has shut down — remove this link. Its transactions stay."
+
+    /// How a Teller link's failure is filed: terminal rather than transient, with a fixed code, so no scheduled run
+    /// retries it (`LinkHealthBook.isDue`) and health and push logic can leave it out (`LinkFailureClassifier`).
+    static let tellerFailure = LinkFailure(kind: .providerSetup, code: "teller.shutdown", message: tellerGone)
+
     /// One plain line about a link, for clients that show a note: what's wrong, by its kind, and what happens next.
     static func note(_ link: StoredLink, _ style: Date.FormatStyle) -> String {
-        if link.provider == .teller { return tellerGone }  // [lane S] Teller removed (SPEC §10)
+        if link.provider == .teller { return tellerGone }
         let retry = link.nextAttemptAt.map { " The server tries again \($0.formatted(style))." } ?? " The next sync tries again."
         switch link.errorKind {
         case .revoked?:

@@ -21,7 +21,7 @@ Server/
     PostgresStore.swift             tables, migrations, diff saves
     Records.swift                   TokenSealer (AES-GCM), StoredLink, ImportRecord, MemoryStore
     SyncService.swift               per-link sync, 2-year first window, scheduler
-    AHCTransport.swift              HTTPTransport over AsyncHTTPClient (+ mutual TLS for Teller)
+    AHCTransport.swift              HTTPTransport over AsyncHTTPClient
   Sources/BudgetServer/main.swift
   Tests/BudgetServerTests/          routes (HummingbirdTesting), RemoteBudgetAPI parity over a real
                                     socket, Plaid exchange + sync, Postgres store (when a DB is given)
@@ -61,7 +61,6 @@ What stays environment-only: `HOST`, `PORT`, `DASHBOARD_PORT`, `BUDGET_API_TOKEN
 | `OPENROUTER_API_KEY`, `OPENROUTER_ZDR=1` | — | Enables Jev as a decision provider |
 | `PLAID_CLIENT_ID`, `PLAID_SECRET`, `PLAID_ENV`, `PLAID_REDIRECT_URI` | —, —, `sandbox` | Both id and secret, or Plaid stays off |
 | `BUDGET_PLAID_LIABILITIES` | off | `1`/`true`: read card bills from Plaid Liabilities, at most once a day per Item. Plaid bills it per Item once used; the dashboard setting "Card bills (Plaid Liabilities)" wins ([API.md](API.md#upcoming-and-card-bills)) |
-| `TELLER_CERT_PATH`, `TELLER_KEY_PATH` | — | PEM files from `teller.zip` |
 | `BUDGET_SYNC_INTERVAL_HOURS` | 6 | |
 | `BUDGET_TIMEZONE` | `America/Los_Angeles` | Month boundaries |
 | `BUDGET_ALLOW_DEMO` | off | `1`: this is a test server and may hold the demo ledger. Never set on the Olares |
@@ -208,7 +207,7 @@ SimpleFIN is the other tab: three steps with their links (sign up at SimpleFIN B
 6. **Maintenance:** consent expires about yearly at some banks (Amex, Schwab and Chase among them). A sync that hits `ITEM_LOGIN_REQUIRED` marks the link `needsReauth`, and scheduled syncs skip it until it's reconnected: `/v1/links/plaid/token {linkID}` opens [update mode](https://plaid.com/docs/link/update-mode/), and when Link finishes, `POST /v1/links/{linkID}/sync` — no token exchange ([API.md](API.md#reconnecting-a-bank)).
 7. **Webhooks and signing in again from the phone (server 0.6.0).** When the API has a public HTTPS address (Caddy, a Cloudflare Tunnel or Olares), Plaid's webhooks reach it at `POST /v1/plaid/webhook`; each is verified (an ES256 JWT) and only starts a sync. On a private Tailscale address Plaid can't reach the server. Either way the 6-hourly sync stays on; see [Plaid webhooks and reconnect](#plaid-webhooks-and-reconnect).
 
-**Teller** withdrew its API in July 2026, and its code is gone. A Teller link stored before then still loads, so its accounts and history stay, and the dashboard says to remove it.
+**Teller** withdrew its API in July 2026, and 0.6.0 removed it: its routes, dashboard keys, `TELLER_*` settings and mutual-TLS client are gone (a leftover `TELLER_*` setting is ignored). A Teller link stored before then still loads, so its accounts and history stay; it never syncs, and the dashboard says to remove it (only the dashboard can, like any link). Teller keys saved on the dashboard before 0.6.0 are ignored and dropped at the next provider save.
 
 **Trying it out:** with Plaid, start in Sandbox, then the Trial plan and OAuth; with SimpleFIN, a setup token brings real data in minutes.
 
@@ -248,7 +247,7 @@ Measured on the Olares: Qwen `/v1/decision` batched runs at **15.6 decisions/s**
 
 What the pipeline does (`Categorizer`, built):
 1. **Decide per unique normalized descriptor, not per row.** It's about 5–10× fewer calls, it sends Jev far less, and every other row inherits the answer through merchant memory.
-2. **Priors first:** your rules, then merchant memory. Plaid's `personal_finance_category` and Teller's `details.category` are kept on each row as hints. Skipping the model when they're VERY_HIGH and cleanly mapped needs an eval first.
+2. **Priors first:** your rules, then merchant memory. Plaid's `personal_finance_category` (and a statement's category column) is kept on each row as a hint. Skipping the model when they're VERY_HIGH and cleanly mapped needs an eval first.
 3. **Batching:** Qwen up to 256 states per request with `cache_prompt`. Jev at bounded concurrency with 429/5xx backoff (default 4).
 4. **Idempotent batches.** Rows are deduplicated by provider id, then across sources, and every sync or file is one batch you can roll back.
 5. **Don't flood review.** At 80%, about 9% of unique descriptors (100+) need you. Grouping review by merchant and sorting by money involved is still to do.

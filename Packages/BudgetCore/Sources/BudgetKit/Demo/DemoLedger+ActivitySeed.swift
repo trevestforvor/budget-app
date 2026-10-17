@@ -19,7 +19,7 @@ extension Ledger {
             let posted = day(daysAgo, hour: hour)
             return LedgerTransaction(id: id, accountID: account, postedAt: posted, merchant: merchant, rawDescription: raw, amount: Money(amount),
                                      categorization: categorization, isPending: now.timeIntervalSince(posted) < 36 * 3600,
-                                     source: account == Self.checkingID ? .teller : .plaid, isHidden: isHidden, note: note)
+                                     source: account == Self.checkingID ? .simplefin : .plaid, isHidden: isHidden, note: note)
         }
 
         var added: [LedgerTransaction] = []

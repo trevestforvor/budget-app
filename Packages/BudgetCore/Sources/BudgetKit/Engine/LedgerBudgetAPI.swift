@@ -135,7 +135,7 @@ public actor LedgerBudgetAPI: BudgetAPI {
             }
             return link
         }
-        deployment = DeploymentInfo(endpoint: "demo://ledger", version: "demo", sources: [.teller, .plaid, .fileImport], institutions: institutions)
+        deployment = DeploymentInfo(endpoint: "demo://ledger", version: "demo", sources: [.simplefin, .plaid, .fileImport], institutions: institutions)
         seedsDemoChats = true
         balanceHistory = MemoryBalanceHistory(ledger.demoBalanceSnapshots())
     }

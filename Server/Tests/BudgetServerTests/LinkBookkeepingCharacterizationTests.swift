@@ -42,7 +42,6 @@ struct LinkBookkeepingCharacterizationTests {
                 (400, #"{"error_type": "ITEM_ERROR", "error_code": "INVALID_CREDENTIALS", "error_message": "who are you"}"#), // 3 (0.6.0)
                 (403, ""),                                                                       // 5
                 PlaidScript.loginRequired,                                                       // 6
-                (400, #"{"error": {"code": "enrollment.disconnected", "message": "gone"}}"#),    // 7
                 (500, #"{"error_code": "INTERNAL_SERVER_ERROR", "error_message": "try again"}"#), // 8
                 (500, #"{"error_code": "INTERNAL_SERVER_ERROR", "error_message": "still down"}"#),// 9
                 PlaidScript.page("c3"),                                                          // 10
@@ -88,10 +87,7 @@ struct LinkBookkeepingCharacterizationTests {
         #expect(r6.error == "Plaid: the login details of this item have changed (ITEM_LOGIN_REQUIRED)")
         #expect(try await Self.seen(service, id) == Seen(status: .needsReauth, lastError: r6.error, lastSync: s2.lastSync, imports: 1))
 
-        // 7. Teller's enrollment.disconnected text, on a status that isn't 401/403.
-        let r7 = try await service.sync.sync(linkID: id)
-        #expect(!r7.ok)
-        #expect(try await Self.seen(service, id) == Seen(status: .needsReauth, lastError: r7.error, lastSync: s2.lastSync, imports: 1))
+        // 7. (0.6.0) Teller's enrollment.disconnected text went with Teller (SPEC §10); nothing reads it any more.
 
         // 8. A per-link retry of a link waiting for a sign-in that fails for another reason: back to connected, with
         //    the error, for the schedule to try again.
@@ -117,8 +113,8 @@ struct LinkBookkeepingCharacterizationTests {
         #expect(try #require(s10.lastSync) >= #require(s2.lastSync))
         let link = try #require(try await service.store.links().first { $0.id == id })
         #expect(link.cursor == "c3")
-        // (0.6.0) Each failure, 3 and 5–9, is in the history.
-        #expect(try await service.store.imports().filter { $0.outcome == .failed }.count == 6)
+        // (0.6.0) Each failure, 3, 5, 6, 8 and 9, is in the history.
+        #expect(try await service.store.imports().filter { $0.outcome == .failed }.count == 5)
     }
 
     @Test("Which failures need the person to sign in again")
@@ -126,9 +122,8 @@ struct LinkBookkeepingCharacterizationTests {
         #expect(SyncService.needsSignIn(SourceHTTPError(status: 401, body: "")))
         #expect(SyncService.needsSignIn(SourceHTTPError(status: 403, body: "")))
         #expect(SyncService.needsSignIn(SourceHTTPError(status: 400, body: "ITEM_LOGIN_REQUIRED")))
-        #expect(SyncService.needsSignIn(SourceHTTPError(status: 500, body: "enrollment.disconnected")))
+        #expect(!SyncService.needsSignIn(SourceHTTPError(status: 500, body: "enrollment.disconnected")))  // Teller's, gone in 0.6.0
         #expect(SyncService.needsSignIn(TextError(description: "provider said ITEM_LOGIN_REQUIRED")))
-        #expect(SyncService.needsSignIn(TextError(description: "enrollment.disconnected")))
         #expect(!SyncService.needsSignIn(TextError(description: "something else")))
         #expect(!SyncService.needsSignIn(SourceHTTPError(status: 429, body: "RATE_LIMIT_EXCEEDED")))
     }

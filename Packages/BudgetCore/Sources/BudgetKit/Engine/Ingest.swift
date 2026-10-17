@@ -945,14 +945,14 @@ public enum ProviderCategories {
             ("BANK_FEES", "fees"),
         ]
         if let hit = plaid.first(where: { s.hasPrefix($0.0) }) { return hit.1 }
-        // Teller details.category.
-        let teller: [String: String] = [
+        // One-word labels (Teller's details.category, still on rows it synced before it shut down in 2026).
+        let oneWord: [String: String] = [
             "DINING": "dining", "BAR": "dining", "GROCERIES": "groceries", "FUEL": "transport", "TRANSPORT": "transport",
             "TRANSPORTATION": "transport", "UTILITIES": "utilities", "PHONE": "utilities", "HEALTH": "health", "INCOME": "income",
             "SHOPPING": "shopping", "CLOTHING": "shopping", "ELECTRONICS": "shopping", "SOFTWARE": "subscriptions",
             "ACCOMMODATION": "travel", "HOME": "housing", "ENTERTAINMENT": "entertainment", "SPORT": "health",
         ]
-        if let hit = teller[s] { return hit }
+        if let hit = oneWord[s] { return hit }
         // Chase's statement-export categories.
         let chase: [String: String] = [
             "FOOD & DRINK": "dining", "GROCERIES": "groceries", "SHOPPING": "shopping", "HEALTH & WELLNESS": "health",

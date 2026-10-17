@@ -31,7 +31,6 @@ let package = Package(
         .package(url: "https://github.com/swift-server/async-http-client.git", from: "1.21.0"),
         .package(url: "https://github.com/apple/swift-crypto.git", "3.0.0"..<"5.0.0"),
         .package(url: "https://github.com/apple/swift-nio.git", from: "2.65.0"),
-        .package(url: "https://github.com/apple/swift-nio-ssl.git", from: "2.27.0"),
         .package(url: "https://github.com/apple/swift-log.git", from: "1.5.0"),
         // Verifies Plaid's signed webhooks (ES256 JWTs): a vetted library, not a hand-rolled verifier.
         .package(url: "https://github.com/vapor/jwt-kit.git", from: "5.7.1"),
@@ -46,7 +45,6 @@ let package = Package(
             .product(name: "NIOCore", package: "swift-nio"),
             .product(name: "NIOHTTP1", package: "swift-nio"),
             .product(name: "NIOFoundationCompat", package: "swift-nio"),
-            .product(name: "NIOSSL", package: "swift-nio-ssl"),
             .product(name: "Logging", package: "swift-log"),
             .product(name: "JWTKit", package: "jwt-kit"),
         ], resources: dashboardAssets.map { .embedInCode("Dashboard/" + $0) }),

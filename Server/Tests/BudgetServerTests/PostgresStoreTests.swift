@@ -85,13 +85,11 @@ struct PostgresStoreTests {
     func providerSettings() async throws {
         try await withStore { store in
             #expect(try await store.providerSettings() == nil)
-            let settings = StoredProviderSettings(plaid: .init(clientID: "cid", sealedSecret: "sealed-x", environment: "sandbox", redirectURI: "https://d/"),
-                                                  teller: .init(applicationID: "app_1", environment: "sandbox", certificatePEM: nil, sealedKeyPEM: nil))
+            let settings = StoredProviderSettings(plaid: .init(clientID: "cid", sealedSecret: "sealed-x", environment: "sandbox", redirectURI: "https://d/"))
             try await store.saveProviderSettings(settings)
             try await store.saveProviderSettings(settings) // upsert
             let loaded = try #require(try await store.providerSettings())
             #expect(loaded.plaid == settings.plaid)
-            #expect(loaded.teller == settings.teller)
         }
     }
 

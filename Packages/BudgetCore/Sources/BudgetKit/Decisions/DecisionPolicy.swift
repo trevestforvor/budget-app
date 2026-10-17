@@ -179,7 +179,7 @@ public enum CategoryDecisions {
     }
 
     /// Same as `request(for:)` from raw provider fields — for sync jobs and evals.
-    /// `bankCategory` is the provider's own label (Plaid personal_finance_category, Teller details.category):
+    /// `bankCategory` is the provider's own label (Plaid personal_finance_category, a statement's category column):
     /// a strong hint, not ground truth. It's a category name, so it's safe to send to Jev too.
     public static func request(merchant: String, rawDescription: String, amount: Money, categories: [BudgetCategory],
                                bankCategory: String? = nil, accountKind: AccountKind? = nil) -> DecisionRequest {

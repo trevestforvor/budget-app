@@ -30,12 +30,13 @@ public struct TokenSealer: Sendable {
     }
 }
 
-/// A connection to a provider: a Plaid Item, a Teller enrollment, a SimpleFIN access URL.
+/// A connection to a provider: a Plaid Item or a SimpleFIN access URL. (A Teller enrollment stored before 0.6.0 still
+/// decodes, as `SourceKind.teller`; it can only be removed.)
 public struct StoredLink: Codable, Hashable, Sendable {
     public var id: String
     public var provider: SourceKind
     public var institution: String
-    /// Provider-side id (Plaid item_id, Teller enrollment id).
+    /// Provider-side id (Plaid item_id).
     public var externalID: String?
     /// The access token (or SimpleFIN access URL), sealed with `TokenSealer`.
     public var sealedToken: String
@@ -96,8 +97,7 @@ public struct LinkSummary: Codable, Hashable, Sendable {
     /// Why the latest sync failed, in the provider's words; nil once one succeeds.
     public var lastError: String?
     public var createdAt: Date
-    /// The provider's own id for the connection (Plaid item_id, Teller enrollment id — Teller Connect needs it to
-    /// reconnect). Not a credential.
+    /// The provider's own id for the connection (Plaid item_id). Not a credential.
     public var externalID: String?
     /// Whether this Item gives card bills, as last checked; nil until checked (or for links that aren't Plaid's).
     public var cardBills: CardBillCheck? = nil

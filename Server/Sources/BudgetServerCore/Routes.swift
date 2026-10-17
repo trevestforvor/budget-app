@@ -16,7 +16,7 @@ public struct BudgetService: Sendable {
     public let pace: PaceAlertSender
     public let config: ServerConfig
     public let sealer: TokenSealer?
-    /// Plaid and Teller as configured right now (dashboard settings over environment).
+    /// Plaid as configured right now (dashboard settings over environment).
     public let providers: Providers
     /// Models, sync, time zone, public URL — dashboard over environment over defaults.
     public let settings: ServerSettings
@@ -76,13 +76,11 @@ enum HTTP {
     }
 
     /// Maps domain errors onto statuses the app understands.
-    /// A provider's refusal in its own words: Plaid's `error_message` (+ `error_code`), Teller's `error.message`.
+    /// A provider's refusal in its own words: Plaid's `error_message` (+ `error_code`).
     static func providerMessage(_ e: SourceHTTPError) -> String {
-        if let object = try? JSONSerialization.jsonObject(with: Data(e.body.utf8)) as? [String: Any] {
-            if let message = object["error_message"] as? String {
-                return "Plaid: \(message)" + ((object["error_code"] as? String).map { " (\($0))" } ?? "")
-            }
-            if let inner = object["error"] as? [String: Any], let message = inner["message"] as? String { return "Teller: \(message)" }
+        if let object = try? JSONSerialization.jsonObject(with: Data(e.body.utf8)) as? [String: Any],
+           let message = object["error_message"] as? String {
+            return "Plaid: \(message)" + ((object["error_code"] as? String).map { " (\($0))" } ?? "")
         }
         return "The provider answered \(e.status): \(e.body.prefix(200))"
     }
@@ -617,9 +615,8 @@ func addImportRoutes(_ router: Router<BasicRequestContext>, _ service: BudgetSer
             if body.clearImports == true { try await service.store.clearImports(); removed.append("import history") }
             if body.removeProviderKeys == true {
                 try await service.providers.clearPlaid()
-                try await service.providers.clearTeller()
                 await BudgetServerApp.apply(service)
-                removed.append("Plaid and Teller keys")
+                removed.append("Plaid keys")
             }
             if body.keepLedger != true {
                 try await service.api.replaceState(await service.freshState(seedDemo: body.seedDemo == true))

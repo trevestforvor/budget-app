@@ -3,6 +3,8 @@ import Foundation
 // Wire models for the Budget API. They mirror docs/API.md; the server is the source of truth.
 
 public enum SourceKind: String, Codable, Sendable, CaseIterable {
+    /// `teller` is decode-only: Teller shut down in 2026 and the server dropped it in 0.6.0, but a link or row it stored
+    /// before then still loads.
     case simplefin, financekit, plaid, teller, fileImport
 
     public var displayName: String {
@@ -416,7 +418,7 @@ public struct LedgerTransaction: Identifiable, Hashable, Codable, Sendable {
     public var source: SourceKind
     /// The import or sync batch that added this row — rolling a batch back removes exactly these.
     public var batchID: String?
-    /// The provider's own category, kept as a hint (Plaid personal_finance_category, Teller details.category).
+    /// The provider's own category, kept as a hint (Plaid personal_finance_category, a statement's category column).
     public var providerCategory: String?
     /// Left out of every spending, income and budget total; balances still include it. Hiding takes a row out of review.
     public var isHidden: Bool

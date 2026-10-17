@@ -100,6 +100,9 @@ export function span(from, through) {
 
 export const KIND = { checking: "Checking", savings: "Savings", credit: "Credit card", investment: "Investment" };
 export const SOURCE = { plaid: "Plaid", teller: "Teller", simplefin: "SimpleFIN", fileImport: "Statements", demo: "Demo data" };
+/// Teller withdrew its API in July 2026 and 0.6.0 removed its code: a Teller link stored before then still lists (`SOURCE`
+/// keeps its name) and can only be removed (its ⋯ menu). The server says the same (`SyncService.tellerGone`).
+export const TELLER_GONE = "Teller has shut down — remove this link. Its transactions stay.";
 /// How a row got its category: the order and chart colors (series, not status). The names come from the server
 /// (`tierNames`, the phone's `CategorizationTier.displayName`), so both say the same thing; these are fallbacks.
 export const TIERS = [
@@ -161,7 +164,7 @@ export async function api(path, { method = "GET", body, timeout } = {}) {
 function plainMessage(message, status) {
   const m = (message || "").trim();
   // A provider's own refusal ("Plaid: invalid client_id") is worth reading; other 5xx text is a proxy's or a stack's.
-  const provider = /^(Plaid|Teller|SimpleFIN):/.test(m);
+  const provider = /^(Plaid|SimpleFIN):/.test(m);
   const technical = !m || m.length > 180 || /[{}\[\]]|Error\(|HTTP \d|^\w+\.\w+/.test(m) || (status >= 500 && !provider);
   if (!technical) return m;
   if (status === 502) return "A service the server relies on didn't answer.";

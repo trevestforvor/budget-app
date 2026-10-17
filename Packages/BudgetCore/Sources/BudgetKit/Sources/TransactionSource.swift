@@ -12,7 +12,7 @@ public struct SourceTransaction: Hashable, Sendable {
     public var description: String
     public var payee: String?
     public var isPending: Bool
-    /// The provider's own category (Plaid personal_finance_category, Teller details.category) —
+    /// The provider's own category (Plaid personal_finance_category, a statement's category column) —
     /// a hint for the categorization pipeline, never the final answer.
     public var providerCategory: String?
     /// The provider's id for the pending row this posted row replaces (Plaid `pending_transaction_id`), so

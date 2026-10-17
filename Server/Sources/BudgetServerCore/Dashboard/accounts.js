@@ -2,9 +2,9 @@
 // Connect-a-bank drawer. Bank sign-in happens here; the phone only reads.
 import { fill, h, api, store, heavy, pageHead, sectionHead, button, busy, armed, isArmed, callout, details, glyph, statusLine,
   institutionGroups, syncProblem, providerDetail, syncNow, describeSync, afterWrite, reportError, toast, rowMoney, plural, dateShort, dateFull,
-  dateTime, ago, KIND, SOURCE, emptyState, drawer, closeDrawer } from "./core.js";
+  dateTime, ago, KIND, SOURCE, TELLER_GONE, emptyState, drawer, closeDrawer } from "./core.js";
 import { needsNewLink, consentDaysLeft, RELINK_OVERLAP } from "./linkerrors.js";
-import { connectPanes, framedNote, linkPlaid, relinkTeller, reconnected, announce } from "./providers.js";
+import { connectPanes, framedNote, linkPlaid, reconnected, announce } from "./providers.js";
 import { netWorthSection } from "./networth.js";
 import { accountRowExtras, linkDetailsExtras } from "./health.js";
 import { accountMenuItems } from "./accounts-edit.js";
@@ -24,10 +24,9 @@ async function syncInstitution(g, buttonEl) {
 export const reconnectLabel = (link) => (link.provider === "simplefin" ? "Try again" : needsNewLink(link) ? "Link again" : "Reconnect");
 
 /// Sign in to a bank again without losing its history. Plaid opens Link in update mode for the same Item and then
-/// syncs it (on a working link that's "Renew access": the same update mode, renewing the bank's consent); Teller reopens
-/// the same enrollment in Connect and stores the new token; SimpleFIN is fixed on SimpleFIN Bridge's site, after which
-/// a sync of the link takes it back. A Plaid Item that's gone, or whose access was withdrawn, is the one case where a
-/// new link is the only way back: Plaid Link opens as for a new bank. Inside the Olares window the bank's sign-in pages
+/// syncs it (on a working link that's "Renew access": the same update mode, renewing the bank's consent); SimpleFIN is
+/// fixed on SimpleFIN Bridge's site, after which a sync of the link takes it back. A Plaid Item that's gone, or whose
+/// access was withdrawn, is the one case where a new link is the only way back: Plaid Link opens as for a new bank. Inside the Olares window the bank's sign-in pages
 /// misbehave, so there it points to a full tab instead.
 export async function reconnect(link, buttonEl, where) {
   const flash = where || document.getElementById("flash");
@@ -39,14 +38,14 @@ export async function reconnect(link, buttonEl, where) {
   await busy(buttonEl, link.provider === "simplefin" ? "Trying…" : "Signing in…", async () => {
     if (needsNewLink(link)) return linkPlaid({ where: flash });
     if (link.provider === "plaid") return linkPlaid({ update: link, where: flash });
-    if (link.provider === "teller") return relinkTeller(link, { where: flash });
+    if (link.provider === "teller") return reportError({ message: TELLER_GONE }, flash);
     announce(retriedSimpleFIN(await api(`/v1/links/${encodeURIComponent(link.id)}/sync`, { method: "POST" })), flash);
     await afterWrite();
   }, { errorTarget: flash });
 }
 
 /// SimpleFIN's "Try again" signs nobody in here: it syncs, and either the bank is back or it still wants a sign-in on
-/// SimpleFIN Bridge. (Plaid and Teller come back through `reconnected`, after a sign-in that did happen.)
+/// SimpleFIN Bridge. (Plaid comes back through `reconnected`, after a sign-in that did happen.)
 function retriedSimpleFIN(result) {
   if (result.ok) return { ok: true, message: `${result.institution} is back · ${plural((result.report && result.report.rowsAdded) || 0, "new transaction")}` };
   return { ok: false, message: `${result.institution} still needs you to sign in on SimpleFIN Bridge, then try again here.`, detail: result.error };

@@ -24,10 +24,10 @@ extension LinkFailure: LocalizedError {
 
 enum LinkFailureClassifier {
     /// A `LinkFailure` thrown by the sync is already classified. Otherwise the link's provider's classifier gets a say
-    /// first; what none claims falls back to the rule 0.5.x had: a refused sign-in (a 401 or 403, ITEM_LOGIN_REQUIRED,
-    /// a disconnected Teller enrollment) needs one, anything else is transient.
+    /// first; what none claims falls back to the rule 0.5.x had: a refused sign-in (a 401 or 403, ITEM_LOGIN_REQUIRED)
+    /// needs one, anything else is transient. A stored Teller link's is always the shut-down note.
     static func classify(_ error: any Error, provider: SourceKind) -> LinkFailure {
-        if provider == .teller { return SyncService.tellerFailure }  // [lane S] Teller removed (SPEC §10)
+        if provider == .teller { return SyncService.tellerFailure }
         if let failure = error as? LinkFailure { return failure }
         if provider == .plaid, let failure = PlaidErrors.classify(error) { return failure }
         if let failure = SimpleFINErrors.classify(error) { return failure }
@@ -131,7 +131,7 @@ enum LinkHealthBook {
     static func isDue(_ link: StoredLink, trigger: SyncTrigger, now: Date) -> Bool {
         // One link's "Sync now", a reconnect and a new link always go: they're how a link gets repaired.
         if trigger.retriesSignIn { return true }
-        guard link.provider != .teller else { return false }  // [lane S] Teller removed (SPEC §10)
+        guard link.provider != .teller else { return false }
         let webhook = if case .webhook = trigger { true } else { false }
         // A link parked before 0.6.0 has no kind: it waits for a sign-in.
         let kind = link.errorKind ?? (link.status == .needsReauth ? .needsSignIn : nil)
