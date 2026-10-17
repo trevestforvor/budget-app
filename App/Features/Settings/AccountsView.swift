@@ -17,8 +17,15 @@ struct AccountsView: View {
     @State private var showsAdd = false
     /// The server can start a reconnect from the phone: 0.6.0 or newer, and an API that speaks `LinkRepairAPI`.
     @State private var repairAPI: (any LinkRepairAPI)?
-    /// The link whose reconnect sheet is up.
-    @State private var repairing: InstitutionLink?
+    /// The link whose reconnect sheet is up, with the API it started on: a reload that resets `repairAPI` meanwhile
+    /// doesn't empty the sheet.
+    @State private var repairing: Repair?
+
+    struct Repair: Identifiable {
+        let link: InstitutionLink
+        let api: any LinkRepairAPI
+        var id: String { link.id }
+    }
 
     var body: some View {
         Group {
@@ -57,8 +64,8 @@ struct AccountsView: View {
         }
         .task(id: app.revision) { await load() }
         .sheet(isPresented: $showsAdd) { AddAccountSheet(dashboardURL: state.value.flatMap(dashboardURL)) }
-        .sheet(item: $repairing) { link in
-            if let repairAPI { ReconnectSheet(link: link, api: repairAPI, dashboardURL: state.value.flatMap(dashboardURL)) }
+        .sheet(item: $repairing) { repair in
+            ReconnectSheet(link: repair.link, api: repair.api, dashboardURL: state.value.flatMap(dashboardURL))
         }
         // A connection push tapped while this page is already showing.
         .onChange(of: app.pendingReconnect) { openPendingReconnect() }
@@ -74,7 +81,9 @@ struct AccountsView: View {
         return List {
             if !signIn.isEmpty || !expiring.isEmpty {
                 Section {
-                    LinkRepairControls(links: signIn, expiring: expiring, status: status, canRepair: repairAPI != nil) { repairing = $0 }
+                    LinkRepairControls(links: signIn, expiring: expiring, status: status, canRepair: repairAPI != nil) { link in
+                        if let repairAPI { repairing = Repair(link: link, api: repairAPI) }
+                    }
                 }
             }
             ForEach(ordered) { link in
@@ -184,12 +193,13 @@ struct AccountsView: View {
         openPendingReconnect()
     }
 
-    /// The API to sign in to banks again through, when the server has the routes; nil before 0.6.0 and in the demo.
+    /// The API to sign in to banks again through, when the server has the routes; nil before 0.6.0, in the demo, and in
+    /// a build without Associated Domains (`BUDGET_API_HOST`), where a bank's own app couldn't hand the phone back.
     private func linkRepairAPI() async -> (any LinkRepairAPI)? {
         #if targetEnvironment(simulator)
         if ReconnectStub.isOn { return ReconnectStub.shared }
         #endif
-        guard !app.isDemo, let api = app.api as? any LinkRepairAPI,
+        guard !app.isDemo, Bundle.main.appLinksHost != nil, let api = app.api as? any LinkRepairAPI,
               await app.serverSupports(ServerStatus.connectionsSince) else { return nil }
         return api
     }
@@ -199,10 +209,10 @@ struct AccountsView: View {
     private func openPendingReconnect() {
         guard let id = app.pendingReconnect, let status = state.value else { return }
         app.pendingReconnect = nil
-        guard repairAPI != nil, repairing == nil,
+        guard let repairAPI, repairing == nil,
               let link = status.institutions.first(where: { $0.id == id }), link.reconnect == .phone,
               link.needsSignIn || link.consentEndsSoon() else { return }
-        repairing = link
+        repairing = Repair(link: link, api: repairAPI)
     }
 
     /// Pulls every connected bank now, then says what came in.

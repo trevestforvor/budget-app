@@ -29,6 +29,9 @@ targets:
         # The file would otherwise pin 1.0 (1) over MARKETING_VERSION and CURRENT_PROJECT_VERSION.
         CFBundleShortVersionString: $(MARKETING_VERSION)
         CFBundleVersion: $(CURRENT_PROJECT_VERSION)
+        # The host Associated Domains were built for (Config/Budget.xcconfig), empty without one: the app offers signing in
+        # to a bank again from the phone only when it's set, since a bank's own app can't hand the phone back otherwise.
+        BudgetAPIHost: $(BUDGET_API_HOST)
     # Signing comes from Config/Budget.xcconfig, which reads your own team and bundle prefix from Config/Local.xcconfig.
     configFiles:
       Debug: Config/Budget.xcconfig

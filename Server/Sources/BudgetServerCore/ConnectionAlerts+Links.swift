@@ -52,6 +52,13 @@ extension ConnectionAlerts {
             .compactMap { $0 }.filter { $0 > now }.min()
     }
 
+    /// The date the phone and Home show as when access ends: the push's `accessEnds` (so a PENDING_DISCONNECT with no
+    /// consent date still reads as a week away), else a consent date that has passed, for "has ended". One answer for the
+    /// push, Linked accounts' banner and `linkAttention`, so a tapped push always finds something to renew.
+    static func shownAccessEnds(_ link: StoredLink, now: Date) -> Date? {
+        accessEnds(link, now: now) ?? (link.hasLiveItem ? link.plaid?.consentExpiresAt : nil)
+    }
+
     /// Consent running out within 14 days (or 7: that push also covers the 14-day one, so a first look inside a week
     /// sends one, not two). Nothing once the date has passed: Plaid then reports a sign-in error, which has its own push.
     static func expiryAlert(_ link: StoredLink, now: Date, timeZone: TimeZone, fromPhone: Bool) -> ConnectionAlert? {

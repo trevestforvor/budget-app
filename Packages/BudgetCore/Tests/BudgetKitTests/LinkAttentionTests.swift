@@ -23,7 +23,8 @@ struct LinkAttentionTests {
         #expect(item.linkID == "plaid-amex")
         #expect(item.dueBy == MonthFixture.day(-13))
         #expect(item.title.hasPrefix("Amex access ends "))
-        #expect(item.detail.contains("Linked accounts"), "the phone can renew it")
+        #expect(item.detail.contains("in the Budget app or on the dashboard"), "the phone can renew it")
+        #expect(!item.detail.contains("Linked accounts"), "a 0.5.x app shows this detail and has no renew button there")
     }
 
     @Test("Twenty days out, no date, or a link already waiting for a sign-in: no renew item")
@@ -51,7 +52,8 @@ struct LinkAttentionTests {
         #expect(items.map(\.id) == ["reauth-p", "reauth-d", "reauth-n"], "ids unchanged from older servers")
         #expect(items.map(\.reason) == [.needsSignIn, .needsSignIn, .revoked])
         #expect(items.map(\.linkID) == ["p", "d", "n"])
-        #expect(items[0].detail.contains("Sign in again from Linked accounts"))
+        #expect(items[0].detail.contains("Sign in again in the Budget app or on the dashboard"))
+        #expect(items.allSatisfy { !$0.detail.contains("Linked accounts") }, "old apps show the detail too")
         #expect(items[1].detail.contains("Reconnect it on the Budget dashboard"))
         #expect(items[2].detail.contains("Link it again"))
     }

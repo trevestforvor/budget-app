@@ -79,11 +79,17 @@ struct ReconnectSheet: View {
     @State private var step: Step = .starting
     /// Bumped by "Try again", which starts a fresh session.
     @State private var attempt = 0
+    /// The session the browser is open for, so a return through the universal link can ask about it.
+    @State private var sessionID: String?
+    @State private var browserWait = BrowserWait()
 
     /// The scheme Hosted Link finishes on (`completion_redirect_uri`), when the server doesn't name one.
     nonisolated static let callbackScheme = "budgetapp-plaid"
     /// Seconds between checks after the browser closes: about half a minute in all, then "still checking".
     static let backoff: [Double] = [1, 2, 4, 8, 8, 8]
+    /// After the browser was closed early, how long the phone keeps asking before it says nothing changed. The server
+    /// asks Plaid at most every 5 s (`ReconnectSessions`), so a shorter wait can miss a sign-in that did finish.
+    static let closedGrace: Double = 6
 
     enum Step: Equatable {
         case starting, signingIn, checking
@@ -94,6 +100,10 @@ struct ReconnectSheet: View {
         case expired
         /// `setup`: the server can't do this from the phone, so the dashboard is the way.
         case failed(String, setup: Bool)
+        /// The server has no such link any more (removed on the dashboard, say).
+        case gone
+        /// The server's own limit on how often a sign-in starts (429): trying again now would be refused too.
+        case tooSoon(String)
     }
 
     var body: some View {
@@ -126,8 +136,15 @@ struct ReconnectSheet: View {
         .presentationBackground(Color.ds.canvas)
         .interactiveDismissDisabled(step == .signingIn)
         .task(id: attempt) { await run() }
-        // A sync may still land after "still checking": the screens behind reload either way.
-        .onDisappear { if step == .stillChecking { Task { await app.didWrite() } } }
+        // The bank's own app handed the phone back through the universal link: ask the server now, in case the hosted
+        // page doesn't carry on by itself.
+        .onChange(of: ReconnectReturn.shared.count) { if step == .signingIn, let sessionID { Task { await checkAfterReturn(sessionID) } } }
+        // A sync may still land after the sheet goes (swiped away mid-check, "still checking", a closed browser that
+        // did finish): the screens behind reload either way. A finished one has already refreshed.
+        .onDisappear {
+            if case .done = step { return }
+            if step != .starting { Task { await app.didWrite() } }
+        }
     }
 
     @ViewBuilder
@@ -137,7 +154,7 @@ struct ReconnectSheet: View {
             Button("Done") { dismiss() }
                 .buttonStyle(.ds(.primary, fullWidth: true))
                 .accessibilityIdentifier("reconnectDone")
-        case .stillChecking:
+        case .stillChecking, .gone, .tooSoon:
             Button("OK") { dismiss() }.buttonStyle(.ds(.primary, fullWidth: true))
         case .exited, .expired, .failed(_, setup: false):
             Button("Try again") { attempt += 1 }.buttonStyle(.ds(.primary, fullWidth: true))
@@ -152,16 +169,21 @@ struct ReconnectSheet: View {
 
     private var working: Bool { [.starting, .signingIn, .checking].contains(step) }
 
+    /// Renewing a link that still works, rather than signing in to one the bank ended.
+    private var renewing: Bool { !link.needsSignIn }
+
     private var title: String {
         switch step {
         case .starting: "Opening \(link.institution)…"
-        case .signingIn: "Signing in to \(link.institution)"
+        case .signingIn: renewing ? "Renewing \(link.institution)" : "Signing in to \(link.institution)"
         case .checking: "Checking with \(link.institution)…"
-        case .done: "\(link.institution) is connected again"
+        case .done: renewing ? "\(link.institution) access renewed" : "\(link.institution) is connected again"
         case .stillChecking: "Still checking"
-        case .exited: "Not signed in"
+        case .exited: renewing ? "Not renewed" : "Not signed in"
         case .expired: "That sign-in page expired"
-        case .failed: "Couldn't sign in from here"
+        case .failed: renewing ? "Couldn't renew from here" : "Couldn't sign in from here"
+        case .gone: "\(link.institution) isn't linked any more"
+        case .tooSoon: "Try again later"
         }
     }
 
@@ -169,12 +191,14 @@ struct ReconnectSheet: View {
         switch step {
         case .starting: "Getting a secure sign-in page from Plaid."
         case .signingIn: "Finish in the window that opened. Your bank login goes to Plaid and your bank, never to Budget."
-        case .checking: "Making sure the bank is sending transactions again."
+        case .checking: renewing ? "Making sure the bank renewed access." : "Making sure the bank is sending transactions again."
         case let .done(result):
             if let result, !result.ok {
                 "You're signed in. The first sync didn't finish (\(result.error ?? "no reason given")); the server tries again on its schedule."
             } else if let added = result?.report?.rowsAdded, added > 0 {
                 "It's syncing again — \(added) new transaction\(added == 1 ? "" : "s") came in."
+            } else if renewing {
+                "It keeps syncing as before, and your accounts and history are as they were."
             } else {
                 "It's syncing again, and your accounts and history are as they were."
             }
@@ -182,13 +206,15 @@ struct ReconnectSheet: View {
         case let .exited(reason): reason
         case .expired: "Sign-in pages last 15 minutes. Start again for a fresh one."
         case let .failed(reason, _): reason
+        case .gone: "It was removed on your Budget dashboard, so there's nothing to sign in to. Linked accounts shows what's linked now."
+        case let .tooSoon(reason): reason
         }
     }
 
     private var glyph: (name: String, tone: DSTone) {
         switch step {
         case .done: ("checkmark.circle", .teal)
-        case .exited, .expired, .failed: ("exclamationmark.circle", .amber)
+        case .exited, .expired, .failed, .gone, .tooSoon: ("exclamationmark.circle", .amber)
         default: ("building.columns", .iris)
         }
     }
@@ -197,11 +223,14 @@ struct ReconnectSheet: View {
 
     private func run() async {
         step = .starting
+        sessionID = nil
         let session: ReconnectSession
         do {
             session = try await api.startReconnect(linkID: link.id)
         } catch {
             step = Self.failure(error, institution: link.institution)
+            // A link removed elsewhere: the list behind drops it.
+            if step == .gone { await app.didWrite() }
             return
         }
         guard session.state == .waiting else { return show(session) }
@@ -210,17 +239,14 @@ struct ReconnectSheet: View {
             return
         }
         step = .signingIn
-        var closed = false
-        do {
-            try await signIn(url, scheme: session.callbackScheme?.nilIfEmpty ?? Self.callbackScheme)
-        } catch {
-            // Closed before the page finished (or the browser couldn't open): the person may still have finished, so
-            // the server is asked once.
-            closed = true
-        }
+        sessionID = session.id
+        let scheme = session.callbackScheme?.nilIfEmpty ?? Self.callbackScheme
+        // Closed before the page finished (or the browser couldn't open): the person may still have finished, so the
+        // server is asked before anything is said.
+        let end = await browserWait.run { try await signIn(url, scheme: scheme) }
         guard !Task.isCancelled else { return }
         step = .checking
-        await poll(session.id, closed: closed)
+        await poll(session.id, closed: end == .closed)
     }
 
     /// The hosted page in an in-app browser, until it returns on `scheme`. Ephemeral: no "wants to sign in" alert, and
@@ -234,12 +260,29 @@ struct ReconnectSheet: View {
                                            additionalHeaderFields: [:])
     }
 
+    /// After the universal link brought the phone back with the browser still up: a few quick checks, and once the server
+    /// sees the sign-in finished, the browser's wait ends so the sheet carries on instead of sitting on a stuck page.
+    private func checkAfterReturn(_ session: String) async {
+        for delay in [1.0, 2, 4, 8] {
+            try? await Task.sleep(for: .seconds(delay))
+            guard browserWait.isWaiting, sessionID == session else { return }
+            guard let latest = try? await api.reconnectStatus(linkID: link.id, session: session) else { continue }
+            if latest.state != .waiting {
+                browserWait.finish(.serverMovedOn)
+                return
+            }
+        }
+    }
+
     /// Asks the server about the session with growing gaps until it settles, for about half a minute. After the browser
-    /// was closed early, one answer that's still `waiting` means the person didn't finish.
+    /// was closed early, an answer that's still `waiting` once `closedGrace` has passed (time for the server to have
+    /// asked Plaid) means the person most likely didn't finish.
     private func poll(_ session: String, closed: Bool) async {
+        var waited = 0.0
         for delay in Self.backoff {
             try? await Task.sleep(for: .seconds(delay))
             guard !Task.isCancelled else { return }
+            waited += delay
             let latest: ReconnectSession
             do {
                 latest = try await api.reconnectStatus(linkID: link.id, session: session)
@@ -249,8 +292,8 @@ struct ReconnectSheet: View {
             } catch {
                 continue
             }
-            if latest.state == .waiting, closed {
-                step = .exited("You closed the sign-in before it finished, so nothing changed.")
+            if latest.state == .waiting, closed, waited >= Self.closedGrace {
+                step = .exited("You closed the sign-in before it finished, so nothing changed. If you did finish, \(link.institution) catches up here shortly.")
                 return
             }
             if latest.state != .waiting, latest.state != .syncing { return show(latest) }
@@ -272,13 +315,103 @@ struct ReconnectSheet: View {
     }
 
     /// The server's refusal in its own words. A setup problem (or a link only the dashboard can repair) points there.
+    /// The sheet only opens on a 0.6.0 server (`ServerStatus.connectionsSince`), so a 404 means the link is gone, not
+    /// that the route is missing; a 429 is the server's own limit, which "Try again" would only hit again.
     static func failure(_ error: any Error, institution: String) -> Step {
         let message = (error as? LocalizedError)?.errorDescription ?? error.localizedDescription
-        if case .rejected = error as? BudgetAPIError { return .failed(message, setup: true) }
-        if case .notFound = error as? BudgetAPIError {
-            return .failed("Your server can't sign in to banks again from the phone yet. Update it, or reconnect \(institution) on your Budget dashboard.", setup: true)
+        switch error as? BudgetAPIError {
+        case .rejected?: return .failed(message, setup: true)
+        case .notFound?: return .gone
+        case let .server(status, text)? where status == 429:
+            return .tooSoon(text ?? "Signing in to \(institution) again was started too many times. Try again in an hour.")
+        default: return .failed(message, setup: false)
         }
-        return .failed(message, setup: false)
+    }
+}
+
+/// How the in-app browser's wait ended.
+enum BrowserEnd: Equatable {
+    /// The hosted page finished and came back on the callback scheme.
+    case returned
+    /// The person closed it (or it couldn't open, or the sheet went away).
+    case closed
+    /// The server saw the sign-in finish while the page was still up (after a bank app's return).
+    case serverMovedOn
+}
+
+/// The browser's wait, which a universal-link return can end early: `run` resolves on the first of the page coming back,
+/// the person closing it, or `finish(.serverMovedOn)`. Ending early cancels the browser's task, which closes the
+/// authentication session.
+@MainActor final class BrowserWait {
+    private var continuation: CheckedContinuation<BrowserEnd, Never>?
+    private var browser: Task<Void, Never>?
+    /// Which `run` is current, so a browser task cancelled by an earlier one can't end a later wait.
+    private var generation = 0
+    /// An end that came before `run` was waiting (the sheet cancelled at once).
+    private var early: BrowserEnd?
+
+    var isWaiting: Bool { continuation != nil }
+
+    func run(_ open: @escaping @MainActor () async throws -> Void) async -> BrowserEnd {
+        generation += 1
+        let mine = generation
+        early = nil
+        return await withTaskCancellationHandler {
+            await withCheckedContinuation { (continuation: CheckedContinuation<BrowserEnd, Never>) in
+                if let early {
+                    self.early = nil
+                    continuation.resume(returning: early)
+                    return
+                }
+                self.continuation = continuation
+                browser = Task { @MainActor in
+                    do {
+                        try await open()
+                        self.finish(.returned, of: mine)
+                    } catch {
+                        self.finish(.closed, of: mine)
+                    }
+                }
+            }
+        } onCancel: {
+            Task { @MainActor in self.finish(.closed, of: mine) }
+        }
+    }
+
+    /// Ends the current wait (`of` nil) or the one `of` names, if it's still current.
+    func finish(_ end: BrowserEnd, of run: Int? = nil) {
+        if let run, run != generation { return }
+        guard let continuation else {
+            early = end
+            return
+        }
+        self.continuation = nil
+        if end != .returned { browser?.cancel() }
+        browser = nil
+        continuation.resume(returning: end)
+    }
+}
+
+/// The universal link a bank's own app returns the phone on (`/plaid/oauth-return`, the server's default
+/// `PLAID_MOBILE_REDIRECT_URI`). Home hands each arrival here; an open `ReconnectSheet` then asks the server at once.
+@MainActor @Observable final class ReconnectReturn {
+    static let shared = ReconnectReturn()
+    private(set) var count = 0
+
+    /// Counts `url` when it's the OAuth return; anything else is left alone.
+    func note(_ url: URL?) {
+        guard let url, url.path.hasPrefix("/plaid/oauth-return") else { return }
+        count += 1
+    }
+}
+
+extension Bundle {
+    /// The API host the app was built with Associated Domains for (`BUDGET_API_HOST`), or nil when it was built
+    /// without: then a bank's own app can't hand the phone back to Budget, so reconnecting stays on the dashboard.
+    var appLinksHost: String? {
+        guard let host = object(forInfoDictionaryKey: "BudgetAPIHost") as? String,
+              !host.isEmpty, !host.hasPrefix("$(") else { return nil }
+        return host
     }
 }
 

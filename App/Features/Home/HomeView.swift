@@ -60,9 +60,10 @@ struct HomeView: View {
         }
         .task(id: app.revision) { await load() }
         // Plaid's sign-in returns to the app through its universal link (`/plaid/oauth-return`) after a bank's own app
-        // signs the person in; the Hosted Link page in the in-app browser carries on by itself, so there's nothing to do.
-        .onOpenURL { _ in }
-        .onContinueUserActivity(NSUserActivityTypeBrowsingWeb) { _ in }
+        // signs the person in. The Hosted Link page in the in-app browser is expected to carry on by itself (unproven on a
+        // device; PLAID_PLAN.md); an open reconnect sheet also asks the server at once, so it can't sit on a stuck page.
+        .onOpenURL { ReconnectReturn.shared.note($0) }
+        .onContinueUserActivity(NSUserActivityTypeBrowsingWeb) { ReconnectReturn.shared.note($0.webpageURL) }
     }
 
     @discardableResult

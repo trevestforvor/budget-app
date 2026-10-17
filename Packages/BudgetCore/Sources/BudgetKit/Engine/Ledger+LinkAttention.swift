@@ -7,7 +7,8 @@ extension Ledger {
 
     /// One item per connection the bank ended (sign in again), then one per connection whose consent runs out within
     /// `consentWarningDays` (renew access): first in `dataHealth`. Both keep `kind: .needsReauth`, which every app
-    /// knows; `reason` and `linkID` tell a 0.6.0 phone which repair to open.
+    /// knows; `reason` and `linkID` tell a 0.6.0 phone which repair to open. The detail never names a phone control: a
+    /// 0.5.x app shows it too, and its Linked accounts has no sign-in or renew button.
     func linkAttention(_ institutions: [InstitutionLink]) -> [DataAttention] {
         let reauth = institutions.filter { $0.status == .needsReauth }
         let ended = reauth.map { link in
@@ -23,7 +24,7 @@ extension Ledger {
             let when = ends > now ? "ends \(ends.formatted(dayStyle))" : "has ended"
             return DataAttention(id: "expiring-\(link.id)", kind: .needsReauth, title: "\(link.institution) access \(when).",
                                  detail: link.reconnect == .phone
-                                    ? "Banks ask you to renew access now and then. Renew it from Linked accounts so new transactions keep coming in."
+                                    ? "Banks ask you to renew access now and then. Renew it in the Budget app or on the dashboard so new transactions keep coming in."
                                     : "Banks ask you to renew access now and then. Reconnect it on the Budget dashboard so new transactions keep coming in.",
                                  institution: link.institution, reason: .consentExpiring, linkID: link.id, dueBy: ends)
         }
@@ -35,7 +36,7 @@ extension Ledger {
     private func reauthDetail(_ link: InstitutionLink) -> String {
         switch link.reconnect {
         case .phone?:
-            "The bank ended the connection, so nothing new is coming in. Sign in again from Linked accounts — your accounts and history stay as they are."
+            "The bank ended the connection, so nothing new is coming in. Sign in again in the Budget app or on the dashboard — your accounts and history stay as they are."
         case .newLink?:
             "Access to it was withdrawn, so nothing new is coming in. Link it again on the Budget dashboard — your accounts and history stay as they are."
         default:
