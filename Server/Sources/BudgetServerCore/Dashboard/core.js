@@ -591,20 +591,23 @@ export function institutionGroups() {
 
 // [lane S] groupState
 function groupState(g, hours) {
-  const via = [...new Set(g.links.map((l) => SOURCE[l.provider] || l.provider))].join(" and ");
-  const lastSync = g.links.map((l) => l.lastSync).filter(Boolean).sort().pop();
   // Teller withdrew its API in July 2026: a link stored before then can't sync or reconnect, only be removed (⋯ menu).
-  if (g.links.some((l) => l.provider === "teller")) {
+  // It never hides another link's problem at the same bank; a group of Teller links only says so.
+  const live = g.links.filter((l) => l.provider !== "teller");
+  const lastSync = (live.length ? live : g.links).map((l) => l.lastSync).filter(Boolean).sort().pop();
+  if (g.links.length && !live.length) {
     return { tone: "watch", label: "Teller has shut down — remove this link", detail: [lastSync ? `last updated ${dateShort(lastSync)}` : null, "its transactions stay"], lastSync };
   }
-  const reauth = g.links.find((l) => l.status === "needsReauth");
-  if (reauth) return { tone: "act", label: "Needs sign-in", detail: [lastSync ? `last updated ${dateShort(lastSync)}` : null, via && `via ${via}`], lastSync, problem: reauth };
-  const failing = g.links.find((l) => l.lastError);
-  if (failing) return { tone: "watch", label: lastSync ? `Updated ${ago(lastSync)}` : "Hasn't synced yet", detail: [via && `via ${via}`, "last sync failed, retrying"], lastSync, problem: failing };
+  const tellerNote = live.length < g.links.length ? "remove the old Teller link (Teller has shut down)" : null;
+  const via = [...new Set(live.map((l) => SOURCE[l.provider] || l.provider))].join(" and ");
+  const reauth = live.find((l) => l.status === "needsReauth");
+  if (reauth) return { tone: "act", label: "Needs sign-in", detail: [lastSync ? `last updated ${dateShort(lastSync)}` : null, via && `via ${via}`, tellerNote], lastSync, problem: reauth };
+  const failing = live.find((l) => l.lastError);
+  if (failing) return { tone: "watch", label: lastSync ? `Updated ${ago(lastSync)}` : "Hasn't synced yet", detail: [via && `via ${via}`, "last sync failed, retrying", tellerNote], lastSync, problem: failing };
   if (g.kind === "linked") {
-    if (!lastSync) return { tone: "neutral", label: "Waiting for the first sync", detail: [via && `via ${via}`] };
+    if (!lastSync) return { tone: tellerNote ? "watch" : "neutral", label: "Waiting for the first sync", detail: [via && `via ${via}`, tellerNote] };
     const stale = Date.now() - new Date(lastSync) > (2 * hours + 1) * 3600 * 1000;
-    return { tone: stale ? "watch" : "ok", label: `Updated ${ago(lastSync)}`, detail: [via && `via ${via}`], lastSync, stale };
+    return { tone: stale || tellerNote ? "watch" : "ok", label: `Updated ${ago(lastSync)}`, detail: [via && `via ${via}`, tellerNote], lastSync, stale };
   }
   if (g.kind === "statements") return { tone: "neutral", label: "From statements you import", detail: [] };
   if (g.kind === "demo") return { tone: "neutral", label: "Demo data", detail: ["not a real connection"] };

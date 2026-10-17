@@ -719,6 +719,7 @@ for ts in d.values():
 # MARK: - main
 
 all() {
+  case ${BUDGET_BANKS:-} in ''|plaid|simplefin|later) ;; *) die "BUDGET_BANKS is plaid, simplefin or later ($BUDGET_BANKS)." ;; esac
   printf '%sBudget setup%s: the server, the phone'"'"'s address, then the app. Each step asks first.\n' "$B" "$N"
   step "Where the server runs"
   pick_server "" skip
@@ -737,15 +738,22 @@ all() {
   cmd_check || true
   [[ $KIND == mac || $KIND == docker ]] || return 0
   echo
-  choose BUDGET_BANKS "How will this server get bank data? Either works, and you can add the other later." later \
-    "plaid|Plaid: your own developer account and keys; card bills, merchant names, 2 years of history; the free Trial is 10 bank logins, ever" \
-    "simplefin|SimpleFIN: \$15 a year, one token, up to 25 banks; about daily, 90 days per request, no card bills" \
-    "later|decide on the dashboard, which shows the two side by side"
+  # Banks already linked: the choice is made, so don't ask it again on a re-run.
+  local banks; banks=$(bank_counts "http://127.0.0.1:$(dash_port)")
+  if [[ -n $banks && $banks != "Banks: 0 "* ]]; then
+    banks="  1. $banks; add more at http://budget.localhost:$(dash_port) → Accounts → Connect a bank"
+  else
+    choose BUDGET_BANKS "How will this server get bank data? Either works, and you can add the other later." later \
+      "plaid|Plaid: your own developer account and keys; card bills, merchant names, 2 years of history; the free Trial is 10 bank logins, ever" \
+      "simplefin|SimpleFIN: \$15 a year, one token, up to 25 banks; about daily, 90 days per request, no card bills" \
+      "later|decide on the dashboard, which shows the two side by side"
+    banks="  1. Link banks: http://budget.localhost:$(dash_port) → Accounts → Connect a bank
+$(banks_next)"
+  fi
   cat <<EOF
 
 ${B}Next, in a browser on this machine${N} (docs/INSTALL-SERVER.md walks through each):
-  1. Link banks: http://budget.localhost:$(dash_port) → Accounts → Connect a bank
-$(banks_next)
+$banks
   2. Optional: a model for Ask, under Settings → Models
   3. Optional: the morning summary, under Settings → Notifications
 Save BUDGET_TOKEN_KEY from $ENV_FILE in a password manager: without it, every bank must be linked again.

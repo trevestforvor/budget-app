@@ -123,16 +123,21 @@ struct LinkBookkeepingCharacterizationTests {
     }
 
     // Teller's case changed on purpose in 0.6.0 (SPEC §10: Teller removed): its sync is gone, and a stored link says so.
-    @Test("Teller: a stored link fails every sync with the shut-down note, stays connected and writes nothing")
+    @Test("Teller: a stored link is left out of every run; syncing it alone files the shut-down note as terminal")
     func teller() async throws {
         let (_, service) = try await TestServer.app(seedDemo: false)
         try await Self.link(service, id: "teller-enr_1", provider: .teller, token: "tok-1")
 
-        let r1 = await service.sync.syncAll()
-        #expect(r1.map(\.ok) == [false] && r1[0].error?.contains("Teller has shut down") == true)
-        #expect(try await Self.seen(service, "teller-enr_1") == Seen(status: .connected, lastError: r1[0].error, lastSync: nil, imports: 0))
-        let r2 = try await service.sync.sync(linkID: "teller-enr_1")
-        #expect(!r2.ok && r2.error == r1[0].error)
+        #expect(await service.sync.syncAll().isEmpty)
+        #expect(await service.sync.syncAll(trigger: .person).isEmpty)
+        #expect(try await Self.seen(service, "teller-enr_1") == Seen(status: .connected, lastError: nil, lastSync: nil, imports: 0))
+
+        let r = try await service.sync.sync(linkID: "teller-enr_1")
+        #expect(!r.ok && r.error == SyncService.tellerGone && r.errorKind == .providerSetup)
+        #expect(try await Self.seen(service, "teller-enr_1") == Seen(status: .connected, lastError: SyncService.tellerGone, lastSync: nil, imports: 0))
+        let link = try #require(try await service.store.links().first)
+        #expect(link.errorCode == "teller.shutdown" && link.failureCount == 1)
+        #expect(await service.sync.syncAll().isEmpty)
     }
 
     @Test("SimpleFIN: a stored access URL that won't parse fails the sync without asking for a sign-in")

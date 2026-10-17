@@ -224,11 +224,10 @@ const PANES = [
 ];
 
 /// The comparison, then a tab per provider with its status, its three steps and a Link button. The tab that opens
-/// first is the one already Ready; with both or neither, the first by name. No badge on either.
+/// first is the one already set up; with both or neither, the first by name. No badge on either.
 export function connectPanes({ where, selected } = {}) {
   const states = providerStates();
-  const ready = PANES.map(([id]) => id).filter((id) => states[id].ready);
-  const first = selected || (ready.length === 1 ? ready[0] : PANES[0][0]);
+  const first = selected || defaultPane(states);
   const root = h("div", { class: "stack" });
   const tabs = h("div", { class: "tabs", role: "tablist", "aria-label": "Provider" });
   const panels = {};
@@ -251,6 +250,15 @@ export function connectPanes({ where, selected } = {}) {
   }
   select(first);
   return root;
+}
+
+/// "Already set up" means the person did something toward that provider: a bank linked through it, or, for Plaid,
+/// keys saved. SimpleFIN is Ready as soon as the server can seal (it needs no keys), so Ready alone would open its
+/// tab on every new install and lean the choice its way.
+function defaultPane(states) {
+  const links = (store.summary && store.summary.links) || [];
+  const setUp = PANES.map(([id]) => id).filter((id) => links.some((l) => l.provider === id) || (id === "plaid" && states.plaid.ready));
+  return setUp.length === 1 ? setUp[0] : PANES[0][0];
 }
 
 const extLink = (href, text) => h("a", { href, target: "_blank", rel: "noopener" }, text || href);
@@ -309,26 +317,34 @@ function renderSimpleFIN(panel, state, where) {
       await afterWrite();
     }, { errorTarget: where }) })));
   const links = ((store.summary && store.summary.links) || []).filter((l) => l.provider === "simplefin");
-  if (links.length) panel.append(...links.map((l) => simplefinLinkPanel(l, where)));
+  if (links.length) panel.append(...links.map((l) => simplefinLinkPanel(l, where, { named: links.length > 1 })));
   panel.append(h("p", { class: "help" }, "SimpleFIN gives no warning before a bank wants you to sign in again: the first sync that fails is the signal, and this page and the phone name the bank. ",
     "SimpleFIN refreshes about once a day, so the server asks a few times a day at most."));
 }
 
 /// One SimpleFIN link: its banks (or the link itself, until the server reports banks), the day's requests, and for a
-/// link SimpleFIN no longer accepts, the box for a new setup token.
-function simplefinLinkPanel(l, where) {
-  const banks = l.banks && l.banks.length ? l.banks
-    : [{ id: l.id, name: l.institution, status: l.status, lastGoodAt: l.lastSync }];
+/// link SimpleFIN no longer accepts, the box for a new setup token. With several links, each is headed by its name.
+function simplefinLinkPanel(l, where, { named = false } = {}) {
+  const perBank = !!(l.banks && l.banks.length);
+  const banks = perBank ? l.banks
+    : [{ id: l.id, name: l.institution, status: l.status, errorKind: l.errorKind, lastGoodAt: l.lastSync }];
+  // A failed request with no bank to blame (the Bridge was down, say) covers every bank.
+  const linkFailed = !!l.lastError && !(perBank && banks.some((b) => b.errorKind));
   const rows = banks.map((b) => {
-    const signIn = b.status === "needsReauth";
+    const kind = l.errorKind === "revoked" ? "revoked" : b.errorKind || (linkFailed ? l.errorKind || "transient" : null);
+    // Withdrawn access isn't fixed by signing in at the Bridge, only by a new setup token (the box below).
+    const signIn = kind !== "revoked" && (b.status === "needsReauth" || kind === "needsSignIn");
+    const state = kind === "revoked" ? "Access withdrawn" : signIn ? "Needs you to sign in on SimpleFIN Bridge"
+      : kind ? "Last sync failed, retrying" : "Connected";
     return h("div", { class: "row" },
       h("div", { class: "grow" },
         h("div", { class: "title" }, b.name),
-        h("div", { class: "sub" }, [signIn ? "Needs you to sign in on SimpleFIN Bridge" : "Connected",
-          b.lastGoodAt ? `last good data ${dateTime(b.lastGoodAt)}` : "no data yet"].join(" · "))),
+        h("div", { class: "sub" }, [state, b.lastGoodAt ? `last good data ${dateTime(b.lastGoodAt)}` : "no data yet"].join(" · "))),
       signIn ? h("a", { class: "btn secondary compact", href: BRIDGE, target: "_blank", rel: "noopener", "aria-label": `Fix ${b.name} on SimpleFIN Bridge` }, "Fix on SimpleFIN Bridge") : null);
   });
   return h("section", { class: "stack", "aria-label": `${l.institution} banks` },
+    // Several links usually share the name "SimpleFIN Bridge"; when each was linked tells them apart.
+    named ? h("h3", { class: "t-eyebrow" }, l.createdAt ? `${l.institution} · linked ${dateTime(l.createdAt)}` : l.institution) : null,
     h("div", { class: "rows" }, rows),
     l.requestsToday != null ? h("p", { class: "help" }, `Requests today: ${l.requestsToday} of ${SIMPLEFIN_DAILY_LIMIT}`) : null,
     simplefinReconnectAction(l, { where }),
@@ -343,7 +359,7 @@ export function simplefinReconnectAction(l, { where } = {}) {
   const input = h("input", { class: "input", placeholder: "New setup token", ...secretAttrs, "aria-label": `New SimpleFIN setup token for ${l.institution}` });
   return callout({ tone: "act", title: "SimpleFIN no longer accepts this server's access",
     body: ["Create a new setup token at ", extLink(BRIDGE), " and paste it here. The link keeps its accounts and history."],
-    actions: [h("div", { class: "secret-row" }, input, button("Paste a new setup token", { kind: "primary", compact: true, onclick: (e) => busy(e.currentTarget, "Linking…", async () => {
+    actions: [h("div", { class: "secret-row" }, input, button("Paste a new setup token", { kind: "primary", compact: true, onclick: (e) => busy(e.currentTarget, "Replacing…", async () => {
       const token = input.value.trim();
       if (!token) throw new Error("Paste the new setup token first.");
       const result = await api(`/v1/links/${encodeURIComponent(l.id)}/token`, { method: "PUT", body: { setupToken: token } });

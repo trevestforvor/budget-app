@@ -59,6 +59,10 @@ struct TellerRemovalTests {
             try await client.execute(uri: "/dash/providers/teller", method: .delete, headers: Self.write) { #expect($0.status == .notFound) }
             try await client.execute(uri: "/v1/links/teller", method: .post, headers: Self.write,
                                      body: TestServer.body(#"{"accessToken":"t","institution":"Harbor"}"#)) { #expect($0.status == .notFound) }
+            // S2 brings this route back for SimpleFIN's {setupToken} only; it then retitles this check: 422 for Plaid and
+            // Teller links, and an {accessToken} body refused.
+            try await client.execute(uri: "/v1/links/teller-enr_1/token", method: .put, headers: Self.write,
+                                     body: TestServer.body(#"{"accessToken":"t","enrollmentID":"enr_1"}"#)) { #expect($0.status == .notFound) }
             try await client.execute(uri: "/dash/summary", method: .get) { response in
                 #expect(response.status == .ok)
                 let body = try #require(try JSONSerialization.jsonObject(with: Data(response.body.readableBytesView)) as? [String: Any])
@@ -85,9 +89,22 @@ struct TellerRemovalTests {
                 #expect(links.map(\.provider) == [.teller])
                 #expect(links.first?.lastError == SyncService.tellerGone)
             }
+            // "Sync everything" leaves it out: it can't recover, so nothing retries it.
+            try await client.execute(uri: "/v1/sync", method: .post, headers: Self.write) { response in
+                #expect(response.status == .ok)
+                let results = try RemoteBudgetAPI.decoder.decode([LinkSyncResult].self, from: Data(response.body.readableBytesView))
+                #expect(results.isEmpty)
+            }
             try await client.execute(uri: "/v1/links/teller-enr_1", method: .delete, headers: Self.write) { #expect($0.status == .noContent) }
         }
         #expect(try await service.store.links().isEmpty)
+    }
+
+    @Test("The phone's note for a stored Teller link names the shut-down, not a retry")
+    func phoneNote() {
+        let link = StoredLink(id: "teller-enr_1", provider: .teller, institution: "Harbor", externalID: "enr_1", sealedToken: "x",
+                              cursor: nil, status: .connected, lastSync: nil, lastError: SyncService.tellerGone, createdAt: Date())
+        #expect(SyncService.note(link, Date.FormatStyle()) == SyncService.tellerGone)
     }
 
     @Test("Plaid's update mode is only for Plaid links")

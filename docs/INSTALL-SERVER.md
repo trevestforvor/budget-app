@@ -118,7 +118,7 @@ On the dashboard, go to Accounts → **Connect a bank**. Choose either; you can 
 | | **Plaid** | **SimpleFIN** |
 |---|---|---|
 | Cost | Your own Plaid account. Free Trial: 10 bank logins for the life of the account (removing one doesn't free it). Paid plans bill per bank | $15 a year (or $1.50 a month) to SimpleFIN, up to 25 banks |
-| Setup | Developer sign-up, keys, an identity check. OAuth banks need an https return address; approval can take days | Sign up, add banks on their site, paste one token |
+| Setup | Developer sign-up, keys and an identity check. Banks that sign in on their own site need an https return address; approval can take days | Sign up, add your banks on their site, paste one token |
 | Card bills (statement, minimum, due date) | Yes | No |
 | Merchant names and bank categories | Yes | Raw bank descriptions |
 | History | Up to 2 years at link | About 90 days per request; Budget walks back further where the bank allows |

@@ -9,6 +9,10 @@ extension SyncService {
         throw BudgetAPIError.rejected(Self.tellerGone)
     }
 
-    /// What a stored Teller link says on the dashboard and in its last error.
+    /// What a stored Teller link says on the dashboard, on the phone and in its last error.
     static let tellerGone = "Teller has shut down — remove this link. Its transactions stay."
+
+    /// How a Teller link's failure is filed: terminal rather than transient, with a fixed code, so no scheduled run
+    /// retries it (`LinkHealthBook.isDue`) and health and push logic can leave it out (`LinkFailureClassifier`).
+    static let tellerFailure = LinkFailure(kind: .providerSetup, code: "teller.shutdown", message: tellerGone)
 }
