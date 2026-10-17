@@ -124,12 +124,18 @@ struct BalanceOnDemandTests {
 
     @Test("A person's sync that joins a run already under way gets that run's results and no live read")
     func joinsRun() async throws {
-        let plaid = Self.plaid(delay: .milliseconds(150))
-        let (_, service) = try await PlaidErrorKindTests.service(plaid)
+        let plaid = Self.plaid()
+        let gate = GatedTransport(plaid, holding: "/transactions/sync")
+        let (_, service) = try await PlaidErrorKindTests.service(gate)
         let scheduled = Task { await service.sync.syncAll(trigger: .schedule) }
-        try await Task.sleep(for: .milliseconds(50))
-        let joined = await service.sync.syncAll(trigger: .person)
-        #expect(joined.map(\.ok) == [true])
+        // The scheduled run is under way, held at its transactions page, so it can't finish before the person's sync lands.
+        await gate.entered()
+        let joined = Task { await service.sync.syncAll(trigger: .person) }
+        // Give the person's call time to reach the service and join; the run stays held all the while.
+        for _ in 0..<50 { await Task.yield() }
+        try await Task.sleep(for: .milliseconds(100))
+        gate.open()
+        #expect(await joined.value.map(\.ok) == [true])
         #expect(await scheduled.value.map(\.ok) == [true])
         #expect(plaid.count("/accounts/balance/get") == 0 && plaid.count("/transactions/sync") == 1)
     }
@@ -147,6 +153,21 @@ struct BalanceOnDemandTests {
         #expect(abs(asOf.timeIntervalSince(liveAt)) < 1)
         // A newer transactions update from Plaid dates it instead.
         let updated = Date().addingTimeInterval(-3_600)
+        try await Self.setPlaid(service) { $0.lastTransactionsUpdate = updated }
+        #expect(await service.sync.syncAll().map(\.ok) == [true])
+        #expect(abs(try #require(try await Self.checking(service).balanceAsOf).timeIntervalSince(updated)) < 1)
+    }
+
+    @Test("A live read days old doesn't date the cache, which Plaid refreshes about daily: the read time does")
+    func oldLiveReadIgnored() async throws {
+        let plaid = Self.plaid()
+        let (_, service) = try await PlaidErrorKindTests.service(plaid)
+        try await Self.setPlaid(service) { $0.balanceAsOf = Date().addingTimeInterval(-7 * 86_400) }
+        let before = Date()
+        #expect(await service.sync.syncAll().map(\.ok) == [true])
+        #expect(try #require(try await Self.checking(service).balanceAsOf) >= before.addingTimeInterval(-1))
+        // A transactions update from Plaid still dates it, however old the live read.
+        let updated = Date().addingTimeInterval(-5 * 3_600)
         try await Self.setPlaid(service) { $0.lastTransactionsUpdate = updated }
         #expect(await service.sync.syncAll().map(\.ok) == [true])
         #expect(abs(try #require(try await Self.checking(service).balanceAsOf).timeIntervalSince(updated)) < 1)
@@ -178,23 +199,56 @@ struct BalanceOnDemandTests {
         let limit = PlaidErrorKindTests.plaidError("ACCOUNTS_BALANCE_GET_LIMIT", type: "RATE_LIMIT_EXCEEDED", status: 429, requestID: "req-bal")
         let plaid = Self.plaid(live: limit)
         let (_, service) = try await PlaidErrorKindTests.service(plaid, logger: log.logger)
+        let liveAt = Date().addingTimeInterval(-4 * 3_600)
+        try await Self.setPlaid(service) { $0.balanceAsOf = liveAt }
         let result = try await service.sync.sync(linkID: Self.id)
         #expect(result.ok && result.errorKind == nil)
         #expect(plaid.count("/accounts/balance/get") == 1 && plaid.count("/accounts/get") == 1)
         let link = try await PlaidErrorKindTests.link(service)
-        #expect(link.errorKind == nil && link.plaid?.balanceRequests?.count == 1 && link.plaid?.balanceAsOf == nil)
+        #expect(link.errorKind == nil && link.plaid?.balanceRequests?.count == 1)
+        // The cached balance keeps the date it's known to be from, not the time of this fetch; the refused read dates nothing.
+        #expect(abs(try #require(link.plaid?.balanceAsOf).timeIntervalSince(liveAt)) < 1)
+        #expect(abs(try #require(try await Self.checking(service).balanceAsOf).timeIntervalSince(liveAt)) < 1)
         let line = try #require(log.lines.first { $0.contains("live balance for Harbor refused") })
         #expect(line.contains("ACCOUNTS_BALANCE_GET_LIMIT") && line.contains("req-bal"))
         #expect(!log.lines.contains { $0.contains("access-sandbox-9") || $0.contains("error_type") })
     }
 
-    @Test("A sign-in refused on the live read still fails the sync as a sign-in, through the cached read")
+    @Test("A sign-in refused on the live read fails the sync as a sign-in, with no second call to the cache")
     func refusedSignIn() async throws {
         let plaid = Self.plaid(live: PlaidScript.loginRequired, cached: PlaidScript.loginRequired)
         let (_, service) = try await PlaidErrorKindTests.service(plaid)
         let result = try await service.sync.sync(linkID: Self.id)
         #expect(!result.ok && result.errorKind == .needsSignIn)
+        #expect(plaid.count("/accounts/balance/get") == 1 && plaid.count("/accounts/get") == 0)
         #expect(try await PlaidErrorKindTests.link(service).cursor == "c0")
+    }
+
+    @Test("Refusals that hold for the whole Item end the read; ones the cache gets past fall back to it", arguments: [
+        ("ITEM_NOT_FOUND", false), ("USER_PERMISSION_REVOKED", false), ("INVALID_ACCESS_TOKEN", false), ("ITEM_LOCKED", false),
+        ("INSTITUTION_DOWN", true), ("PRODUCTS_NOT_SUPPORTED", true), ("LAST_UPDATED_DATETIME_OUT_OF_RANGE", true), ("SOMETHING_NEW", true),
+    ])
+    func whichRefusalsFallBack(code: String, fallsBack: Bool) async throws {
+        let plaid = Self.plaid(live: PlaidErrorKindTests.plaidError(code))
+        let (_, service) = try await PlaidErrorKindTests.service(plaid)
+        let result = try await service.sync.sync(linkID: Self.id)
+        #expect(result.ok == fallsBack)
+        #expect(plaid.count("/accounts/get") == (fallsBack ? 1 : 0))
+    }
+
+    @Test("A transactions page that fails spends no live read: the next tap still reads live")
+    func failedPageSpendsNone() async throws {
+        let plaid = ScriptedProvider([
+            "/transactions/sync": [PlaidErrorKindTests.plaidError("INSTITUTION_DOWN", type: "INSTITUTION_ERROR"), PlaidScript.page("c1")],
+            "/accounts/get": [PlaidScript.balances], "/accounts/balance/get": [PlaidScript.balances],
+        ])
+        let (_, service) = try await PlaidErrorKindTests.service(plaid)
+        #expect(try await !service.sync.sync(linkID: Self.id).ok)
+        #expect(plaid.count("/accounts/balance/get") == 0)
+        #expect(try await PlaidErrorKindTests.link(service).plaid?.balanceRequests ?? [] == [])
+        #expect(try await service.sync.sync(linkID: Self.id).ok)
+        #expect(plaid.count("/accounts/balance/get") == 1)
+        #expect(try await PlaidErrorKindTests.link(service).plaid?.balanceRequests?.count == 1)
     }
 
     @Test("The live read sends a freshness floor (Capital One, Apple Card); the cached read sends only the token")
@@ -215,5 +269,70 @@ struct BalanceOnDemandTests {
         #expect(abs(date.timeIntervalSinceNow + 86_400) < 120)
         let cached = try body("/accounts/get")
         #expect(cached["options"] == nil && cached["access_token"] == .string("access-sandbox-9"))
+    }
+}
+
+/// Holds the first request to one path until the test lets it go, so a second sync can be sent while the first is under way
+/// without racing a timer.
+final class GatedTransport: HTTPTransport, @unchecked Sendable {
+    private let inner: any HTTPTransport
+    private let path: String
+    private let lock = NSLock()
+    private var held = false
+    private var isOpen = false
+    private var waiting: CheckedContinuation<Void, Never>?
+    private var arrived = false
+    private var watcher: CheckedContinuation<Void, Never>?
+
+    init(_ inner: any HTTPTransport, holding path: String) {
+        self.inner = inner
+        self.path = path
+    }
+
+    /// Returns once the held request has arrived.
+    func entered() async {
+        await withCheckedContinuation { continuation in
+            let now = lock.withLock { () -> Bool in
+                if arrived { return true }
+                watcher = continuation
+                return false
+            }
+            if now { continuation.resume() }
+        }
+    }
+
+    /// Lets the held request through, and every one after it.
+    func open() {
+        let continuation = lock.withLock { () -> CheckedContinuation<Void, Never>? in
+            isOpen = true
+            defer { waiting = nil }
+            return waiting
+        }
+        continuation?.resume()
+    }
+
+    func send(_ request: URLRequest) async throws -> (Data, HTTPURLResponse) {
+        let first = lock.withLock { () -> Bool in
+            guard request.url?.path == path, !held else { return false }
+            held = true
+            return true
+        }
+        if first {
+            let watching = lock.withLock { () -> CheckedContinuation<Void, Never>? in
+                arrived = true
+                defer { watcher = nil }
+                return watcher
+            }
+            watching?.resume()
+            await withCheckedContinuation { continuation in
+                let go = lock.withLock { () -> Bool in
+                    if isOpen { return true }
+                    waiting = continuation
+                    return false
+                }
+                if go { continuation.resume() }
+            }
+        }
+        return try await inner.send(request)
     }
 }

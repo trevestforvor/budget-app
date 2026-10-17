@@ -162,7 +162,12 @@ public struct PlaidSource: TransactionSource {
     /// Holdings aren't part of it: they're fetched once a day per Item (HoldingsSync), never on every sync.
     /// Persist `nextCursor` only after the snapshot is applied.
     public func snapshot(cursor: String?, balances read: BalanceRead = .cached(asOf: nil), now: Date = .now) async throws -> Pull {
-        let page = try await sync(from: cursor)
+        try await pull(try await sync(from: cursor), balances: read, now: now)
+    }
+
+    /// The second half of `snapshot`: the balances, read as `balances` says, with `page`'s rows on their accounts. A caller
+    /// that counts live reads runs the halves itself, so a transactions page that fails never spends one.
+    public func pull(_ page: SyncPage, balances read: BalanceRead, now: Date = .now) async throws -> Pull {
         let balances = try await accounts(read, now: now)
         let changed = page.added + page.modified
         let accounts = balances.accounts.map { account -> SourceAccount in
@@ -209,8 +214,13 @@ public struct PlaidSource: TransactionSource {
         case cached(asOf: Date?)
         /// `/accounts/balance/get`: a live read at the bank. It's slow (seconds, sometimes half a minute) and Plaid limits
         /// it per Item, so it's only for the person's own refresh, within the server's cap. When Plaid refuses it, the
-        /// cached balances are read instead.
-        case live
+        /// cached balances are read instead, dated as `cached(asOf: fallbackAsOf)` would date them.
+        case live(fallbackAsOf: Date?)
+
+        public var isLive: Bool {
+            if case .live = self { return true }
+            return false
+        }
     }
 
     /// The Item's accounts and balances, read as `read` says. `live` says whether the live read is what came back.
@@ -218,7 +228,7 @@ public struct PlaidSource: TransactionSource {
         var asOf: Date?
         var fallback: PlaidAPIError?
         switch read {
-        case .live:
+        case let .live(fallbackAsOf):
             // Capital One (older connections) and Apple Card refuse a live read without a freshness floor; every other
             // bank ignores it. Older data than that comes back as an error, and the cached balances are read instead.
             let floor = now.addingTimeInterval(-86_400).formatted(.iso8601)
@@ -230,10 +240,14 @@ public struct PlaidSource: TransactionSource {
             } catch is CancellationError {
                 throw CancellationError()
             } catch {
-                // Any refusal (a rate limit, a bank that can't answer live, a stale floor): the cached read below still
-                // answers, or fails for the Item's real reason (a sign-in, say) the way a sync would anyway.
+                // A refusal the cached read can get past (a rate limit, a bank that can't answer live, a stale floor, a
+                // network failure) reads the cache instead. One that holds for the whole Item (a sign-in, an Item that's
+                // gone, the server's own keys) would only fail again there, so it ends the read as it is.
                 let http = error as? SourceHTTPError
-                fallback = http.flatMap(PlaidAPIError.init) ?? PlaidAPIError(status: http?.status ?? 0)
+                let plaid = http.flatMap(PlaidAPIError.init)
+                if plaid?.endsItemAccess == true { throw error }
+                fallback = plaid ?? PlaidAPIError(status: http?.status ?? 0)
+                asOf = fallbackAsOf
             }
         case let .cached(date):
             asOf = date

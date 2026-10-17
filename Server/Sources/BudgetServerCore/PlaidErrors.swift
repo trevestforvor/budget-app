@@ -5,16 +5,11 @@ import Foundation
 /// the HTTP status or the message, which Plaid may reword (INSTITUTION_DOWN comes back as a 400 and is transient).
 enum PlaidErrors {
     /// The person has to sign in to the bank again (update mode); retrying on a schedule can't help.
-    static let needsSignIn: Set<String> = [
-        "ITEM_LOGIN_REQUIRED", "INVALID_CREDENTIALS", "INSUFFICIENT_CREDENTIALS", "ITEM_LOCKED", "USER_SETUP_REQUIRED",
-        "ACCESS_NOT_GRANTED", "NO_ACCOUNTS",
-    ]
+    static let needsSignIn = PlaidAPIError.needsSignInCodes
     /// The Item is gone or its access was withdrawn.
-    static let revoked: Set<String> = ["ITEM_NOT_FOUND", "USER_PERMISSION_REVOKED"]
+    static let revoked = PlaidAPIError.revokedCodes
     /// The server's own Plaid setup is wrong: its keys, or a token from another environment.
-    static let providerSetup: Set<String> = [
-        "INVALID_API_KEYS", "INVALID_SECRET", "INVALID_CLIENT_ID", "UNAUTHORIZED_ENVIRONMENT", "INVALID_ACCESS_TOKEN",
-    ]
+    static let providerSetup = PlaidAPIError.providerSetupCodes
     /// Plaid or the bank asked us to slow down. Any error of type RATE_LIMIT_EXCEEDED is one too, whatever its code.
     static let rateLimited: Set<String> = ["RATE_LIMIT_EXCEEDED", "INSTITUTION_RATE_LIMIT"]
 

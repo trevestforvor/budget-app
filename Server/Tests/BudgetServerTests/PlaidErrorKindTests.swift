@@ -55,7 +55,7 @@ struct PlaidErrorKindTests {
         (status, #"{"error_type": "\#(type)", "error_code": "\#(code)", "error_message": "message for \#(code)", "display_message": null, "request_id": "\#(requestID)"}"#)
     }
 
-    static func service(_ plaid: ScriptedProvider, store: (any ServerStore)? = nil, logger: Logger = Logger(label: "test"),
+    static func service(_ plaid: any HTTPTransport, store: (any ServerStore)? = nil, logger: Logger = Logger(label: "test"),
                         surface: Surface = .api) async throws -> (some ApplicationProtocol, BudgetService) {
         let (service, _) = try await BudgetServerApp.makeService(config: TestServer.config(), store: store ?? MemoryStore(), logger: logger,
                                                                  plaidTransport: plaid)

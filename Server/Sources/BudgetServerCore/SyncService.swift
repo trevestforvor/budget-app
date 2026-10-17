@@ -257,15 +257,17 @@ public actor SyncService {
                                  accessToken: token, institution: link.institution, transport: providers.transport)
         let now = Date()
         let read = Self.balanceRead(link, trigger: trigger, now: now)
-        if read == .live {
-            // Counted when asked, not when answered: a failed sync still spent the call (over-counting only waits longer).
-            var plaidState = link.plaid ?? PlaidLinkState()
-            plaidState.recordBalanceRead(now: now)
-            link.plaid = plaidState
-        }
         let pull: PlaidSource.Pull
         do {
-            pull = try await source.snapshot(cursor: link.cursor, balances: read, now: now)
+            let page = try await source.sync(from: link.cursor)
+            if read.isLive {
+                // Counted once the transactions are in and the live read goes out, not when it's answered: a refused or
+                // failed live read still spent the call. A transactions page that fails never reaches it, so spends none.
+                var plaidState = link.plaid ?? PlaidLinkState()
+                plaidState.recordBalanceRead(now: now)
+                link.plaid = plaidState
+            }
+            pull = try await source.pull(page, balances: read, now: now)
         } catch where PlaidErrors.plaidError(error)?.errorCode == "ITEM_NOT_FOUND" {
             // Unrecoverable: the Item was removed at Plaid. Once /item/get agrees, drop the token (it opens nothing now)
             // and keep the link, its accounts and its rows. Never /item/remove it: there's nothing left to remove.
@@ -298,11 +300,13 @@ public actor SyncService {
 
     /// How this sync reads balances. Routinely Plaid's cached ones (`/accounts/get`). A live read (`/accounts/balance/get`)
     /// only when the person asked (`SyncTrigger.requestedByPerson`: never the schedule, the morning catch-up, a webhook,
-    /// a reconnect or a new link's first sync), and only within the per-Item cap; above it, the cached read again.
+    /// a reconnect or a new link's first sync), and only within the per-Item cap; above it, the cached read again. Either
+    /// way, cached balances are dated by the newest time they're known to be from, never the time of the fetch.
     static func balanceRead(_ link: StoredLink, trigger: SyncTrigger, now: Date) -> PlaidSource.BalanceRead {
         let state = link.plaid ?? PlaidLinkState()
-        if trigger.requestedByPerson, state.mayReadLiveBalance(now: now) { return .live }
-        return .cached(asOf: state.cachedBalanceAsOf(now: now))
+        let asOf = state.cachedBalanceAsOf(now: now)
+        if trigger.requestedByPerson, state.mayReadLiveBalance(now: now) { return .live(fallbackAsOf: asOf) }
+        return .cached(asOf: asOf)
     }
 
     /// Whether `/item/get` also says the Item is gone. Any other answer (healthy, another error, no answer) keeps the token.

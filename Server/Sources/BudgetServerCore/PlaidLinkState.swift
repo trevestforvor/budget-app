@@ -58,10 +58,16 @@ public struct PlaidLinkState: Codable, Hashable, Sendable {
     }
 
     /// The newest time Plaid's cached balances are known to be from: the last live read (which refreshes them) or Plaid's
-    /// last transactions update (which a Transactions Item's balances follow). Nil when neither is known.
+    /// last transactions update (which a Transactions Item's balances follow). Nil when neither is known. A live read more
+    /// than two days old says little: Plaid refreshes the cache about daily, so dating by it would make a healthy account
+    /// look days stale. Without a transactions update to go by, it's left out and the read time dates the balance.
     func cachedBalanceAsOf(now: Date) -> Date? {
-        [balanceAsOf, lastTransactionsUpdate].compactMap { $0 }.filter { $0 <= now }.max()
+        let live = balanceAsOf.flatMap { now.timeIntervalSince($0) <= Self.liveReadDatesCacheFor ? $0 : nil }
+        return [live, lastTransactionsUpdate].compactMap { $0 }.filter { $0 <= now }.max()
     }
+
+    /// How long a live read still dates the cached balances that follow it.
+    static let liveReadDatesCacheFor: TimeInterval = 48 * 3_600
 }
 
 extension StoredLink {
