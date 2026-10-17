@@ -78,6 +78,9 @@ public actor PlaidMaintenance {
     @discardableResult
     func checkDueItems() async -> Int {
         let now = clock()
+        // Without Plaid keys or the token key no check can ask, and the sync already says why: don't take each Item's
+        // turn (a store read and write) every 15 minutes just to skip it.
+        guard sealer != nil, (try? await providers.plaid()) != nil else { return 0 }
         var asked = 0
         for link in (try? await store.links()) ?? [] where Self.isDue(link, now: now) {
             if await check(link.id, force: false) != .skipped { asked += 1 }
@@ -86,7 +89,9 @@ public actor PlaidMaintenance {
         return asked
     }
 
-    /// Checks one Item now (a webhook said something changed).
+    /// Checks one Item now (a webhook said something changed). It takes the Item's turn itself: never call it from inside
+    /// `SyncService.updateLink`, `serialized` or a sync (the queue isn't re-entrant, and that waits forever). A webhook
+    /// queue calls it after its own turn.
     public func checkItem(_ linkID: String) async {
         if await check(linkID, force: true) != .skipped { await sync.publishInstitutions() }
     }
@@ -125,13 +130,15 @@ public actor PlaidMaintenance {
     nonisolated func inspect(_ link: inout StoredLink, force: Bool) async -> Outcome {
         let now = clock()
         guard link.hasLiveItem, force || Self.isDue(link, now: now) else { return .skipped }
-        guard let plaid = try? await providers.plaid(), let sealer, let token = try? sealer.open(link.sealedToken) else { return .skipped }
-        let source = PlaidSource(environment: plaid.environment, credentials: .init(clientID: plaid.clientID, secret: plaid.secret),
-                                 accessToken: token, institution: link.institution, transport: providers.transport)
+        guard let plaid = try? await providers.plaid(), let sealer else { return .skipped }
         var state = link.plaid ?? PlaidLinkState()
-        // Stamped whatever the answer: a failed check waits for the next day too (a webhook can ask sooner).
+        // Stamped whatever the answer: a failed check waits for the next day too (a webhook can ask sooner). So does a token
+        // that won't open (the sync reports that), rather than being tried every 15 minutes.
         state.lastItemCheckAt = now
         link.plaid = state
+        guard let token = try? sealer.open(link.sealedToken) else { return .skipped }
+        let source = PlaidSource(environment: plaid.environment, credentials: .init(clientID: plaid.clientID, secret: plaid.secret),
+                                 accessToken: token, institution: link.institution, transport: providers.transport)
 
         let item: PlaidSource.Item
         do {
@@ -166,13 +173,18 @@ public actor PlaidMaintenance {
             // product isn't ready) is left for the next sync to find, rather than holding syncs back on its say.
             let code = error.errorCode ?? error.errorType
             if kind == .needsSignIn || kind == .revoked, link.errorKind != kind || link.errorCode != code || link.status != .needsReauth {
+                // The check isn't a sync attempt: it leaves a webhook its three sign-in tries (they count refused syncs).
+                let signInTries = link.plaid?.signInFailures
                 LinkHealthBook.recordFailure(&link, LinkFailure(kind: kind, code: code, requestID: item.requestID ?? error.requestID,
                                                                 message: SyncService.describe(error)), now: now)
+                link.plaid?.signInFailures = signInTries
             }
             logger.warning("item check for \(link.institution): \(kind.rawValue), code \(code ?? "none"), request_id \(item.requestID ?? "none")")
         } else if LinkHealthBook.waitsForPerson(link) {
             // Plaid says the Item is fine (signed in again elsewhere, or LOGIN_REPAIRED): clear the prompts and sync.
             LinkHealthBook.recordRepaired(&link)
+            // Signing in again (update mode) is also what a PENDING_DISCONNECT asked for, consent date or not.
+            link.plaid?.pendingDisconnectAt = nil
             outcome = .healed
             logger.info("item check for \(link.institution): healthy again (request_id \(item.requestID ?? "none")); a sync is queued")
         }

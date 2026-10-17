@@ -56,8 +56,10 @@ struct ItemCheckTests {
     }
 
     static func fixture(_ plaid: ScriptedProvider, publicURL: String? = publicURL, environment: PlaidSource.Environment = .sandbox,
-                        holdings mode: String = "auto", webhooks: Bool = true) async throws -> Fixture {
+                        holdings mode: String = "auto", webhooks: Bool = true, plaidKeys: Bool = true,
+                        realHoldings: Bool = false) async throws -> Fixture {
         var config = TestServer.config()
+        if !plaidKeys { config.plaid = nil }
         config.publicURL = publicURL
         config.plaid?.environment = environment
         config.plaidHoldings = mode
@@ -72,7 +74,7 @@ struct ItemCheckTests {
         let calls = HoldingsCalls()
         let maintenance = PlaidMaintenance(api: service.api, store: service.store, sync: service.sync, providers: service.providers,
                                            sealer: service.sealer, settings: service.settings, logger: log.logger, clock: { clock.now },
-                                           holdings: calls.refresh)
+                                           holdings: realHoldings ? nil : calls.refresh)
         return Fixture(service: service, maintenance: maintenance, clock: clock, holdings: calls, log: log)
     }
 
@@ -117,6 +119,11 @@ struct ItemCheckTests {
         var link = try await f.link()
         #expect(link.status == .needsReauth && link.errorKind == kind && link.errorCode == code)
         #expect(link.failureCount == 1 && link.firstFailedAt == Self.start && link.hasLiveItem)
+        // Plaid's own words, as a sync would store them: never the error struct dumped by reflection.
+        #expect(link.lastError == "Plaid: message for \(code) (\(code))")
+        #expect(link.lastError?.contains("PlaidAPIError(") == false && link.lastError?.contains("Optional(") == false)
+        // The check isn't a refused sync: a webhook keeps all three of its sign-in tries.
+        #expect(link.plaid?.signInFailures == nil)
         // The next day says the same: still one failure in the run, so a webhook's three tries aren't used up by checks.
         f.clock.set(Self.start.addingTimeInterval(26 * 3600))
         #expect(await f.maintenance.checkDueItems() == 1)
@@ -361,5 +368,69 @@ struct ItemCheckTests {
         #expect(try await after(Self.item(consent: warned.addingTimeInterval(7 * 86_400)), at: Self.start) == warned)
         #expect(try await after(Self.item(error: "ITEM_LOGIN_REQUIRED"), at: Self.start.addingTimeInterval(60 * 86_400)) == warned)
         #expect(try await after(Self.item(), at: Self.start.addingTimeInterval(31 * 86_400)) == nil)
+    }
+
+    @Test("A heal ends a PENDING_DISCONNECT warning even without a consent date")
+    func healEndsPendingDisconnect() async throws {
+        let f = try await Self.fixture(Self.provider([Self.item(consent: nil)]))
+        try await f.change { link in
+            LinkHealthBook.recordFailure(&link, LinkFailure(kind: .needsSignIn, code: "ITEM_LOGIN_REQUIRED", message: "sign in"), now: Self.start)
+            link.plaid?.pendingDisconnectAt = Self.start.addingTimeInterval(-86_400)
+        }
+        #expect(await f.maintenance.check(Self.id, force: true) == .healed)
+        #expect(try await f.link().plaid?.pendingDisconnectAt == nil)
+    }
+
+    // MARK: Skips
+
+    @Test("Without Plaid keys the scheduler takes no Item's turn and asks nothing")
+    func noKeysNoTurns() async throws {
+        let plaid = Self.provider([Self.item()])
+        let f = try await Self.fixture(plaid, plaidKeys: false)
+        #expect(await f.maintenance.checkDueItems() == 0)
+        #expect(try await f.link().plaid?.lastItemCheckAt == nil && plaid.requests.isEmpty)
+    }
+
+    @Test("A token that won't open is skipped, but stamped, so it waits for the next day instead of the next 15 minutes")
+    func unopenableTokenStamped() async throws {
+        let plaid = Self.provider([Self.item()])
+        let f = try await Self.fixture(plaid)
+        try await f.change { $0.sealedToken = "not-a-sealed-token" }
+        #expect(await f.maintenance.check(Self.id, force: false) == .skipped)
+        #expect(try await f.link().plaid?.lastItemCheckAt == Self.start)
+        f.clock.set(Self.start.addingTimeInterval(15 * 60))
+        #expect(try await PlaidMaintenance.isDue(f.link(), now: f.clock.now) == false)
+        #expect(plaid.requests.isEmpty)
+    }
+
+    // MARK: Turns
+
+    @Test("A check waits for a running sync of the same Item: never two Plaid calls at once, /item/get after the sync's")
+    func checkWaitsForSync() async throws {
+        let plaid = ScriptedProvider([
+            "/item/get": [Self.item()],
+            "/transactions/sync": [PlaidScript.page("c1")],
+            "/accounts/get": [PlaidScript.balances],
+        ], delay: .milliseconds(100))
+        let f = try await Self.fixture(plaid)
+        let sync = Task { try await f.service.sync.sync(linkID: Self.id) }
+        for _ in 0..<200 where plaid.requests.isEmpty { try await Task.sleep(for: .milliseconds(5)) }
+        #expect(plaid.requests.first?.path != "/item/get")
+        await f.maintenance.checkItem(Self.id)
+        _ = try await sync.value
+        #expect(plaid.mostAtOnce == 1)
+        #expect(plaid.requests.last?.path == "/item/get" && plaid.count("/item/get") == 1)
+    }
+
+    // MARK: Holdings, the real refresh
+
+    /// Pins the contract on the real `HoldingsSync.refresh`: today it's a stand-in that asks nothing; once holdings fill it
+    /// in, an Item Plaid doesn't bill for Investments must still make no holdings call under `auto`.
+    @Test("Holdings auto with the real refresh: an Item not billed for Investments makes no /investments/holdings/get call")
+    func holdingsAutoUnbilledNoCall() async throws {
+        let plaid = Self.provider([Self.item(billed: ["transactions"])])
+        let f = try await Self.fixture(plaid, realHoldings: true)
+        await f.maintenance.checkItem(Self.id)
+        #expect(plaid.count("/item/get") == 1 && plaid.count("/investments/holdings/get") == 0)
     }
 }

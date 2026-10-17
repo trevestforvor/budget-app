@@ -333,6 +333,8 @@ public actor SyncService {
         switch error {
         case let e as SourceHTTPError: HTTP.providerMessage(e)
         case let e as BudgetAPIError: e.localizedDescription
+        // "Plaid: <error_message> (<CODE>)", the same words a sync's SourceHTTPError gives for the same answer.
+        case let e as PlaidAPIError: e.localizedDescription
         default: String(describing: error)
         }
     }
