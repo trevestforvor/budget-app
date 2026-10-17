@@ -14,9 +14,20 @@ enum ImportUndo {
         switch source.syncStyle {
         case .file: return UndoPolicy(mode: .allowed)
         case .window:
-            return UndoPolicy(mode: .warn, message: "\(source.displayName) sends its last \(SyncService.overlapDays) days again at every sync, so rows from those days come back after Undo. Hide them instead to keep them out of your totals.")
+            return UndoPolicy(mode: .warn, message: "\(source.displayName) sends its most recent days again at every sync, and everything again if you link it again, so rows come back after Undo. Hide them instead to keep them out of your totals.")
         case .cursor, .device:
             return UndoPolicy(mode: .refused, message: "\(source.displayName) won't send these rows again. Hide them instead.")
+        }
+    }
+
+    /// Records as history reads return them: `annotated()`, and `hiddenAt` only while every row the batch still has is
+    /// hidden, so a batch shown again (its undo, or from Activity) drops the tag and can be hidden again.
+    static func annotated(_ records: [ImportRecord], _ service: BudgetService) async -> [ImportRecord] {
+        let hidden = await service.api.hiddenBatchIDs()
+        return records.map { stored in
+            var record = stored.annotated()
+            if !hidden.contains(record.batchID) { record.hiddenAt = nil }
+            return record
         }
     }
 

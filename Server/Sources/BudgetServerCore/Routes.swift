@@ -461,7 +461,7 @@ func addLinkRoutes(_ router: Router<BasicRequestContext>, _ service: BudgetServi
 
 // MARK: - [lane L] addImportRoutes
 func addImportRoutes(_ router: Router<BasicRequestContext>, _ service: BudgetService) {
-    router.get("/v1/imports") { _, _ in try HTTP.json(try await service.store.imports().map { $0.annotated() }) }
+    router.get("/v1/imports") { _, _ in try HTTP.json(await ImportUndo.annotated(try await service.store.imports(), service)) }
 
     /// CSV / OFX / QFX text. `accountID` files the rows into an existing account (needed for CSV).
     /// A file's rows as a snapshot, with a CSV's signs read by the kind of account it's filed into.
@@ -515,26 +515,32 @@ func addImportRoutes(_ router: Router<BasicRequestContext>, _ service: BudgetSer
         try HTTP.json(try await ImportUndo.plan(for: try await importRecord(context), service))
     }
 
-    /// Rolls a batch back. 409, changing nothing, when Undo is refused (a Plaid sync), and when rows would come back
-    /// at the next sync (SimpleFIN) unless `?acknowledge=returning`.
+    /// Rolls a batch back. 409, changing nothing, when Undo is refused (a Plaid sync), and when SimpleFIN rows could
+    /// come back (at the next sync, or once linked again) unless `?acknowledge=returning`.
     router.delete("/v1/imports/:batch") { request, context in
-        var record = try await importRecord(context)
+        let record = try await importRecord(context)
         let policy = ImportUndo.policy(for: record)
         if policy.mode == .refused { throw BudgetAPIError.server(status: 409, message: policy.message) }
         let removed = try await service.api.rollback(batchID: record.batchID, nextWindowStart: try await ImportUndo.nextWindowStart(for: record, service),
                                                      acknowledgeReturning: request.uri.queryParameters.get("acknowledge") == "returning")
-        record.rolledBack = true
-        try await service.store.upsertImport(record)
+        // Read again after the ledger work and change only `rolledBack`, so a hide that ran meanwhile keeps its `hiddenAt`.
+        var fresh = try await importRecord(context)
+        fresh.rolledBack = true
+        try await service.store.upsertImport(fresh)
         return try HTTP.json(["removed": removed])
     }
 
-    /// Hides a batch's rows from every total instead of removing them (`ActionResult`, with its undo).
+    /// Hides a batch's rows from every total instead of removing them (`ActionResult`, with its undo). `hiddenAt` is
+    /// set whenever the batch's rows end up all hidden, so a retry after a failed save still marks the record.
     router.post("/v1/imports/:batch/hide") { _, context in
-        var record = try await importRecord(context)
+        let record = try await importRecord(context)
         let result = try await service.api.hideBatch(batchID: record.batchID)
-        if record.hiddenAt == nil, result.affectedTransactions > 0 {
-            record.hiddenAt = Date()
-            try await service.store.upsertImport(record)
+        if await service.api.hiddenBatchIDs().contains(record.batchID) {
+            var fresh = try await importRecord(context)
+            if fresh.hiddenAt == nil || result.affectedTransactions > 0 {
+                fresh.hiddenAt = Date()
+                try await service.store.upsertImport(fresh)
+            }
         }
         return try HTTP.json(result)
     }

@@ -100,7 +100,7 @@ func addDashboardRoutes(_ router: Router<BasicRequestContext>, _ service: Budget
             modelName: await live.modelName, plaid: (try? await service.providers.plaid())?.environment.rawValue, teller: await service.providers.teller() != nil,
             jev: await live.openRouterKey != nil, linkingEnabled: service.sealer != nil, demoAllowed: config.allowDemo,
             syncIntervalHours: await live.syncIntervalHours, timeZone: await live.timeZone.identifier, apiURL: await live.publicURL, cardBills: await live.cardBillsEnabled)
-        let imports = try await service.store.imports().sorted { $0.createdAt > $1.createdAt }.map { $0.annotated() }
+        let imports = await ImportUndo.annotated(try await service.store.imports().sorted { $0.createdAt > $1.createdAt }, service)
         return try HTTP.json(DashboardSummary(
             version: BudgetServerVersion.current, startedAt: serverStartedAt, now: Date(), stats: await service.api.stats(),
             links: try await service.store.links().map(\.summary), imports: Array(imports.prefix(50)), settings: settings,

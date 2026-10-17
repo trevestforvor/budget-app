@@ -159,22 +159,25 @@ function historyRow(record) {
 }
 
 /// Undo, armed by a second click. With `ask` (a SimpleFIN sync) the first click asks the server what Undo would do, and
-/// the armed button says how many rows the next sync brings back; the second sends that yes along.
+/// the armed button says how many rows come back; the second sends that yes along. Clicks while the plan is loading
+/// are ignored, so a double-click can't send the yes before the count was on screen.
 function undoButton(record, ask) {
   const r = record.report;
   return button("Undo", { compact: true, "aria-label": `Undo ${record.label}`, onclick: async (e) => {
     const b = e.currentTarget;
+    if (b.dataset.pending === "1") return;
     if (!ask || b.dataset.armed === "1") {
       armed(b, r.rowsAdded ? `Click again to remove ${plural(r.rowsAdded, "row")}` : "Click again to undo", () => undoImport(record, b._acknowledge === true));
       return;
     }
+    b.dataset.pending = "1";
     try {
       const plan = await api(`/v1/imports/${encodeURIComponent(record.batchID)}/undo`);
       if (plan.verdict === "refuse") { toast(plan.message); return; }
       b._acknowledge = plan.verdict === "undoReturns";
-      armed(b, b._acknowledge ? `Click again to remove ${plural(plan.rows, "row")}; ${count(plan.returning)} come back at the next sync`
-        : `Click again to remove ${plural(plan.rows, "row")}`, () => undoImport(record, b._acknowledge));
-    } catch (error) { reportError(error); }
+      const back = plan.returning ? `${count(plan.returning)} come back at the next sync` : "linking it again brings them back";
+      armed(b, `Click again to remove ${plural(plan.rows, "row")}${b._acknowledge ? `; ${back}` : ""}`, () => undoImport(record, b._acknowledge));
+    } catch (error) { reportError(error); } finally { b.dataset.pending = ""; }
   } });
 }
 
@@ -198,7 +201,13 @@ async function undoImport(record, acknowledge) {
 async function hideImport(record) {
   try {
     const result = await api(`/v1/imports/${encodeURIComponent(record.batchID)}/hide`, { method: "POST" });
-    toast(`${result.message} You can show them again from Activity.`);
+    // History works "hidden" out from the rows on every read, so this undo also brings Hide rows back.
+    toast(`${result.message} You can show them again from Activity.`, result.undo ? { action: { label: "Undo", run: async () => {
+      try {
+        await api("/v1/actions", { method: "POST", body: result.undo });
+        await afterWrite();
+      } catch (error) { reportError(error); }
+    } } } : {});
     await afterWrite();
   } catch (error) { reportError(error); }
 }

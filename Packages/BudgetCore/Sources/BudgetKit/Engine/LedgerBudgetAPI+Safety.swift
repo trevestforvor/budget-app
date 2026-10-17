@@ -19,4 +19,12 @@ extension LedgerBudgetAPI {
             return try ledger.perform(.editTransactions(EditTransactions(transactionIDs: ids, isHidden: true)))
         }
     }
+
+    /// The batches that still have rows, all of them hidden. History works "hidden" out from this on every read, so a
+    /// batch shown again (its undo, or from Activity) reads as not hidden and can be hidden again.
+    public func hiddenBatchIDs() -> Set<String> {
+        var allHidden: [String: Bool] = [:]
+        for row in ledger.transactions { if let batch = row.batchID { allHidden[batch] = (allHidden[batch] ?? true) && row.isHidden } }
+        return Set(allHidden.filter(\.value).keys)
+    }
 }

@@ -90,7 +90,8 @@ public struct RollbackPlan: Hashable, Codable, Sendable {
     public enum Verdict: String, Codable, Sendable {
         /// Undo removes the rows; nothing sends them again.
         case undo
-        /// Undo removes the rows, but `returning` of them come back at the next sync: it needs the person's yes.
+        /// Undo removes the rows, but `returning` of them come back at the next sync (and all of them if the connection
+        /// is linked again): it needs the person's yes.
         case undoReturns
         /// Undo would lose rows for good (a cursor source never re-sends them): hide them instead.
         case refuse
@@ -348,7 +349,8 @@ extension Ledger {
 
     /// What undoing a batch would do, worked out before anything is removed. A cursor source (Plaid) never sends a row
     /// twice, so removing its rows loses them for good: refused, hide them instead. A window source re-sends its last
-    /// days, so rows from `nextWindowStart` on come back at the next sync: undo needs a yes. Anything else (files) undoes.
+    /// days, so rows from `nextWindowStart` on come back at the next sync, and the rest once it's linked again: undo
+    /// needs a yes either way. Anything else (files) undoes.
     func rollbackPlan(batchID: String, nextWindowStart: Date?) -> RollbackPlan {
         let rows = transactions.filter { $0.batchID == batchID }
         let bySource = Dictionary(grouping: rows, by: \.source.rawValue).mapValues(\.count)
@@ -358,10 +360,13 @@ extension Ledger {
             return RollbackPlan(batchID: batchID, rows: rows.count, bySource: bySource, returning: 0, verdict: .refuse,
                                 message: "\(kept.source.displayName) won't send \(n) again, so undoing would lose \(rows.count == 1 ? "it" : "them") for good. Hide \(rows.count == 1 ? "it" : "them") instead: hidden rows stay out of every total, and you can show them again from Activity.")
         }
-        if returning > 0, let source = rows.first(where: { $0.source.syncStyle == .window })?.source {
-            let back = returning == rows.count ? (rows.count == 1 ? "It comes" : "All of them come") : "\(returning) of them come"
+        if let source = rows.first(where: { $0.source.syncStyle == .window })?.source {
+            // Even with none inside the next window (or no link left to sync), linking the connection again re-fetches
+            // them, so a window source's rows always need the yes.
+            let back = returning == 0 ? "None of them come back at the next sync, but \(source.displayName) sends \(rows.count == 1 ? "it" : "them") again if you link it again."
+                : "\(returning == rows.count ? (rows.count == 1 ? "It comes" : "All of them come") : "\(returning) of them come") back at the next sync, because \(source.displayName) sends its most recent days again."
             return RollbackPlan(batchID: batchID, rows: rows.count, bySource: bySource, returning: returning, verdict: .undoReturns,
-                                message: "Undo removes \(n). \(back) back at the next sync, because \(source.displayName) sends its last days again. Hide \(rows.count == 1 ? "it" : "them") instead to keep \(rows.count == 1 ? "it" : "them") out of your totals for good.")
+                                message: "Undo removes \(n). \(back) Hide \(rows.count == 1 ? "it" : "them") instead to keep \(rows.count == 1 ? "it" : "them") out of your totals for good.")
         }
         return RollbackPlan(batchID: batchID, rows: rows.count, bySource: bySource, returning: 0, verdict: .undo,
                             message: rows.isEmpty ? "Nothing from this batch is left to remove." : "Undo removes \(n) and nothing sends \(rows.count == 1 ? "it" : "them") again.")

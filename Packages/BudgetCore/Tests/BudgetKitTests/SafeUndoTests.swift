@@ -58,10 +58,16 @@ struct SafeUndoTests {
         #expect(try await api.rollback(batchID: "simplefin-l-1", nextWindowStart: next, acknowledgeReturning: true) == 3)
         #expect(try await api.transactions(TransactionFilter()).isEmpty)
 
-        // When nothing will sync it again (the link is gone), nothing comes back and Undo needs no yes.
+        // With no next sync (the link is gone), nothing comes back at a sync, but linking it again would bring them all
+        // back: still a yes, and the message says why.
         _ = try await api.ingest(Self.simplefinSnapshot(), batchID: "simplefin-l-2")
-        #expect(await api.rollbackPlan(batchID: "simplefin-l-2", nextWindowStart: nil).verdict == .undo)
-        #expect(try await api.rollback(batchID: "simplefin-l-2") == 3)
+        let gone = await api.rollbackPlan(batchID: "simplefin-l-2", nextWindowStart: nil)
+        #expect(gone.verdict == .undoReturns && gone.returning == 0 && gone.rows == 3)
+        #expect(gone.message.contains("None of them come back at the next sync") && gone.message.contains("link it again"))
+        await #expect(throws: BudgetAPIError.server(status: 409, message: gone.message)) {
+            try await api.rollback(batchID: "simplefin-l-2")
+        }
+        #expect(try await api.rollback(batchID: "simplefin-l-2", acknowledgeReturning: true) == 3)
     }
 
     @Test("Hiding a sync batch keeps balances, takes the rows out of totals, and its undo shows them again")
@@ -78,12 +84,14 @@ struct SafeUndoTests {
         #expect(try await api.transactions(TransactionFilter()).count == 5)
         #expect(try await api.overview().accounts.first?.balance == balance)
         #expect(try await api.spending(.thisMonth).total == .zero)
+        #expect(await api.hiddenBatchIDs() == ["plaid-l-1"])
         // A second hide finds nothing left to hide and offers no undo.
         #expect(try await api.hideBatch(batchID: "plaid-l-1").undo == nil)
 
         let undo = try #require(result.undo)
         _ = try await api.perform(undo)
         #expect(try await api.transactions(TransactionFilter()).allSatisfy { !$0.isHidden })
+        #expect(await api.hiddenBatchIDs().isEmpty)   // shown again, so the batch no longer reads as hidden
         #expect(try await api.spending(.thisMonth).total == spent)
         #expect(try await api.overview().accounts.first?.balance == balance)
     }

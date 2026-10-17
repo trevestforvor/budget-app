@@ -130,6 +130,100 @@ struct ImportUndoRouteTests {
         }
     }
 
+    @Test("A failed sync record is refused: 409, a refuse plan, and its rows stay")
+    func failedRecordRefused() async throws {
+        let (app, service) = try await TestServer.app(seedDemo: false)
+        var record = try await Self.synced(.simplefin, rowsDaysAgo: [1, 5], into: service)
+        record.outcome = .failed
+        record.error = "Harbor Bank didn't answer."
+        try await service.store.upsertImport(record)
+        let batch = record.batchID
+        try await app.test(.router) { client in
+            #expect(try await Self.record(batch, client).undo?.mode == .refused)
+            try await client.execute(uri: "/v1/imports/\(batch)/undo", method: .get, headers: TestServer.auth) { response in
+                let plan = try Self.decode(RollbackPlan.self, response)
+                #expect(plan.verdict == .refuse && plan.message.contains("failed"))
+            }
+            try await client.execute(uri: "/v1/imports/\(batch)?acknowledge=returning", method: .delete, headers: TestServer.auth) {
+                #expect($0.status == .conflict)
+            }
+            #expect(try await service.api.transactions(TransactionFilter()).count == 2)
+            #expect(try await Self.record(batch, client).rolledBack == false)
+        }
+    }
+
+    @Test("A SimpleFIN batch whose link is gone still needs the yes: nothing comes back at a sync, but a new link would")
+    func simplefinLinkGoneNeedsYes() async throws {
+        let (app, service) = try await TestServer.app(seedDemo: false)
+        let record = try await Self.synced(.simplefin, rowsDaysAgo: [1, 5, 30], into: service)
+        try await service.store.deleteLink(try #require(record.linkID))
+        let batch = record.batchID
+        try await app.test(.router) { client in
+            try await client.execute(uri: "/v1/imports/\(batch)/undo", method: .get, headers: TestServer.auth) { response in
+                let plan = try Self.decode(RollbackPlan.self, response)
+                #expect(plan.verdict == .undoReturns && plan.rows == 3 && plan.returning == 0)
+                #expect(plan.message.contains("link it again"))
+            }
+            try await client.execute(uri: "/v1/imports/\(batch)", method: .delete, headers: TestServer.auth) { #expect($0.status == .conflict) }
+            #expect(try await service.api.transactions(TransactionFilter()).count == 3)
+            try await client.execute(uri: "/v1/imports/\(batch)?acknowledge=returning", method: .delete, headers: TestServer.auth) { response in
+                let removed = try Self.decode([String: Int].self, response)
+                #expect(response.status == .ok && removed == ["removed": 3])
+            }
+            #expect(try await Self.record(batch, client).rolledBack)
+        }
+    }
+
+    @Test("Hidden is read from the rows: shown again drops the tag and Hide works again; a hide that finds nothing to hide still marks an all-hidden batch")
+    func hiddenFollowsRows() async throws {
+        let (app, service) = try await TestServer.app(seedDemo: false)
+        let record = try await Self.synced(.plaid, rowsDaysAgo: [1, 3], into: service)
+        let batch = record.batchID
+        try await app.test(.router) { client in
+            var undo: AppAction?
+            try await client.execute(uri: "/v1/imports/\(batch)/hide", method: .post, headers: TestServer.auth) { response in
+                undo = try Self.decode(ActionResult.self, response).undo
+            }
+            #expect(try await Self.record(batch, client).hiddenAt != nil)
+
+            // Shown again through the hide's undo: history no longer says Hidden, and Hide hides them again.
+            _ = try await service.api.perform(try #require(undo))
+            #expect(try await Self.record(batch, client).hiddenAt == nil)
+            try await client.execute(uri: "/v1/imports/\(batch)/hide", method: .post, headers: TestServer.auth) { response in
+                let result = try Self.decode(ActionResult.self, response)
+                #expect(result.affectedTransactions == 2 && result.undo != nil)
+            }
+            #expect(try await Self.record(batch, client).hiddenAt != nil)
+
+            // Rows hidden some other way (the record was never marked): a hide hides nothing, offers no undo, and marks it.
+            var stored = try #require(try await service.store.imports().first { $0.batchID == batch })
+            stored.hiddenAt = nil
+            try await service.store.upsertImport(stored)
+            try await client.execute(uri: "/v1/imports/\(batch)/hide", method: .post, headers: TestServer.auth) { response in
+                let result = try Self.decode(ActionResult.self, response)
+                #expect(response.status == .ok && result.affectedTransactions == 0 && result.undo == nil)
+            }
+            #expect(try await Self.record(batch, client).hiddenAt != nil)
+        }
+    }
+
+    @Test("Hide on a batch with no rows left hides nothing and leaves the record unmarked")
+    func hideNothingLeft() async throws {
+        let (app, service) = try await TestServer.app(seedDemo: false)
+        var report = IngestReport(batchID: "plaid-link-9-1", source: .plaid)
+        report.rowsAdded = 0
+        try await service.store.upsertImport(ImportRecord(batchID: "plaid-link-9-1", kind: .sync, linkID: "plaid-link-9", label: "Harbor Bank sync",
+                                                          report: report, createdAt: Date(), rolledBack: false))
+        try await app.test(.router) { client in
+            try await client.execute(uri: "/v1/imports/plaid-link-9-1/hide", method: .post, headers: TestServer.auth) { response in
+                let result = try Self.decode(ActionResult.self, response)
+                #expect(response.status == .ok && result.affectedTransactions == 0 && result.undo == nil)
+            }
+            #expect(try await Self.record("plaid-link-9-1", client).hiddenAt == nil)
+            #expect(try await service.store.imports().first?.hiddenAt == nil)
+        }
+    }
+
     @Test("DELETE on a file batch removes its rows")
     func fileRollsBack() async throws {
         let (app, service) = try await TestServer.app()
