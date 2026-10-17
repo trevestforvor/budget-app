@@ -259,7 +259,7 @@ private struct AddAccountSheet: View {
                     DSGlyph(systemImage: "building.columns", tone: .iris, size: 56)
                     VStack(alignment: .leading, spacing: DSSpace.xs) {
                         Text("Add accounts on your dashboard").dsFont(.title).foregroundStyle(Color.ds.ink)
-                        Text("Banks are linked on your server's dashboard, so your bank logins never pass through this phone.")
+                        Text("Banks are linked and removed on your server's dashboard, so your bank logins never pass through this phone. The phone can sync and sign in to a bank again, but it can't add or remove links.")
                             .dsFont(.callout)
                             .foregroundStyle(Color.ds.inkSecondary)
                             .fixedSize(horizontal: false, vertical: true)

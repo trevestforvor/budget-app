@@ -140,9 +140,9 @@ struct SyncRouteTests {
                                    PlaidScript.page("cursor-2")],
             "/accounts/get": [PlaidScript.balances], "/accounts/balance/get": [PlaidScript.balances],
         ])
-        let (app, service) = try await TestServer.app(seedDemo: false, plaid: plaid)
+        let (app, service) = try await TestServer.app(seedDemo: false, plaid: plaid, surface: .dashboard)
         try await app.test(.router) { client in
-            try await client.execute(uri: "/v1/links/plaid/exchange", method: .post, headers: TestServer.auth,
+            try await client.execute(uri: "/v1/links/plaid/exchange", method: .post, headers: TestServer.dash,
                                      body: TestServer.body(#"{"publicToken":"public-1","institution":"Harbor"}"#)) { #expect($0.status == .created) }
         }
         _ = await service.sync.syncAll()
@@ -163,9 +163,9 @@ struct SyncRouteTests {
             "/transactions/sync": [PlaidScript.page("cursor-1")],
             "/accounts/get": [PlaidScript.balances], "/accounts/balance/get": [PlaidScript.balances],
         ], delay: .milliseconds(150))
-        let (app, service) = try await TestServer.app(seedDemo: false, plaid: plaid)
+        let (app, service) = try await TestServer.app(seedDemo: false, plaid: plaid, surface: .dashboard)
         try await app.test(.router) { client in
-            try await client.execute(uri: "/v1/links/plaid/exchange", method: .post, headers: TestServer.auth,
+            try await client.execute(uri: "/v1/links/plaid/exchange", method: .post, headers: TestServer.dash,
                                      body: TestServer.body(#"{"publicToken":"public-1","institution":"Harbor"}"#)) { #expect($0.status == .created) }
         }
         let before = plaid.count("/transactions/sync")

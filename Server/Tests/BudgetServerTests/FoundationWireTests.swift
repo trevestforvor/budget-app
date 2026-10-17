@@ -61,15 +61,15 @@ struct FoundationWireTests {
 
     @Test("Imports read back with what Undo may do; status reads 0.6.0")
     func annotatedImports() async throws {
-        let (app, service) = try await TestServer.app(seedDemo: false)
+        let (app, service) = try await TestServer.app(seedDemo: false, surface: .dashboard)
         let report = IngestReport(batchID: "b1", source: .fileImport)
         try await service.store.upsertImport(ImportRecord(batchID: "b1", kind: .file, linkID: nil, label: "File", report: report, createdAt: Date(), rolledBack: false))
         try await app.test(.router) { client in
-            try await client.execute(uri: "/v1/imports", method: .get, headers: TestServer.auth) { response in
+            try await client.execute(uri: "/v1/imports", method: .get, headers: TestServer.dash) { response in
                 let records = try RemoteBudgetAPI.decoder.decode([ImportRecord].self, from: Data(response.body.readableBytesView))
                 #expect(records.map(\.undo) == [UndoPolicy(mode: .allowed)])
             }
-            try await client.execute(uri: "/v1/status", method: .get, headers: TestServer.auth) { response in
+            try await client.execute(uri: "/v1/status", method: .get, headers: TestServer.dash) { response in
                 let status = try RemoteBudgetAPI.decoder.decode(ServerStatus.self, from: Data(response.body.readableBytesView))
                 #expect(status.version == "0.6.0")
                 #expect(ServerStatus.version(status.version, isAtLeast: ServerStatus.connectionsSince))

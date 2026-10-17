@@ -125,11 +125,11 @@ struct AssistantRouteTests {
 
     @Test("Resetting the ledger clears its conversations")
     func resetClears() async throws {
-        let (app, service) = try await TestServer.app()
+        let (app, service) = try await TestServer.app(surface: .dashboard)
         _ = try await service.api.ask("Where did my money go this month?", conversationID: nil)
         #expect(try await service.api.chatSessions().count == 1)
         try await app.test(.router) { client in
-            try await client.execute(uri: "/v1/admin/reset", method: .post, headers: TestServer.auth,
+            try await client.execute(uri: "/v1/admin/reset", method: .post, headers: TestServer.dash,
                                      body: TestServer.body(#"{"confirm":"erase my ledger"}"#)) { #expect($0.status == .ok) }
         }
         #expect(try await service.api.chatSessions().isEmpty)

@@ -47,7 +47,7 @@ struct SimpleFINGapTests {
 
     @Test("A link refused for 120 days, then a new token: each bank gets repair windows over the days the fresh pull can't reach")
     func longLinkOutageRepairsTheHole() async throws {
-        let (_, service) = try await TestServer.app(seedDemo: false)
+        let (_, service) = try await TestServer.app(seedDemo: false, surface: .dashboard)
         let bridge = FakeBridge([SimpleFINSyncTests.harbor, SimpleFINSyncTests.keystone])
         var link = Self.newLink("simplefin-out")
         let t0 = Date().addingTimeInterval(-130 * Self.day)
@@ -75,13 +75,13 @@ struct SimpleFINGapTests {
     @Test("New account ids after a new token: the next runs walk their history back from where the swap's fresh pull began")
     func newIDsAfterTokenSwapGetTheirHistory() async throws {
         let bridge = FakeBridge([SimpleFINSyncTests.harbor])
-        let (app, service) = try await TestServer.app(seedDemo: false, plaid: bridge)
+        let (app, service) = try await TestServer.app(seedDemo: false, plaid: bridge, surface: .dashboard)
         try await app.test(.router) { client in
             let id = try await SimpleFINSyncTests.link(client).linkID
             let lastGood = try #require(try await SimpleFINSyncTests.stored(service).simplefin?.connections["CON-A"]?.lastGoodData)
             bridge.banks = [FakeBridge.Bank(connID: "CON-A2", name: "Harbor", accounts: ["ACT-A9"])]
             // A bank's row id works here too, as it does for Try again.
-            try await client.execute(uri: "/v1/links/\(id)~\(StableHash.short("CON-A"))/token", method: .put, headers: TestServer.auth,
+            try await client.execute(uri: "/v1/links/\(id)~\(StableHash.short("CON-A"))/token", method: .put, headers: TestServer.dash,
                                      body: TestServer.body(#"{"setupToken": "\#(FakeBridge.setupToken)"}"#)) { response in
                 #expect(response.status == .ok)
                 let body = try #require(try JSONSerialization.jsonObject(with: Data(response.body.readableBytesView)) as? [String: Any])
@@ -102,7 +102,7 @@ struct SimpleFINGapTests {
 
     @Test("The history walk waits while a bank needs a sign-in, and goes on from where it was once the bank is back")
     func historyWalkWaitsForASignIn() async throws {
-        let (_, service) = try await TestServer.app(seedDemo: false)
+        let (_, service) = try await TestServer.app(seedDemo: false, surface: .dashboard)
         let bridge = FakeBridge([SimpleFINSyncTests.harbor, SimpleFINSyncTests.keystone])
         var link = Self.newLink("simplefin-walk")
         let t0 = Date().addingTimeInterval(-10 * Self.day)
@@ -125,7 +125,7 @@ struct SimpleFINGapTests {
 
     @Test("An account SimpleFIN names only in act.failed stays the bank's, and the bank's last good pull doesn't move")
     func accountLeftOutStaysTheBanks() async throws {
-        let (_, service) = try await TestServer.app(seedDemo: false)
+        let (_, service) = try await TestServer.app(seedDemo: false, surface: .dashboard)
         func body(_ accounts: [String], errlist: String = "") -> String {
             let list = accounts.map { #"{"id": "\#($0)", "name": "Harbor \#($0)", "conn_id": "CON-A", "currency": "USD", "balance": "1.00", "balance-date": 1790000000, "transactions": []}"# }
             return #"{"errlist": [\#(errlist)], "connections": [{"conn_id": "CON-A", "name": "Harbor"}], "accounts": [\#(list.joined(separator: ","))]}"#
@@ -153,7 +153,7 @@ struct SimpleFINGapTests {
 
     @Test("A 200 that can't be read is recorded as 200, not as no answer")
     func unreadableAnswerRecordsItsStatus() async throws {
-        let (_, service) = try await TestServer.app(seedDemo: false)
+        let (_, service) = try await TestServer.app(seedDemo: false, surface: .dashboard)
         var link = Self.newLink("simplefin-bad")
         await #expect(throws: DecodingError.self) { try await Self.run(&link, ScriptedBridge("<html>not json</html>"), .personLink, at: Date(), api: service.api) }
         #expect(link.simplefin?.requests.map(\.status) == [200])
@@ -162,7 +162,7 @@ struct SimpleFINGapTests {
     @Test("A scheduled run at the hard stop asks nothing and records no problem")
     func scheduledSyncAtHardStopSkipsQuietly() async throws {
         let bridge = FakeBridge([SimpleFINSyncTests.harbor])
-        let (app, service) = try await TestServer.app(seedDemo: false, plaid: bridge)
+        let (app, service) = try await TestServer.app(seedDemo: false, plaid: bridge, surface: .dashboard)
         try await app.test(.router) { client in _ = try await SimpleFINSyncTests.link(client) }
         var link = try await SimpleFINSyncTests.stored(service)
         link.simplefin?.requests = (0..<20).map { SimpleFINRequest(at: Date().addingTimeInterval(-Double($0) * 60 - 60), purpose: .fresh, trigger: "person", status: 200) }

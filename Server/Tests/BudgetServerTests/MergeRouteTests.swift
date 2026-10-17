@@ -123,7 +123,7 @@ struct MergeRouteTests {
 
     @Test("The sweep reports rows it left because they look like more than one synced row")
     func sweepReportsAmbiguous() async throws {
-        let (app, service) = try await TestServer.app(seedDemo: false)
+        let (app, service) = try await TestServer.app(seedDemo: false, surface: .dashboard)
         _ = try await Self.seed(service)
         var state = await service.api.state
         let account = try #require(state.accounts.first?.id)
@@ -137,7 +137,7 @@ struct MergeRouteTests {
                                                     source: .fileImport))
         await service.api.replaceStateWithoutPersisting(state)
         try await app.test(.router) { client in
-            try await client.execute(uri: "/v1/imports/duplicates", method: .post, headers: TestServer.auth, body: TestServer.body(#"{"apply": true}"#)) { response in
+            try await client.execute(uri: "/v1/imports/duplicates", method: .post, headers: TestServer.dash, body: TestServer.body(#"{"apply": true}"#)) { response in
                 let sweep = try Self.decode(DuplicateSweep.self, response)
                 #expect(sweep.pairs.isEmpty && sweep.removed == 0 && sweep.ambiguous == 1)
             }

@@ -854,7 +854,7 @@ function phoneSection(addressControl, more) {
     h("p", { class: "t-callout muted" }, "In the Budget app on your phone, paste this server URL and API token: on its first screen, or later in Settings → Advanced → Your server."),
     address,
     h("div", { class: "field" }, h("span", { class: "field-head" }, "API token"), h("div", { class: "secret-row" }, tokenCode, reveal, copyToken),
-      h("span", { class: "help" }, "Anyone with this token and the address can read your ledger. It stays on this server.")),
+      h("span", { class: "help" }, "Anyone with this token and the address can read your ledger. It stays on this server. With it the phone can sync, sign in to a bank again and import statements, but the phone can't add or remove bank links or erase data: only this dashboard can.")),
     more);
 }
 

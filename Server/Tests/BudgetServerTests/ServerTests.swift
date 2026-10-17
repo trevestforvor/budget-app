@@ -51,6 +51,8 @@ enum TestServer {
     }
 
     static var auth: HTTPFields { [.authorization: "Bearer \(token)", .contentType: "application/json"] }
+    /// For a test on the dashboard surface: its write header (the bearer token, also sent, counts for nothing there).
+    static var dash: HTTPFields { [.authorization: "Bearer \(token)", .contentType: "application/json", HTTPField.Name("X-Budget-Dashboard")!: "1"] }
 
     static func body(_ json: String) -> ByteBuffer { ByteBuffer(string: json) }
 }
@@ -293,16 +295,16 @@ struct ServerTests {
             """#],
             "/accounts/get": [#"{"accounts": [{"account_id": "chk", "balances": {"current": 5000, "available": 5000, "iso_currency_code": "USD"}, "name": "Checking", "subtype": "checking", "type": "depository"}]}"#], "/accounts/balance/get": [#"{"accounts": [{"account_id": "chk", "balances": {"current": 5000, "available": 5000, "iso_currency_code": "USD"}, "name": "Checking", "subtype": "checking", "type": "depository"}]}"#],
         ])
-        let (app, service) = try await TestServer.app(seedDemo: false, plaid: plaid)
+        let (app, service) = try await TestServer.app(seedDemo: false, plaid: plaid, surface: .dashboard)
         try await app.test(.router) { client in
-            try await client.execute(uri: "/v1/links/plaid/exchange", method: .post, headers: TestServer.auth,
+            try await client.execute(uri: "/v1/links/plaid/exchange", method: .post, headers: TestServer.dash,
                                      body: TestServer.body(#"{"publicToken":"public-1","institution":"Harbor"}"#)) { response in
                 #expect(response.status == .created)
                 let result = try RemoteBudgetAPI.decoder.decode(LinkSyncResult.self, from: Data(response.body.readableBytesView))
                 #expect(result.ok)
                 #expect(result.report?.rowsAdded == 2)
             }
-            try await client.execute(uri: "/v1/links", method: .get, headers: TestServer.auth) { response in
+            try await client.execute(uri: "/v1/links", method: .get, headers: TestServer.dash) { response in
                 let text = String(buffer: response.body)
                 #expect(text.contains("Harbor"))
                 #expect(!text.contains("access-sandbox-9"))

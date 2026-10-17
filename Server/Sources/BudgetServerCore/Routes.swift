@@ -342,8 +342,8 @@ public func buildRouter(_ service: BudgetService, surface: Surface = .api) -> Ro
     }
 
     addTransactionToolRoutes(router, service)
-    addLinkRoutes(router, service)
-    addImportRoutes(router, service)
+    addLinkRoutes(router, service, surface: surface)
+    addImportRoutes(router, service, surface: surface)
     addMerchantRoutes(router, service)
     addMorningSummaryRoutes(router, service)
     addAssistantRoutes(router, service)
@@ -362,7 +362,16 @@ public func buildRouter(_ service: BudgetService, surface: Surface = .api) -> Ro
 
 // MARK: - Links (Plaid, SimpleFIN) and sync
 
-func addLinkRoutes(_ router: Router<BasicRequestContext>, _ service: BudgetService) {
+/// What only the dashboard may do (SPEC §10, P0.2): add or remove a bank link, give a link a new token, erase the
+/// ledger, list the import history, sweep import duplicates, and undo a sync's batch. The phone's token keeps reading,
+/// syncing, signing in again (`/v1/links/:id/reconnect`) and file imports. On the API those routes aren't there (404),
+/// so a lost phone or a leaked token can't unlink banks or wipe the ledger.
+enum DashboardOnly {
+    /// Said by a route on both surfaces that refuses one case on the API (a sync's batch to `DELETE /v1/imports/:batch`).
+    static let message = "Only the Budget dashboard can do that: the phone can't add or remove bank links or erase data."
+}
+
+func addLinkRoutes(_ router: Router<BasicRequestContext>, _ service: BudgetService, surface: Surface) {
     @Sendable func requireSealer() throws -> TokenSealer {
         guard let sealer = service.sealer else { throw BudgetAPIError.rejected("Set BUDGET_TOKEN_KEY on the server before linking accounts.") }
         return sealer
@@ -376,73 +385,77 @@ func addLinkRoutes(_ router: Router<BasicRequestContext>, _ service: BudgetServi
     /// `grantCardBills` with a `linkID` opens the same update mode to add liabilities consent (card bills) to that Item;
     /// only the person's click on the dashboard asks for it.
     // MARK: - [lane P] Plaid link routes
-    router.post("/v1/links/plaid/token") { request, _ in
-        guard let plaid = try await service.providers.plaid() else { throw BudgetAPIError.rejected("Plaid isn't set up yet — add its keys on the dashboard (Connect a bank → Plaid).") }
-        let body = (try? await HTTP.body(PlaidTokenBody.self, request)) ?? PlaidTokenBody(linkID: nil)
-        if body.grantCardBills == true, body.linkID == nil { throw BudgetAPIError.rejected("Granting card-bill access needs the link it's for.") }
-        var accessToken: String?
-        var renewal = false
-        if let linkID = body.linkID {
-            guard let link = try await service.store.links().first(where: { $0.id == linkID }) else { throw BudgetAPIError.notFound }
-            guard link.provider == .plaid else { throw BudgetAPIError.rejected("\(link.institution) connects through \(link.provider.displayName), not Plaid.") }
-            // Update mode needs a live Item; one Plaid deleted can only be linked again.
-            guard link.hasLiveItem else { throw BudgetAPIError.rejected(SyncService.itemGoneMessage(link)) }
-            accessToken = try requireSealer().open(link.sealedToken)
-            // A working link opened in update mode is "Renew access": Plaid's reauthorization renews the bank's consent
-            // (as the phone's renewal does); without it Link would find nothing to fix.
-            renewal = body.grantCardBills != true && !LinkHealthBook.waitsForPerson(link)
+    if surface == .dashboard {  // P0.2: linking a bank is the dashboard's
+        router.post("/v1/links/plaid/token") { request, _ in
+            guard let plaid = try await service.providers.plaid() else { throw BudgetAPIError.rejected("Plaid isn't set up yet — add its keys on the dashboard (Connect a bank → Plaid).") }
+            let body = (try? await HTTP.body(PlaidTokenBody.self, request)) ?? PlaidTokenBody(linkID: nil)
+            if body.grantCardBills == true, body.linkID == nil { throw BudgetAPIError.rejected("Granting card-bill access needs the link it's for.") }
+            var accessToken: String?
+            var renewal = false
+            if let linkID = body.linkID {
+                guard let link = try await service.store.links().first(where: { $0.id == linkID }) else { throw BudgetAPIError.notFound }
+                guard link.provider == .plaid else { throw BudgetAPIError.rejected("\(link.institution) connects through \(link.provider.displayName), not Plaid.") }
+                // Update mode needs a live Item; one Plaid deleted can only be linked again.
+                guard link.hasLiveItem else { throw BudgetAPIError.rejected(SyncService.itemGoneMessage(link)) }
+                accessToken = try requireSealer().open(link.sealedToken)
+                // A working link opened in update mode is "Renew access": Plaid's reauthorization renews the bank's consent
+                // (as the phone's renewal does); without it Link would find nothing to fix.
+                renewal = body.grantCardBills != true && !LinkHealthBook.waitsForPerson(link)
+            }
+            // WEBHOOK-002: a new Item takes this server's webhook URL from its link token.
+            let webhook = await PlaidMaintenance.webhookURL(service.settings, sandbox: plaid.environment == .sandbox)
+            let token = try await PlaidSource.linkToken(environment: plaid.environment, credentials: .init(clientID: plaid.clientID, secret: plaid.secret),
+                                                        userID: "owner", investments: true, redirectURI: plaid.redirectURI,
+                                                        accessToken: accessToken, grantLiabilities: body.grantCardBills == true,
+                                                        webhook: webhook, reauthorization: renewal, transport: service.providers.transport)
+            return try HTTP.json(["linkToken": token])
         }
-        // WEBHOOK-002: a new Item takes this server's webhook URL from its link token.
-        let webhook = await PlaidMaintenance.webhookURL(service.settings, sandbox: plaid.environment == .sandbox)
-        let token = try await PlaidSource.linkToken(environment: plaid.environment, credentials: .init(clientID: plaid.clientID, secret: plaid.secret),
-                                                    userID: "owner", investments: true, redirectURI: plaid.redirectURI,
-                                                    accessToken: accessToken, grantLiabilities: body.grantCardBills == true,
-                                                    webhook: webhook, reauthorization: renewal, transport: service.providers.transport)
-        return try HTTP.json(["linkToken": token])
-    }
 
-    router.post("/v1/links/plaid/exchange") { request, _ in
-        guard let plaid = try await service.providers.plaid() else { throw BudgetAPIError.rejected("Plaid isn't set up yet — add its keys on the dashboard.") }
-        let body = try await HTTP.body(PlaidExchangeBody.self, request)
-        let institutionID = StoredLink.institutionID(body.institutionID)
-        // ITEM-011: one Item per bank, checked before the exchange, so a second Item never comes to exist on this server
-        // (each one uses up a Plaid Trial slot). The public token is left to expire unexchanged. The check, the exchange
-        // and the insert take one turn in the sync queue, so two exchanges for the same bank at once (two tabs) can't
-        // both pass the check.
-        let link = try await service.sync.serialized { () async throws -> StoredLink in
-            if let existing = StoredLink.duplicateItem(in: try await service.store.links(), institutionID: institutionID, institution: body.institution) {
-                service.logger.info("plaid exchange refused: \(existing.id) already holds an Item at that bank")
-                throw BudgetAPIError.server(status: 409, message: StoredLink.duplicateItemMessage(existing))
+        router.post("/v1/links/plaid/exchange") { request, _ in
+            guard let plaid = try await service.providers.plaid() else { throw BudgetAPIError.rejected("Plaid isn't set up yet — add its keys on the dashboard.") }
+            let body = try await HTTP.body(PlaidExchangeBody.self, request)
+            let institutionID = StoredLink.institutionID(body.institutionID)
+            // ITEM-011: one Item per bank, checked before the exchange, so a second Item never comes to exist on this server
+            // (each one uses up a Plaid Trial slot). The public token is left to expire unexchanged. The check, the exchange
+            // and the insert take one turn in the sync queue, so two exchanges for the same bank at once (two tabs) can't
+            // both pass the check.
+            let link = try await service.sync.serialized { () async throws -> StoredLink in
+                if let existing = StoredLink.duplicateItem(in: try await service.store.links(), institutionID: institutionID, institution: body.institution) {
+                    service.logger.info("plaid exchange refused: \(existing.id) already holds an Item at that bank")
+                    throw BudgetAPIError.server(status: 409, message: StoredLink.duplicateItemMessage(existing))
+                }
+                let exchanged = try await PlaidSource.exchange(publicToken: body.publicToken, environment: plaid.environment,
+                                                               credentials: .init(clientID: plaid.clientID, secret: plaid.secret), transport: service.providers.transport)
+                var link = StoredLink(id: "plaid-" + exchanged.itemID, provider: .plaid, institution: body.institution, externalID: exchanged.itemID,
+                                      sealedToken: try requireSealer().seal(exchanged.accessToken), cursor: nil, status: .connected,
+                                      lastSync: nil, lastError: nil, createdAt: Date())
+                if let institutionID {
+                    var plaid = PlaidLinkState()
+                    plaid.institutionID = institutionID
+                    link.plaid = plaid
+                }
+                try await service.store.upsertLink(link)
+                return link
             }
-            let exchanged = try await PlaidSource.exchange(publicToken: body.publicToken, environment: plaid.environment,
-                                                           credentials: .init(clientID: plaid.clientID, secret: plaid.secret), transport: service.providers.transport)
-            var link = StoredLink(id: "plaid-" + exchanged.itemID, provider: .plaid, institution: body.institution, externalID: exchanged.itemID,
-                                  sealedToken: try requireSealer().seal(exchanged.accessToken), cursor: nil, status: .connected,
-                                  lastSync: nil, lastError: nil, createdAt: Date())
-            if let institutionID {
-                var plaid = PlaidLinkState()
-                plaid.institutionID = institutionID
-                link.plaid = plaid
-            }
-            try await service.store.upsertLink(link)
-            return link
+            let result = try await service.sync.sync(linkID: link.id, trigger: .afterLink)
+            return try HTTP.json(result, status: .created)
         }
-        let result = try await service.sync.sync(linkID: link.id, trigger: .afterLink)
-        return try HTTP.json(result, status: .created)
     }
     // MARK: - [end lane P] Plaid link routes
 
-    // MARK: - [lane S] SimpleFIN and Teller link routes
+    // MARK: - [lane S] SimpleFIN link routes
 
-    router.post("/v1/links/simplefin") { request, _ in
-        let body = try await HTTP.body(SimpleFINBody.self, request)
-        let accessURL = try await SimpleFINSync.claim(body.setupToken, transport: service.providers.transport)
-        let id = "simplefin-" + UUID().uuidString.prefix(8)
-        let link = StoredLink(id: id, provider: .simplefin, institution: "SimpleFIN Bridge", externalID: nil,
-                              sealedToken: try requireSealer().seal(accessURL.absoluteString), cursor: nil, status: .connected,
-                              lastSync: nil, lastError: nil, createdAt: Date())
-        try await service.store.upsertLink(link)
-        return try HTTP.json(try await service.sync.sync(linkID: id, trigger: .afterLink), status: .created)
+    if surface == .dashboard {  // P0.2: linking a bank is the dashboard's
+        router.post("/v1/links/simplefin") { request, _ in
+            let body = try await HTTP.body(SimpleFINBody.self, request)
+            let accessURL = try await SimpleFINSync.claim(body.setupToken, transport: service.providers.transport)
+            let id = "simplefin-" + UUID().uuidString.prefix(8)
+            let link = StoredLink(id: id, provider: .simplefin, institution: "SimpleFIN Bridge", externalID: nil,
+                                  sealedToken: try requireSealer().seal(accessURL.absoluteString), cursor: nil, status: .connected,
+                                  lastSync: nil, lastError: nil, createdAt: Date())
+            try await service.store.upsertLink(link)
+            return try HTTP.json(try await service.sync.sync(linkID: id, trigger: .afterLink), status: .created)
+        }
     }
 
     // A link id is never "plaid" or "simplefin" (it's "<provider>-<id>"), so these parameter routes never
@@ -456,22 +469,26 @@ func addLinkRoutes(_ router: Router<BasicRequestContext>, _ service: BudgetServi
         return try HTTP.json(try await service.sync.sync(linkID: linkID, trigger: .personLink, afterUpdateMode: afterUpdateMode))
     }
 
-    /// A SimpleFIN link SimpleFIN stopped accepting: a new setup token, the same link (its accounts and history carry on).
-    /// Answers the sync's result, plus `note` when the accounts came back under new ids.
-    router.put("/v1/links/:id/token") { request, context in
-        let body = try await HTTP.body(SimpleFINBody.self, request)
-        let (result, note) = try await service.sync.replaceSimpleFINToken(linkID: SimpleFINLinkState.linkID(fromRowID: try HTTP.rowID(context)), setupToken: body.setupToken)
-        return try HTTP.json(ReplacedToken(result: result, note: note))
+    if surface == .dashboard {  // P0.2: a new setup token is the dashboard's
+        /// A SimpleFIN link SimpleFIN stopped accepting: a new setup token, the same link (its accounts and history carry on).
+        /// Answers the sync's result, plus `note` when the accounts came back under new ids.
+        router.put("/v1/links/:id/token") { request, context in
+            let body = try await HTTP.body(SimpleFINBody.self, request)
+            let (result, note) = try await service.sync.replaceSimpleFINToken(linkID: SimpleFINLinkState.linkID(fromRowID: try HTTP.rowID(context)), setupToken: body.setupToken)
+            return try HTTP.json(ReplacedToken(result: result, note: note))
+        }
     }
-    // MARK: - [end lane S] SimpleFIN and Teller link routes
+    // MARK: - [end lane S] SimpleFIN link routes
 
-    /// Removes the link (stops syncing). Its rows stay; roll back its batches to remove them.
-    router.delete("/v1/links/:id") { _, context in
-        let id = try context.parameters.require("id")
-        if let link = try await service.store.links().first(where: { $0.id == id }) { await revoke(link, service) }
-        try await service.store.deleteLink(id)
-        await service.sync.publishInstitutions()
-        return Response(status: .noContent)
+    if surface == .dashboard {  // P0.2: removing a link is the dashboard's
+        /// Removes the link (stops syncing). Its rows stay; roll back its batches to remove them.
+        router.delete("/v1/links/:id") { _, context in
+            let id = try context.parameters.require("id")
+            if let link = try await service.store.links().first(where: { $0.id == id }) { await revoke(link, service) }
+            try await service.store.deleteLink(id)
+            await service.sync.publishInstitutions()
+            return Response(status: .noContent)
+        }
     }
 
     /// Every link now. `{"requestedByPerson": true}` is the person asking; no body (older phones, scripts) is a
@@ -485,8 +502,10 @@ func addLinkRoutes(_ router: Router<BasicRequestContext>, _ service: BudgetServi
 // MARK: - File imports and rollback
 
 // MARK: - [lane L] addImportRoutes
-func addImportRoutes(_ router: Router<BasicRequestContext>, _ service: BudgetService) {
-    router.get("/v1/imports") { _, _ in try HTTP.json(await ImportUndo.annotated(try await service.store.imports(), service)) }
+func addImportRoutes(_ router: Router<BasicRequestContext>, _ service: BudgetService, surface: Surface) {
+    if surface == .dashboard {  // P0.2: the import history, sync batches among it, is the dashboard's
+        router.get("/v1/imports") { _, _ in try HTTP.json(await ImportUndo.annotated(try await service.store.imports(), service)) }
+    }
 
     /// CSV / OFX / QFX text. `accountID` files the rows into an existing account, or `options.accountName` into a new one.
     /// A file's rows as a snapshot, with a CSV's signs read by the kind of account it's filed into. An OFX file's ids are
@@ -527,10 +546,12 @@ func addImportRoutes(_ router: Router<BasicRequestContext>, _ service: BudgetSer
         return try HTTP.json(try await service.api.previewIngest(files))
     }
 
-    /// Imported rows that a later sync also brought in. `{apply: true}` removes the imported copies.
-    router.post("/v1/imports/duplicates") { request, _ in
-        let body = try await HTTP.body(ApplyBody.self, request)
-        return try HTTP.json(try await service.api.importDuplicates(apply: body.apply == true))
+    if surface == .dashboard {  // P0.2: removing imported copies is the dashboard's
+        /// Imported rows that a later sync also brought in. `{apply: true}` removes the imported copies.
+        router.post("/v1/imports/duplicates") { request, _ in
+            let body = try await HTTP.body(ApplyBody.self, request)
+            return try HTTP.json(try await service.api.importDuplicates(apply: body.apply == true))
+        }
     }
 
     @Sendable func importRecord(_ context: BasicRequestContext) async throws -> ImportRecord {
@@ -546,9 +567,11 @@ func addImportRoutes(_ router: Router<BasicRequestContext>, _ service: BudgetSer
     }
 
     /// Rolls a batch back. 409, changing nothing, when Undo is refused (a Plaid sync), and when SimpleFIN rows could
-    /// come back (at the next sync, or once linked again) unless `?acknowledge=returning`.
+    /// come back (at the next sync, or once linked again) unless `?acknowledge=returning`. On the API only a file's batch
+    /// (P0.2): a sync's batch answers 404 there and is undone on the dashboard.
     router.delete("/v1/imports/:batch") { request, context in
         let record = try await importRecord(context)
+        if surface == .api, record.kind != .file { throw BudgetAPIError.server(status: 404, message: DashboardOnly.message) }
         let policy = ImportUndo.policy(for: record)
         if policy.mode == .refused { throw BudgetAPIError.server(status: 409, message: policy.message) }
         let removed = try await service.api.rollback(batchID: record.batchID, nextWindowStart: try await ImportUndo.nextWindowStart(for: record, service),
@@ -576,34 +599,36 @@ func addImportRoutes(_ router: Router<BasicRequestContext>, _ service: BudgetSer
     }
     // MARK: - [end lane L] addImportRoutes
 
-    /// Erases the ledger (links and import history are kept). Guarded by a confirm phrase.
-    router.post("/v1/admin/reset") { request, _ in
-        let body = try await HTTP.body(ResetBody.self, request)
-        guard body.confirm == "erase my ledger" else { throw BudgetAPIError.rejected("Send {\"confirm\": \"erase my ledger\"} to reset.") }
-        if body.seedDemo == true, !service.config.allowDemo {
-            throw BudgetAPIError.rejected("This server holds real accounts, so it won't load the demo ledger (set BUDGET_ALLOW_DEMO=1 on a test server).")
+    if surface == .dashboard {  // P0.2: erasing is the dashboard's
+        /// Erases the ledger (links and import history are kept). Guarded by a confirm phrase.
+        router.post("/v1/admin/reset") { request, _ in
+            let body = try await HTTP.body(ResetBody.self, request)
+            guard body.confirm == "erase my ledger" else { throw BudgetAPIError.rejected("Send {\"confirm\": \"erase my ledger\"} to reset.") }
+            if body.seedDemo == true, !service.config.allowDemo {
+                throw BudgetAPIError.rejected("This server holds real accounts, so it won't load the demo ledger (set BUDGET_ALLOW_DEMO=1 on a test server).")
+            }
+            var removed: [String] = []
+            if body.removeLinks == true {
+                let links = try await service.store.links()
+                for link in links { await revoke(link, service); try await service.store.deleteLink(link.id) }
+                await service.sync.publishInstitutions()
+                removed.append("\(links.count) linked account\(links.count == 1 ? "" : "s")")
+            }
+            if body.clearImports == true { try await service.store.clearImports(); removed.append("import history") }
+            if body.removeProviderKeys == true {
+                try await service.providers.clearPlaid()
+                try await service.providers.clearTeller()
+                await BudgetServerApp.apply(service)
+                removed.append("Plaid and Teller keys")
+            }
+            if body.keepLedger != true {
+                try await service.api.replaceState(await service.freshState(seedDemo: body.seedDemo == true))
+                try await service.api.clearChatSessions() // conversations about the old ledger go with it
+                try await service.api.resetBalanceHistory(seedDemo: body.seedDemo == true)
+                removed.insert(body.seedDemo == true ? "the ledger (replaced with the demo)" : "all transactions and accounts", at: 0)
+            }
+            return try HTTP.json(["reset": "true", "removed": removed.joined(separator: ", ")])
         }
-        var removed: [String] = []
-        if body.removeLinks == true {
-            let links = try await service.store.links()
-            for link in links { await revoke(link, service); try await service.store.deleteLink(link.id) }
-            await service.sync.publishInstitutions()
-            removed.append("\(links.count) linked account\(links.count == 1 ? "" : "s")")
-        }
-        if body.clearImports == true { try await service.store.clearImports(); removed.append("import history") }
-        if body.removeProviderKeys == true {
-            try await service.providers.clearPlaid()
-            try await service.providers.clearTeller()
-            await BudgetServerApp.apply(service)
-            removed.append("Plaid and Teller keys")
-        }
-        if body.keepLedger != true {
-            try await service.api.replaceState(await service.freshState(seedDemo: body.seedDemo == true))
-            try await service.api.clearChatSessions() // conversations about the old ledger go with it
-            try await service.api.resetBalanceHistory(seedDemo: body.seedDemo == true)
-            removed.insert(body.seedDemo == true ? "the ledger (replaced with the demo)" : "all transactions and accounts", at: 0)
-        }
-        return try HTTP.json(["reset": "true", "removed": removed.joined(separator: ", ")])
     }
 }
 

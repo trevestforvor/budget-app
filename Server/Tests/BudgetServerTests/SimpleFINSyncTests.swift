@@ -96,7 +96,7 @@ struct SimpleFINSyncTests {
 
     /// A new SimpleFIN link through the route, as the dashboard makes one.
     static func link(_ client: some TestClientProtocol) async throws -> LinkSyncResult {
-        try await client.execute(uri: "/v1/links/simplefin", method: .post, headers: TestServer.auth,
+        try await client.execute(uri: "/v1/links/simplefin", method: .post, headers: TestServer.dash,
                                  body: TestServer.body(#"{"setupToken": "\#(FakeBridge.setupToken)"}"#)) { response in
             #expect(response.status == .created)
             return try Self.decode(LinkSyncResult.self, response)
@@ -106,7 +106,7 @@ struct SimpleFINSyncTests {
     @Test("The first link pulls fresh and three history windows (four requests), as one batch, and starts the walk")
     func simplefinFirstLinkBackfillsThreeWindows() async throws {
         let bridge = FakeBridge([Self.harbor, Self.keystone])
-        let (app, service) = try await TestServer.app(seedDemo: false, plaid: bridge)
+        let (app, service) = try await TestServer.app(seedDemo: false, plaid: bridge, surface: .dashboard)
         try await app.test(.router) { client in
             let result = try await Self.link(client)
             #expect(result.ok && result.report?.rowsAdded == 8) // 2 accounts × 4 windows
@@ -130,7 +130,7 @@ struct SimpleFINSyncTests {
     @Test("A scheduled sync within six hours of the last automatic pull asks nothing and isn't an error")
     func scheduledSyncSkipsWithinSixHours() async throws {
         let bridge = FakeBridge([Self.harbor])
-        let (app, service) = try await TestServer.app(seedDemo: false, plaid: bridge)
+        let (app, service) = try await TestServer.app(seedDemo: false, plaid: bridge, surface: .dashboard)
         try await app.test(.router) { client in _ = try await Self.link(client) }
         // The first scheduled run pulls (fresh, plus history windows within the day's allowance).
         let first = await service.sync.syncAll(trigger: .schedule)
@@ -149,7 +149,7 @@ struct SimpleFINSyncTests {
     @Test("The person asking past 20 requests in a day is refused here, rate limited, with when to try; nothing is asked")
     func personRefusedAtHardStop() async throws {
         let bridge = FakeBridge([Self.harbor])
-        let (app, service) = try await TestServer.app(seedDemo: false, plaid: bridge)
+        let (app, service) = try await TestServer.app(seedDemo: false, plaid: bridge, surface: .dashboard)
         try await app.test(.router) { client in _ = try await Self.link(client) }
         var link = try await Self.stored(service)
         link.simplefin?.requests = (0..<20).map { SimpleFINRequest(at: Date().addingTimeInterval(-Double($0) * 60), purpose: .fresh, trigger: "person", status: 200) }
@@ -165,11 +165,11 @@ struct SimpleFINSyncTests {
     @Test("403 marks the whole link revoked: it waits for a new setup token, and the one request still counts")
     func simplefin403MarksLinkRevoked() async throws {
         let bridge = FakeBridge([Self.harbor, Self.keystone])
-        let (app, service) = try await TestServer.app(seedDemo: false, plaid: bridge)
+        let (app, service) = try await TestServer.app(seedDemo: false, plaid: bridge, surface: .dashboard)
         try await app.test(.router) { client in
             let id = try await Self.link(client).linkID
             bridge.status = 403
-            try await client.execute(uri: "/v1/links/\(id)/sync", method: .post, headers: TestServer.auth) { response in
+            try await client.execute(uri: "/v1/links/\(id)/sync", method: .post, headers: TestServer.dash) { response in
                 let result = try Self.decode(LinkSyncResult.self, response)
                 #expect(!result.ok && result.errorKind == .revoked && result.error?.contains("new setup token") == true)
             }
@@ -177,7 +177,7 @@ struct SimpleFINSyncTests {
             #expect(link.status == .needsReauth && link.errorKind == .revoked && link.errorCode == "http-403")
             #expect(link.simplefin?.requests.count == 5 && link.simplefin?.requests.last?.status == 403)
             // One row for the link: the fix is a new token on the dashboard, not a sign-in at the Bridge.
-            try await client.execute(uri: "/v1/status", method: .get, headers: TestServer.auth) { response in
+            try await client.execute(uri: "/v1/status", method: .get, headers: TestServer.dash) { response in
                 let rows = try Self.decode(ServerStatus.self, response).institutions
                 #expect(rows.map(\.id) == [id] && rows[0].status == .needsReauth && rows[0].reconnect == .dashboard && rows[0].reconnectURL == nil)
             }
@@ -188,7 +188,7 @@ struct SimpleFINSyncTests {
 
     @Test("gen.auth in the errlist is revoked too")
     func genAuthRevokes() async throws {
-        let (_, service) = try await TestServer.app(seedDemo: false)
+        let (_, service) = try await TestServer.app(seedDemo: false, surface: .dashboard)
         let bridge = FakeBridgeGenAuth()
         var link = StoredLink(id: "simplefin-g", provider: .simplefin, institution: "SimpleFIN Bridge", externalID: nil, sealedToken: "",
                               cursor: nil, status: .connected, lastSync: nil, lastError: nil, createdAt: Date())
@@ -202,13 +202,13 @@ struct SimpleFINSyncTests {
     @Test("One bank's con.auth leaves the link connected: the other bank's rows come in and its window moves on")
     func conAuthLeavesOtherBanksSyncing() async throws {
         let bridge = FakeBridge([Self.harbor, Self.keystone])
-        let (app, service) = try await TestServer.app(seedDemo: false, plaid: bridge)
+        let (app, service) = try await TestServer.app(seedDemo: false, plaid: bridge, surface: .dashboard)
         try await app.test(.router) { client in
             let id = try await Self.link(client).linkID
             let before = try #require(try await Self.stored(service).simplefin?.connections)
             try await Task.sleep(for: .milliseconds(1100)) // a new start-date second, so the fresh rows are new
             bridge.conAuth = ["CON-B"]
-            try await client.execute(uri: "/v1/links/\(id)/sync", method: .post, headers: TestServer.auth) { response in
+            try await client.execute(uri: "/v1/links/\(id)/sync", method: .post, headers: TestServer.dash) { response in
                 let result = try Self.decode(LinkSyncResult.self, response)
                 #expect(result.ok && result.report?.rowsAdded == 1 && result.errorKind == nil)
             }
@@ -220,7 +220,7 @@ struct SimpleFINSyncTests {
             #expect(after["CON-B"]?.firstFailedAt != nil && after["CON-B"]?.errorCode == "con.auth" && after["CON-B"]?.lastMessage == "Sign in again")
             #expect(link.summary.banks?.map(\.errorKind) == [nil, .needsSignIn])
             // The broken bank's accounts aren't stamped as synced; the other's are.
-            try await client.execute(uri: "/v1/overview", method: .get, headers: TestServer.auth) { response in
+            try await client.execute(uri: "/v1/overview", method: .get, headers: TestServer.dash) { response in
                 let accounts = try Self.decode(Overview.self, response).accounts
                 let a = try #require(accounts.first { $0.id == "simplefin:ACT-A1" }), b = try #require(accounts.first { $0.id == "simplefin:ACT-B1" })
                 #expect(a.lastSyncedAt! > b.lastSyncedAt!)
@@ -236,13 +236,13 @@ struct SimpleFINSyncTests {
     @Test("Settings → Accounts lists a row per bank; the one needing a sign-in sends the phone to the Bridge, by name")
     func institutionsSplitPerConnection() async throws {
         let bridge = FakeBridge([Self.harbor, Self.keystone])
-        let (app, service) = try await TestServer.app(seedDemo: false, plaid: bridge)
+        let (app, service) = try await TestServer.app(seedDemo: false, plaid: bridge, surface: .dashboard)
         try await app.test(.router) { client in
             let id = try await Self.link(client).linkID
             bridge.conAuth = ["CON-B"]
             _ = try await service.sync.sync(linkID: id, trigger: .personLink)
             let keystoneRow = "\(id)~\(StableHash.short("CON-B"))"
-            try await client.execute(uri: "/v1/status", method: .get, headers: TestServer.auth) { response in
+            try await client.execute(uri: "/v1/status", method: .get, headers: TestServer.dash) { response in
                 let rows = try Self.decode(ServerStatus.self, response).institutions
                 #expect(rows.map(\.institution) == ["Harbor", "Keystone"])
                 let harbor = rows[0], keystone = rows[1]
@@ -256,7 +256,7 @@ struct SimpleFINSyncTests {
                 #expect(!rows.contains { $0.id.contains("CON-") })
             }
             // Home names the bank, not the Bridge.
-            try await client.execute(uri: "/v1/overview", method: .get, headers: TestServer.auth) { response in
+            try await client.execute(uri: "/v1/overview", method: .get, headers: TestServer.dash) { response in
                 let attention = try Self.decode(Overview.self, response).attention ?? []
                 #expect(attention.contains { $0.id == "reauth-\(keystoneRow)" && $0.title.contains("Keystone") })
                 #expect(!attention.contains { $0.id.hasPrefix("reauth-") && $0.title.contains("Harbor") })
@@ -267,32 +267,32 @@ struct SimpleFINSyncTests {
     @Test("An old app's Try again on a bank's row (a composite id) syncs the link: 200")
     func oldAppCompositeIDTryAgain() async throws {
         let bridge = FakeBridge([Self.harbor, Self.keystone])
-        let (app, _) = try await TestServer.app(seedDemo: false, plaid: bridge)
+        let (app, _) = try await TestServer.app(seedDemo: false, plaid: bridge, surface: .dashboard)
         try await app.test(.router) { client in
             let id = try await Self.link(client).linkID
             let row = "\(id)~\(StableHash.short("CON-B"))"
-            try await client.execute(uri: "/v1/links/\(row)/sync", method: .post, headers: TestServer.auth) { response in
+            try await client.execute(uri: "/v1/links/\(row)/sync", method: .post, headers: TestServer.dash) { response in
                 #expect(response.status == .ok)
                 let result = try Self.decode(LinkSyncResult.self, response)
                 #expect(result.ok && result.linkID == id)
             }
             // Percent-encoded, as an app that escapes the path sends it.
-            try await client.execute(uri: "/v1/links/\(id)%7E\(StableHash.short("CON-B"))/sync", method: .post, headers: TestServer.auth) { #expect($0.status == .ok) }
-            try await client.execute(uri: "/v1/links/simplefin-nope~abc/sync", method: .post, headers: TestServer.auth) { #expect($0.status == .notFound) }
+            try await client.execute(uri: "/v1/links/\(id)%7E\(StableHash.short("CON-B"))/sync", method: .post, headers: TestServer.dash) { #expect($0.status == .ok) }
+            try await client.execute(uri: "/v1/links/simplefin-nope~abc/sync", method: .post, headers: TestServer.dash) { #expect($0.status == .notFound) }
         }
     }
 
     @Test("A new setup token keeps the link id; when the accounts come back under new ids it says so")
     func replaceSetupTokenKeepsLinkID() async throws {
         let bridge = FakeBridge([Self.harbor])
-        let (app, service) = try await TestServer.app(seedDemo: false, plaid: bridge)
+        let (app, service) = try await TestServer.app(seedDemo: false, plaid: bridge, surface: .dashboard)
         try await app.test(.router) { client in
             let id = try await Self.link(client).linkID
             bridge.status = 403
             _ = try await service.sync.sync(linkID: id, trigger: .personLink)
             let sealedBefore = try await Self.stored(service).sealedToken
             bridge.status = 200
-            try await client.execute(uri: "/v1/links/\(id)/token", method: .put, headers: TestServer.auth,
+            try await client.execute(uri: "/v1/links/\(id)/token", method: .put, headers: TestServer.dash,
                                      body: TestServer.body(#"{"setupToken": "\#(FakeBridge.setupToken)"}"#)) { response in
                 #expect(response.status == .ok)
                 let body = try #require(try JSONSerialization.jsonObject(with: Data(response.body.readableBytesView)) as? [String: Any])
@@ -304,7 +304,7 @@ struct SimpleFINSyncTests {
 
             // SimpleFIN hands out new ids with the new token: the person is told, and the history walk starts over.
             bridge.banks = [FakeBridge.Bank(connID: "CON-A2", name: "Harbor", accounts: ["ACT-A9"])]
-            try await client.execute(uri: "/v1/links/\(id)/token", method: .put, headers: TestServer.auth,
+            try await client.execute(uri: "/v1/links/\(id)/token", method: .put, headers: TestServer.dash,
                                      body: TestServer.body(#"{"setupToken": "\#(FakeBridge.setupToken)"}"#)) { response in
                 let body = try #require(try JSONSerialization.jsonObject(with: Data(response.body.readableBytesView)) as? [String: Any])
                 #expect(body["note"] as? String == "These accounts came in as new ones; your old ones keep their history.")
@@ -315,11 +315,11 @@ struct SimpleFINSyncTests {
             // Only SimpleFIN links take one, and only as a setup token.
             try await service.store.upsertLink(StoredLink(id: "plaid-item-1", provider: .plaid, institution: "Chase", externalID: "item-1", sealedToken: "x",
                                                           cursor: nil, status: .connected, lastSync: nil, lastError: nil, createdAt: Date()))
-            try await client.execute(uri: "/v1/links/plaid-item-1/token", method: .put, headers: TestServer.auth,
+            try await client.execute(uri: "/v1/links/plaid-item-1/token", method: .put, headers: TestServer.dash,
                                      body: TestServer.body(#"{"setupToken": "\#(FakeBridge.setupToken)"}"#)) { #expect($0.status == .unprocessableContent) }
-            try await client.execute(uri: "/v1/links/\(id)/token", method: .put, headers: TestServer.auth,
+            try await client.execute(uri: "/v1/links/\(id)/token", method: .put, headers: TestServer.dash,
                                      body: TestServer.body(#"{"accessToken": "t"}"#)) { #expect($0.status == .badRequest) }
-            try await client.execute(uri: "/v1/links/\(id)/token", method: .put, headers: TestServer.auth,
+            try await client.execute(uri: "/v1/links/\(id)/token", method: .put, headers: TestServer.dash,
                                      body: TestServer.body(#"{"setupToken": "not a token!"}"#)) { response in
                 #expect(response.status == .unprocessableContent)
                 #expect(String(buffer: response.body).contains("isn't a SimpleFIN setup token"))
@@ -329,7 +329,7 @@ struct SimpleFINSyncTests {
 
     @Test("Each request logs its count, never the access URL; the bridge's extra keys are logged by name once a day")
     func logsRequestCount() async throws {
-        let (_, service) = try await TestServer.app(seedDemo: false)
+        let (_, service) = try await TestServer.app(seedDemo: false, surface: .dashboard)
         let log = SimpleFINCapturedLog()
         var link = StoredLink(id: "simplefin-log", provider: .simplefin, institution: "SimpleFIN Bridge", externalID: nil, sealedToken: "",
                               cursor: nil, status: .connected, lastSync: nil, lastError: nil, createdAt: Date())
@@ -362,14 +362,14 @@ struct SimpleFINSyncTests {
     @Test("A link stored before 0.6.0 decodes, lists as one row, and starts its history walk on the next pull")
     func oldLinkUpgrades() async throws {
         let bridge = FakeBridge([Self.harbor])
-        let (app, service) = try await TestServer.app(seedDemo: false, plaid: bridge)
+        let (app, service) = try await TestServer.app(seedDemo: false, plaid: bridge, surface: .dashboard)
         let sealed = try #require(try service.sealer?.seal("https://user:pass@bridge.example/simplefin"))
         try await service.store.upsertLink(StoredLink(id: "simplefin-old", provider: .simplefin, institution: "SimpleFIN Bridge", externalID: nil,
                                                       sealedToken: sealed, cursor: nil, status: .connected, lastSync: Date().addingTimeInterval(-86_400),
                                                       lastError: nil, createdAt: Date().addingTimeInterval(-90 * 86_400)))
         await service.sync.publishInstitutions()
         try await app.test(.router) { client in
-            try await client.execute(uri: "/v1/status", method: .get, headers: TestServer.auth) { response in
+            try await client.execute(uri: "/v1/status", method: .get, headers: TestServer.dash) { response in
                 let rows = try Self.decode(ServerStatus.self, response).institutions
                 #expect(rows.map(\.id) == ["simplefin-old"])
             }

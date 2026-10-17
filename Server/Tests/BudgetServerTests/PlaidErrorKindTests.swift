@@ -300,12 +300,12 @@ struct PlaidErrorKindTests {
             "/transactions/sync": [PlaidScript.page("c1", PlaidScript.row), PlaidScript.page("c2"), Self.plaidError("INSTITUTION_DOWN", type: "INSTITUTION_ERROR")],
             "/accounts/get": [PlaidScript.balances], "/accounts/balance/get": [PlaidScript.balances],
         ])
-        let (app, service) = try await Self.service(plaid)
+        let (app, service) = try await Self.service(plaid, surface: .dashboard)
         #expect(try await service.sync.sync(linkID: Self.id).ok)   // rows: recorded
         #expect(try await service.sync.sync(linkID: Self.id).ok)   // nothing new: not recorded
         #expect(try await service.sync.sync(linkID: Self.id).ok == false)  // failed: recorded
         try await app.test(.router) { client in
-            try await client.execute(uri: "/v1/imports", method: .get, headers: TestServer.auth) { response in
+            try await client.execute(uri: "/v1/imports", method: .get, headers: TestServer.dash) { response in
                 #expect(response.status == .ok)
                 let records = try RemoteBudgetAPI.decoder.decode([ImportRecord].self, from: Data(response.body.readableBytesView))
                 #expect(records.count == 2)
