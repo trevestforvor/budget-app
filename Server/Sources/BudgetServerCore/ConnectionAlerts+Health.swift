@@ -50,6 +50,7 @@ extension ConnectionAlerts {
         }
         var style = Date.FormatStyle.dateTime.month(.abbreviated).day()
         style.timeZone = timeZone
+        style.locale = Locale(identifier: "en_US") // "Sep 21" whatever the server's LANG (C.UTF-8 gives "21 Sep")
         return order.map { key in
             let group = groups[key]!
             let (first, since) = group[0]

@@ -227,6 +227,7 @@ enum SimpleFINSync {
     static func time(_ date: Date, _ timeZone: TimeZone) -> String {
         var style = Date.FormatStyle(date: .omitted, time: .shortened)
         style.timeZone = timeZone
+        style.locale = Locale(identifier: "en_US") // "1:54 PM" whatever the server's LANG
         return date.formatted(style)
     }
 }

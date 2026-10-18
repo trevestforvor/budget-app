@@ -1,6 +1,9 @@
 import BudgetKit
 @testable import BudgetServerCore
 import Foundation
+#if canImport(FoundationNetworking)
+import FoundationNetworking
+#endif
 import Hummingbird
 import HummingbirdTesting
 import HTTPTypes
