@@ -46,3 +46,7 @@ Launch arguments for screenshots and UI tests: `-tab spending|ask|plan|activity`
 Working end to end for one household: the iPhone app (Home, Spending, Ask, Plan, Activity, Settings), the server (ledger in Postgres, scheduled sync for Plaid and SimpleFIN links, CSV/OFX import with undo, categorizing by rules, merchant memory and an optional decision model), the web dashboard (linking banks, imports, review, categories and rules, settings), an assistant that answers from ledger tools and proposes changes you apply, and an optional morning push summary. Every AI piece is optional: with no model configured, Ask gives built-in answers and uncertain transactions wait for you.
 
 Tests: `swift test` in `Packages/BudgetCore` and in `Server` (the Postgres suite runs when `POSTGRES_TEST_HOST` is set), and the UI tests in the `Budget` scheme. The live UI tests skip unless their environment variables are set.
+
+## License
+
+Apache License 2.0: see [LICENSE](LICENSE).
