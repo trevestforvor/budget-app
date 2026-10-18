@@ -38,7 +38,8 @@ struct AccountsView: View {
                 }
             case let .loaded(status) where status.institutions.isEmpty && accounts.isEmpty:
                 DSStateView(systemImage: "building.columns", title: "No accounts yet",
-                            message: "Link a bank or import a statement on your Budget dashboard, and your accounts show up here.",
+                            message: "Link a bank or import a statement on your Budget dashboard, and your accounts show up here."
+                                + (dashboardURL(status) == nil ? " " + DashboardDirections.text : ""),
                             actionTitle: dashboardURL(status) == nil ? nil : "Open dashboard") { openDashboard(status) }
                     .frame(maxHeight: .infinity)
             case let .loaded(status):
@@ -196,8 +197,10 @@ struct AccountsView: View {
     }
 
     /// The API to sign in to banks again through, when the server has the routes; nil before 0.6.0, in the demo, and in
-    /// a build without Associated Domains (`BUDGET_API_HOST`), where a bank's own app couldn't hand the phone back.
+    /// a build without Associated Domains (`BUDGET_API_HOST`, never on a free team), where a bank's own app couldn't hand
+    /// the phone back.
     private func linkRepairAPI() async -> (any LinkRepairAPI)? {
+        guard !Bundle.main.isFreeTeamBuild else { return nil }
         #if targetEnvironment(simulator)
         if ReconnectStub.isOn { return ReconnectStub.shared }
         #endif
@@ -280,9 +283,11 @@ private struct AddAccountSheet: View {
                         }
                         .buttonStyle(.ds(.primary, fullWidth: true))
                     } else {
-                        Text("Open the dashboard on your server to get there.")
+                        Text(DashboardDirections.text)
                             .dsFont(.caption)
                             .foregroundStyle(Color.ds.inkTertiary)
+                            .textSelection(.enabled)
+                            .accessibilityIdentifier("addAccountDashboardDirections")
                     }
                 }
                 .padding(DSSpace.gutter)

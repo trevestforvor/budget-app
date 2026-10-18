@@ -120,12 +120,21 @@ func addDashboardRoutes(_ router: Router<BasicRequestContext>, _ service: Budget
         return try HTTP.json(DashboardReviewGroups.build(queue: try await service.api.reviewQueue(), categories: state.categories))
     }
 
-    /// Plaid's setup — what's configured and where from, never a secret. `suggestedRedirectURI`
-    /// is this dashboard's own URL: registered with Plaid, it lets OAuth banks (Chase, Schwab) finish here.
+    /// Plaid's setup — what's configured and where from, never a secret.
+    /// - `suggestedRedirectURI`: this dashboard's own address, only when it was reached over https at a real name (Olares,
+    ///   a tunnel). Registered with Plaid, OAuth banks (Chase, Schwab) can come back here. Nil on a computer install's
+    ///   plain http dashboard, where desktop Link opens those banks in a pop-up with no redirect (`PlaidRedirect`).
+    /// - `phoneReturnURI`: the address phone reconnect sends banks back to (`<API address>/plaid/oauth-return`, or
+    ///   PLAID_MOBILE_REDIRECT_URI), for the person to add to Plaid's Allowed redirect URIs; nil when phone reconnect
+    ///   can't run here.
     router.get("/dash/providers") { request, _ in
-        struct Body: Encodable { var providers: ProviderSummary; var suggestedRedirectURI: String? }
-        let host = request.headers[HTTPField.Name("X-Forwarded-Host")!] ?? request.head.authority
-        return try HTTP.json(Body(providers: await service.providers.summary(), suggestedRedirectURI: host.map { "https://\($0)/" }))
+        struct Body: Encodable { var providers: ProviderSummary; var suggestedRedirectURI: String?; var phoneReturnURI: String? }
+        let suggestion = PlaidRedirect.suggestion(forwardedProto: request.headers[HTTPField.Name("X-Forwarded-Proto")!],
+                                                  forwardedHost: request.headers[HTTPField.Name("X-Forwarded-Host")!], host: request.head.authority)
+        let summary = await service.providers.summary()
+        let sandbox = summary.plaid.environment != "production"
+        return try HTTP.json(Body(providers: summary, suggestedRedirectURI: suggestion,
+                                  phoneReturnURI: await service.settings.plaidMobileRedirectURI(sandbox: sandbox)))
     }
 
     router.put("/dash/providers/plaid") { request, _ in

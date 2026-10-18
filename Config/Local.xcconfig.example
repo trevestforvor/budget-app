@@ -1,10 +1,16 @@
-// Copy to Local.xcconfig (ignored by git) and fill in.
+// Copy to Local.xcconfig (ignored by git) and fill in. ./setup.sh app writes it for you.
 
-// Your team ID: developer.apple.com → Account → Membership details.
+// Your team ID. A paid team: developer.apple.com → Account → Membership details. A free Personal Team has no such
+// page: sign in under Xcode → Settings → Accounts, and ./setup.sh app reads the ID from there.
 DEVELOPMENT_TEAM = ABCDE12345
 // A reverse-DNS prefix you own. The app is <prefix>.budget, and the server's APNs bundle ID (for the morning summary) must match it.
 BUDGET_BUNDLE_PREFIX = com.yourname
-// Optional: the host the phone reaches your server's API on, without https:// (the server's BUDGET_PUBLIC_URL host).
-// It lets Plaid's sign-in come back to the app from a bank's own app; the server serves the matching
-// apple-app-site-association. Needs Associated Domains on your App ID (automatic signing adds it).
+// YES when DEVELOPMENT_TEAM is a free Personal Team. Free teams can't sign push or Associated Domains, so the app is
+// built without them: no morning summary, no pace alerts, no signing in to a bank again from the phone (do that on
+// the dashboard), and the app stops opening after 7 days until you install it again. Leave it out for a paid team.
+// BUDGET_FREE_TEAM = YES
+// Optional, paid teams only: the host the phone reaches your server's API on, without https:// (the host of the
+// server's BUDGET_PUBLIC_URL). It lets Plaid's sign-in come back to the app from a bank's own app, so the phone can
+// sign in to a bank again. The server serves the matching apple-app-site-association once BUDGET_IOS_APP_ID is set.
+// Automatic signing adds Associated Domains to your App ID. Not for a Tailscale (ts.net) address.
 // BUDGET_API_HOST = budget-api.example.com

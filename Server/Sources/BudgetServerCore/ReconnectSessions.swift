@@ -160,7 +160,9 @@ public actor ReconnectSessions {
         }
         guard let url = created.hostedLinkURL, !url.isEmpty else {
             logger.error("reconnect for \(link.institution): Plaid returned no Hosted Link URL (request_id \(created.requestID ?? "none"))")
-            throw ReconnectError(status: 422, message: "Plaid didn't give a Hosted Link page, so Hosted Link may not be enabled for this Plaid account. Ask Plaid to turn it on, or reconnect \(link.institution) on the Budget dashboard.",
+            // Hosted Link has no switch at Plaid: a request with `hosted_link` always gets a URL back
+            // (https://plaid.com/docs/link/hosted-link/). Its absence is Plaid's to explain, by the request_id logged.
+            throw ReconnectError(status: 422, message: "Plaid didn't send back a sign-in page for \(link.institution). Hosted Link needs nothing turned on at Plaid, so this is Plaid's side; the server log has the request id to give Plaid support. Until then, reconnect \(link.institution) on the Budget dashboard.",
                                  kind: .providerSetup)
         }
 
@@ -199,7 +201,7 @@ public actor ReconnectSessions {
     }
 
     /// Plaid's refusal of the link token as the phone should hear it. A setup problem (a redirect not on Plaid's allowed
-    /// list, Hosted Link not enabled, the server's keys) names the fix and the redirect it sent. It branches on Plaid's
+    /// list, the server's keys) names the fix and the redirect it sent. It branches on Plaid's
     /// `error_type` and `error_code`, never the message.
     private func refusal(_ error: any Error, link: StoredLink, redirect: String?) -> ReconnectError {
         let plaid = PlaidErrors.plaidError(error)
@@ -210,9 +212,10 @@ public actor ReconnectSessions {
         let kind = PlaidErrors.kind(type: plaid.errorType, code: plaid.errorCode)
         let request = ["INVALID_REQUEST", "INVALID_INPUT", "INVALID_CONFIGURATION"].contains(plaid.errorType ?? "")
         if kind == .providerSetup || request {
-            let fix = redirect.map { "Check that \($0) is on Plaid's allowed redirect URIs (Plaid Dashboard → Developers → API) and that " } ?? "Check that "
+            let fix = redirect.map { "Check that \($0) is on Plaid's Allowed redirect URIs at \(PlaidRedirect.plaidPage), and that the server's Plaid keys are for this environment. " }
+                ?? "Check that the server's Plaid keys are for this environment. "
             return ReconnectError(status: 422, message: "Plaid refused to start signing in again (\(plaid.errorCode ?? plaid.errorType ?? "error \(plaid.status)")). "
-                                  + fix + "Hosted Link is enabled for your Plaid account. Until then, reconnect \(link.institution) on the Budget dashboard.",
+                                  + fix + "Phone sign-in uses Plaid's Hosted Link, which needs nothing turned on at Plaid. Until then, reconnect \(link.institution) on the Budget dashboard.",
                                   kind: .providerSetup)
         }
         switch kind {

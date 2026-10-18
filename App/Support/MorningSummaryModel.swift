@@ -49,8 +49,11 @@ final class MorningSummaryModel {
 
     private init() {}
 
-    /// Only with a server of your own: the demo has nothing to send from.
-    var available: Bool { app.map { !$0.isDemo && $0.api is any MorningSummaryAPI } ?? false }
+    /// Only with a server of your own (the demo has nothing to send from), in a build that can get pushes.
+    var available: Bool { !freeTeamBuild && (app.map { !$0.isDemo && $0.api is any MorningSummaryAPI } ?? false) }
+    /// Built for a free Personal Team, which can't sign push: nothing the server sends would arrive.
+    var freeTeamBuild: Bool { Bundle.main.isFreeTeamBuild }
+    static let freeTeamNote = "This copy of Budget was built with a free Apple team, which can't get notifications. Build it with a paid team for the morning summary and pace alerts."
     private var api: (any MorningSummaryAPI)? { app?.api as? any MorningSummaryAPI }
 
     // MARK: Turning it on and off

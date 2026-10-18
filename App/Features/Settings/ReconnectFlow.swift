@@ -31,7 +31,7 @@ struct LinkRepairControls: View {
         if !elsewhere.isEmpty {
             DSNoticeCard(elsewhere.count == 1 ? "\(elsewhere[0].institution) needs you to sign in again"
                                               : "\(elsewhere.count) connections need you to sign in again",
-                         message: InstitutionLink.repairElsewhereMessage(elsewhere),
+                         message: onDashboard(InstitutionLink.repairElsewhereMessage(elsewhere)),
                          actionTitle: dashboardURL == nil ? nil : "Open dashboard") { if let dashboardURL { openURL(dashboardURL) } }
                 .settingsCardRow()
         }
@@ -43,7 +43,7 @@ struct LinkRepairControls: View {
                              systemImage: "clock.badge.exclamationmark", tint: Color.ds.amber, actionTitle: "Renew access") { repair(link) }
                     .settingsCardRow()
             } else {
-                DSNoticeCard("\(link.institution) access \(ends)", message: "Banks ask you to renew access now and then. Reconnect it on your Budget dashboard before then.",
+                DSNoticeCard("\(link.institution) access \(ends)", message: onDashboard("Banks ask you to renew access now and then. Reconnect it on your Budget dashboard before then."),
                              systemImage: "clock.badge.exclamationmark", tint: Color.ds.amber,
                              actionTitle: dashboardURL == nil ? nil : "Open dashboard") { if let dashboardURL { openURL(dashboardURL) } }
                     .settingsCardRow()
@@ -52,6 +52,12 @@ struct LinkRepairControls: View {
     }
 
     private func phoneRepairs(_ link: InstitutionLink) -> Bool { canRepair && link.reconnect == .phone }
+
+    /// A notice that sends the person to the dashboard, with where to find it when the server hasn't said and there's
+    /// no "Open dashboard" to tap.
+    private func onDashboard(_ message: String) -> String {
+        dashboardURL == nil ? message + " " + DashboardDirections.text : message
+    }
 
     private var dashboardURL: URL? { status.dashboardURL.flatMap(URL.init(string:)) }
 }
@@ -178,6 +184,14 @@ struct ReconnectSheet: View {
         case .failed(_, setup: true):
             if let dashboardURL {
                 Button("Open dashboard") { openURL(dashboardURL); dismiss() }.buttonStyle(.ds(.primary, fullWidth: true))
+            } else {
+                Text(DashboardDirections.text)
+                    .dsFont(.callout)
+                    .foregroundStyle(Color.ds.inkSecondary)
+                    .fixedSize(horizontal: false, vertical: true)
+                    .textSelection(.enabled)
+                    .accessibilityIdentifier("reconnectDashboardDirections")
+                Button("OK") { dismiss() }.buttonStyle(.ds(.primary, fullWidth: true))
             }
         case .starting, .signingIn, .checking:
             EmptyView()
@@ -425,11 +439,29 @@ enum BrowserEnd: Equatable {
 extension Bundle {
     /// The API host the app was built with Associated Domains for (`BUDGET_API_HOST`), or nil when it was built
     /// without: then a bank's own app can't hand the phone back to Budget, so reconnecting stays on the dashboard.
+    /// Nil in a free-team build too, which can't sign Associated Domains even when a host is set.
     var appLinksHost: String? {
-        guard let host = object(forInfoDictionaryKey: "BudgetAPIHost") as? String,
+        guard !isFreeTeamBuild, let host = object(forInfoDictionaryKey: "BudgetAPIHost") as? String,
               !host.isEmpty, !host.hasPrefix("$(") else { return nil }
         return host
     }
+
+    /// Built for a free Personal Team (`BUDGET_FREE_TEAM = YES`, App/BudgetFree.entitlements): no push and no
+    /// Associated Domains, so the morning summary, pace alerts and reconnecting from the phone can't work.
+    /// `-freeTeam` stands in for it on the simulator, for UI tests.
+    var isFreeTeamBuild: Bool {
+        #if targetEnvironment(simulator)
+        if ProcessInfo.processInfo.arguments.contains("-freeTeam") { return true }
+        #endif
+        return object(forInfoDictionaryKey: "BudgetFreeTeam") as? String == "YES"
+    }
+}
+
+/// Where the dashboard is when the server hasn't said (`BUDGET_DASHBOARD_URL` unset, as on a Mac or Docker install):
+/// on the computer that runs the server, which the phone can't open.
+enum DashboardDirections {
+    static let localAddress = "http://budget.localhost:8081"
+    static let text = "Open the dashboard on the computer that runs your server, at \(localAddress)."
 }
 
 #if targetEnvironment(simulator)

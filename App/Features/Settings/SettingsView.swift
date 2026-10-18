@@ -177,9 +177,9 @@ struct SettingsView: View {
     /// The morning summary, with a server of your own, and pace alerts.
     @ViewBuilder
     private var notificationsSection: some View {
-        // The demo has nothing to send from, but shows what pace alerts would say.
-        if morning.available || app.isDemo {
-            DSListSection("Notifications", footer: morning.available ? morning.problem ?? morningNote : nil) {
+        // The demo has nothing to send from, and a free-team build can't get pushes, but both show what pace alerts would say.
+        if morning.available || app.isDemo || morning.freeTeamBuild {
+            DSListSection("Notifications", footer: notificationsFooter) {
                 if morning.available { morningRows }
                 NavigationLink(value: SettingsRoute.paceAlerts) {
                     DSListRow("Pace alerts", detail: paceDetail, systemImage: "gauge.with.dots.needle.67percent", tone: .orchid)
@@ -188,6 +188,11 @@ struct SettingsView: View {
             }
             .task { await morning.refreshPermission() }
         }
+    }
+
+    private var notificationsFooter: String? {
+        if morning.available { return morning.problem ?? morningNote }
+        return morning.freeTeamBuild && !app.isDemo ? MorningSummaryModel.freeTeamNote : nil
     }
 
     @ViewBuilder

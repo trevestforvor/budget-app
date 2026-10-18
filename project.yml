@@ -20,7 +20,7 @@ targets:
     # The morning summary: APNs (aps-environment in App/Budget.entitlements; Xcode's automatic signing turns development
     # into production for TestFlight and the App Store), and a background refresh that tells the server the phone's time
     # zone after a trip. The entitlements file is chosen in settings below, not generated, so it can depend on
-    # BUDGET_API_HOST.
+    # BUDGET_API_HOST and BUDGET_FREE_TEAM.
     info:
       path: App/Info.plist
       properties:
@@ -32,6 +32,9 @@ targets:
         # The host Associated Domains were built for (Config/Budget.xcconfig), empty without one: the app offers signing in
         # to a bank again from the phone only when it's set, since a bank's own app can't hand the phone back otherwise.
         BudgetAPIHost: $(BUDGET_API_HOST)
+        # YES when built for a free Personal Team (Config/Budget.xcconfig): no push and no Associated Domains, so the app
+        # explains the morning summary and pace alerts instead of offering them, and keeps reconnecting on the dashboard.
+        BudgetFreeTeam: $(BUDGET_FREE_TEAM_FLAG)
     # Signing comes from Config/Budget.xcconfig, which reads your own team and bundle prefix from Config/Local.xcconfig.
     configFiles:
       Debug: Config/Budget.xcconfig
@@ -45,7 +48,7 @@ targets:
       base:
         PRODUCT_BUNDLE_IDENTIFIER: $(BUDGET_BUNDLE_PREFIX).budget
         PRODUCT_NAME: Budget
-        MARKETING_VERSION: "0.6.0"
+        MARKETING_VERSION: "0.6.1"
         CURRENT_PROJECT_VERSION: "1"
         GENERATE_INFOPLIST_FILE: YES
         INFOPLIST_KEY_CFBundleDisplayName: Budget
@@ -59,8 +62,10 @@ targets:
         TARGETED_DEVICE_FAMILY: "1"
         CODE_SIGN_STYLE: Automatic
         ENABLE_PREVIEWS: YES
-        # App/Budget.entitlements, or App/BudgetAppLinks.entitlements (the same plus Associated Domains, so Plaid's sign-in
-        # comes back to the app from a bank's own app) when Local.xcconfig sets BUDGET_API_HOST: Config/Budget.xcconfig picks.
+        # Config/Budget.xcconfig picks from what Local.xcconfig sets. A paid team: App/Budget.entitlements, or
+        # App/BudgetAppLinks.entitlements (the same plus Associated Domains, so Plaid's sign-in comes back to the app from
+        # a bank's own app) with BUDGET_API_HOST. A free Personal Team (BUDGET_FREE_TEAM = YES): App/BudgetFree.entitlements,
+        # which is empty, since a free team can sign neither push nor Associated Domains.
         CODE_SIGN_ENTITLEMENTS: $(BUDGET_ENTITLEMENTS)
   BudgetUITests:
     type: bundle.ui-testing

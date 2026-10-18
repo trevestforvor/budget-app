@@ -295,6 +295,8 @@ final class SettingsUITests: XCTestCase {
         snapshot("accounts-synced")
         app.buttons["Add an account"].tap()
         XCTAssertTrue(text(containing: "Add accounts on your dashboard").waitForExistence(timeout: 5))
+        XCTAssertTrue(text(containing: "http://budget.localhost:8081").exists, "with no dashboard address from the server, it says where the dashboard is")
+        XCTAssertFalse(app.buttons["Open dashboard"].exists)
         snapshot("accounts-add")
     }
 

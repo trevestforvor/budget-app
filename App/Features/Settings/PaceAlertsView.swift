@@ -108,6 +108,7 @@ struct PaceAlertsView: View {
     private var canChoose: Bool { morning.available && !tooOld && !morning.paceUnsupported && !morning.working }
 
     private var choicesFooter: String? {
+        if !morning.available, morning.freeTeamBuild, !app.isDemo { return MorningSummaryModel.freeTeamNote + " Below is what they'd say now." }
         if !morning.available { return "The demo has no server to send from. Below is what pace alerts would say now." }
         if tooOld || morning.paceUnsupported { return "Your server doesn't send pace alerts yet. Update it to 0.5.0 or later." }
         if let problem = morning.problem { return problem }

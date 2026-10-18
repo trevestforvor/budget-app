@@ -10,10 +10,15 @@ TemporaryDirectory.*
 .DS_Store
 # Your own signing and deploy target (see Config/Local.xcconfig.example and docs/SETUP.md)
 Config/Local.xcconfig
+# ./setup.sh app keeps the previous one as Local.xcconfig.bak, and edits through Local.xcconfig.XXXXXX temp files
+Config/Local.xcconfig.*
+!Config/Local.xcconfig.example
 # The owner's private notes, deploy manifests and the leak-guard denylist
 owner/
 deploy/olares/budgetapi/deploy.env
 deploy/docker/budget.env
+# env_set's temp files beside it (left only by an interrupted run; they hold the same secrets)
+deploy/docker/.env.*
 deploy/docker/Caddyfile
 deploy/docker/backups/
 .dd/

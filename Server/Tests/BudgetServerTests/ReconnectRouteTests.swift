@@ -423,13 +423,14 @@ struct ReconnectRouteTests {
         #expect(f.log.lines.contains { $0.contains("INVALID_FIELD") && $0.contains("req-42") })
     }
 
-    @Test("Plaid answers without a hosted URL → 422 providerSetup (Hosted Link not enabled)")
+    @Test("Plaid answers without a hosted URL → 422 providerSetup, naming Plaid's side (Hosted Link has no switch)")
     func noHostedURL() async throws {
         let f = try await Self.fixture(Self.provider(create: [(200, #"{"link_token": "\#(Self.linkToken)", "request_id": "req-lt"}"#)]))
         try await f.app.test(.router) { client in
             let (status, body, _) = try await Self.post(client)
             #expect(status == .unprocessableContent)
             #expect(body.contains("providerSetup"))
+            #expect(body.contains("needs nothing turned on at Plaid") && !body.contains("Ask Plaid to turn it on"))
         }
     }
 

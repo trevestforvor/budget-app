@@ -82,7 +82,9 @@ enum SimpleFINSync {
     }
 
     /// Trades a setup token for the access URL. A token the bridge won't take is the person's to fix (422), not a fault.
-    static func claim(_ setupToken: String, transport: any HTTPTransport) async throws -> URL {
+    /// The test bridge's token (`TestSimpleFIN`) is refused before anything is sent unless this is a throwaway server.
+    static func claim(_ setupToken: String, throwaway: Bool, transport: any HTTPTransport) async throws -> URL {
+        try TestSimpleFIN.refuseTestToken(setupToken, throwaway: throwaway)
         do {
             return try await SimpleFINSource.claim(setupToken: setupToken, transport: transport)
         } catch let error as SimpleFINSource.SetupError {

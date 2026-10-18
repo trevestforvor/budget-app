@@ -46,6 +46,15 @@ const noSealing = () => callout({ tone: "watch", title: "The server can't protec
   body: "It needs an encryption key before it can store bank keys or sign-ins. Add BUDGET_TOKEN_KEY to the server's install settings (budget.env on a Mac, the app's settings on an Olares), then restart it.",
   detail: "Set BUDGET_TOKEN_KEY to the output of: openssl rand -base64 32" });
 
+/// Plaid's page for Allowed redirect URIs (Developers, then API).
+const PLAID_REDIRECTS = "https://dashboard.plaid.com/developers/api";
+/// Whether an address is on this computer's own name (localhost, *.localhost, 127.x, ::1), where no bank can return.
+function localName(address) {
+  let host;
+  try { host = new URL(address).hostname.toLowerCase().replace(/^\[|\]$/g, ""); } catch { return false; }
+  return host === "localhost" || host.endsWith(".localhost") || host.startsWith("127.") || host === "::1" || host === "0.0.0.0";
+}
+
 const field = (label, input, help, wide) => h("label", { class: `field${wide ? " wide" : ""}` }, h("span", { class: "field-head" }, label), input, help ? h("span", { class: "help" }, help) : null);
 
 /// Plaid's keys. `onChange` is told whenever a value changes (Settings counts unsaved changes with it).
@@ -54,8 +63,12 @@ export function plaidForm({ onChange } = {}) {
   const client = h("input", { class: "input", ...secretAttrs, placeholder: "24 characters, 0–9 and a–f", value: p.clientID || "", "aria-describedby": "plaid-client-help" });
   const env = h("select", { class: "input" }, h("option", { value: "sandbox" }, "Sandbox (test data)"), h("option", { value: "production" }, "Production (your real banks)"));
   env.value = p.environment || "sandbox";
-  const secret = h("input", { class: "input", type: "password", ...secretAttrs, placeholder: p.origin === "dashboard" ? "Saved — leave empty to keep it" : "" });
-  const redirect = h("input", { class: "input", spellcheck: "false", autocomplete: "off", value: p.redirectURI || body.suggestedRedirectURI || "" });
+  const secret = h("input", { class: "input", type: "password", ...secretAttrs, placeholder: p.origin === "dashboard" ? "Saved. Leave empty to keep it" : "" });
+  // Only an https dashboard at a real name (Olares, a tunnel) gets a suggestion; a computer install's stays empty, and
+  // desktop Link opens banks like Chase in a pop-up without one.
+  const httpsDashboard = !!body.suggestedRedirectURI;
+  const redirect = h("input", { class: "input", spellcheck: "false", autocomplete: "off", placeholder: httpsDashboard ? "" : "Leave empty on a computer install",
+    value: p.redirectURI || body.suggestedRedirectURI || "" });
   const initial = { client: client.value, env: env.value, redirect: redirect.value };
   for (const el of [client, env, secret, redirect]) el.addEventListener("input", () => onChange && onChange());
   const el = h("div", { class: "stack" },
@@ -63,20 +76,23 @@ export function plaidForm({ onChange } = {}) {
       field("Client ID", client, "Plaid → Developers → Keys. It names this app; it isn't a password."),
       field("Environment", env),
       field("Secret for that environment", secret, null, true),
-      field("Return address for banks that sign in on their own site", redirect,
-        "Add this exact address under Allowed redirect URIs in Plaid. Chase, Schwab and other OAuth banks come back here to finish.", true)),
+      field("Return address for banks that sign in on their own site", redirect, httpsDashboard
+        ? "Add this exact address under Allowed redirect URIs in Plaid. Chase, Schwab and other banks that sign in on their own site come back here to finish."
+        : "Optional. Leave this empty on a computer install: banks like Chase open their sign-in in a pop-up. Fill it in only if this dashboard has an https address, then add it under Allowed redirect URIs in Plaid.", true)),
     h("p", { class: "help" }, "Keys: ", h("a", { href: "https://dashboard.plaid.com/developers/keys", target: "_blank", rel: "noopener" }, "https://dashboard.plaid.com/developers/keys"),
-      " · Redirect addresses: ", h("a", { href: "https://dashboard.plaid.com/developers/api", target: "_blank", rel: "noopener" }, "https://dashboard.plaid.com/developers/api")),
+      " · Allowed redirect URIs: ", h("a", { href: PLAID_REDIRECTS, target: "_blank", rel: "noopener" }, PLAID_REDIRECTS)),
     originNote(p.origin) ? h("p", { class: "help" }, originNote(p.origin)) : null);
   return {
     el,
     changes: () => [client.value.trim() !== initial.client, env.value !== initial.env, !!secret.value.trim(), redirect.value.trim() !== initial.redirect].filter(Boolean).length,
     /// A sentence saying what's wrong, or null.
     validate() {
-      const id = client.value.trim(), s = secret.value.trim();
+      const id = client.value.trim(), s = secret.value.trim(), r = redirect.value.trim();
       if (!/^[0-9a-f]{24}$/i.test(id)) return `That isn't a Plaid client ID: it's 24 characters of 0–9 and a–f, and ${id.length} are entered. A password manager may have filled it.`;
       if (s && !/^[0-9a-f]{20,64}$/i.test(s)) return `That isn't a Plaid secret: it's about 30 characters of 0–9 and a–f, and ${s.length} are entered.`;
       if (p.origin === "none" && !s) return "Add the secret for that environment too.";
+      if (r && !/^https:\/\//i.test(r)) return "Plaid only takes an https:// return address. Leave it empty unless this dashboard has an https address.";
+      if (r && localName(r)) return "That return address is this computer's own, so a bank can't come back to it. Leave the field empty: banks like Chase open their sign-in in a pop-up.";
       return null;
     },
     /// Saves, then asks Plaid for a Link token to prove the keys work. Resolves to { ok, message }.
@@ -86,7 +102,11 @@ export function plaidForm({ onChange } = {}) {
       secret.value = "";
       forget("providers");
       try { await api("/v1/links/plaid/token", { method: "POST", body: {} }); return { ok: true, message: "Saved, and Plaid accepted the keys." }; }
-      catch (error) { return { ok: false, message: "Saved, but Plaid turned the keys down.", detail: error.detail || error.message }; }
+      catch (error) {
+        // The keys are fine when Plaid only refuses the return address: the server says which address and where to add it.
+        if (/return address/.test(error.message || "")) return { ok: false, message: error.message };
+        return { ok: false, message: "Saved, but Plaid turned the keys down.", detail: error.detail || error.message };
+      }
     },
   };
 }
@@ -205,9 +225,9 @@ export async function linkPlaid({ resume = false, update = null, grant = false, 
 const COMPARE = [
   ["Cost", "Your own Plaid account. Free Trial: 10 bank logins for the life of the account (removing one doesn't free it). Paid plans bill per bank",
     "$15 a year (or $1.50 a month) to SimpleFIN, up to 25 banks"],
-  ["Setup", "Developer sign-up, keys and an identity check. Banks that sign in on their own site need an https return address; approval can take days",
+  ["Setup", "Developer sign-up, keys and an identity check. Real banks need the free Trial or a paid plan; approval can take days",
     "Sign up, add your banks on their site, paste one token"],
-  ["Card bills (statement, minimum, due date)", "Yes", "No"],
+  ["Card bills (statement, minimum, due date)", "Yes, once Card bills is on (Settings → Sync); Plaid then bills Liabilities", "No"],
   ["Merchant names and bank categories", "Yes", "Raw bank descriptions"],
   ["History", "Up to 2 years at link", "About 90 days per request; Budget walks back further where the bank allows"],
   ["Freshness", "Several times a day", "About once a day"],
@@ -278,13 +298,19 @@ function renderPane(panel, id, name, blurb, where, rerender) {
   const state = providerStates()[id];
   panel.append(h("p", { class: "t-callout muted" }, blurb));
   if (id === "simplefin") { renderSimpleFIN(panel, state, where); return; }
+  const body = cached("providers");
+  const returnAddress = body && (body.providers.plaid.redirectURI || body.suggestedRedirectURI);
   panel.append(steps(
-    ["Make a Plaid account at ", extLink("https://dashboard.plaid.com"), ". Sandbox is free with made-up banks; real banks need the free Trial (or a paid plan), with an identity check."],
-    "Enter its client ID and secret under Keys below, and add the return address shown there to Plaid's allowed redirect URIs.",
+    ["Make a Plaid account at ", extLink("https://dashboard.plaid.com"), ". Sandbox is free with made-up banks. Real banks need the free Trial (",
+      extLink("https://dashboard.plaid.com/trial-plan"), ") or a paid plan, with an identity check."],
+    returnAddress
+      ? ["Enter its client ID and secret under Keys below. Then add ", h("code", {}, returnAddress), " under Allowed redirect URIs at ", extLink(PLAID_REDIRECTS), "."]
+      : "Enter its client ID and secret under Keys below. On a computer install there's no return address to add: banks like Chase sign in in a pop-up.",
     "Link a bank: Plaid's window opens here, and you sign in to the bank there."));
   const linkButton = button("Link an account", { kind: "primary", disabled: !state.ready, onclick: () => linkPlaid({ where }) });
   panel.append(h("div", { class: "actions" }, linkButton));
-  if (!cached("providers")) return;
+  if (!body) return;
+  panel.append(plaidExtras(body));
   const form = plaidForm();
   const result = h("div");
   const keys = h("details", { class: "fold", open: !state.ready && state.label !== "Needs encryption key" },
@@ -305,6 +331,22 @@ function renderPane(panel, id, name, blurb, where, rerender) {
   panel.append(keys);
 }
 
+/// The two Plaid things a fresh install misses: Card bills is off until it's turned on, and what phone reconnect needs.
+function plaidExtras(body) {
+  const cardBills = !!(store.summary && store.summary.settings.cardBills);
+  const phone = body.phoneReturnURI;
+  return h("div", { class: "stack" },
+    cardBills ? null : h("p", { class: "help" }, "Card bills (statement balance, minimum and due date) are off until you turn them on: ",
+      h("a", { href: "#/settings/sync" }, "Settings, Sync, Card bills (Plaid Liabilities)"),
+      ". Plaid bills Liabilities per bank login once it's used."),
+    h("p", { class: "help" }, ...(phone
+      ? ["Signing in to a bank again from the phone uses Plaid's Hosted Link. There's nothing to turn on at Plaid for it. Add ",
+        h("code", {}, phone), " under Allowed redirect URIs at ", extLink(PLAID_REDIRECTS), "."]
+      : ["Signing in to a bank again from the phone uses Plaid's Hosted Link. There's nothing to turn on at Plaid for it, but this server isn't ready yet: ",
+        "it needs a public https address for the phone (Settings, Phone) and, with production keys, BUDGET_IOS_APP_ID in the server's install settings. ",
+        "Until then, banks sign in again here."])));
+}
+
 // MARK: SimpleFIN
 
 /// The server's hard stop on SimpleFIN requests in a rolling 24 hours (SimpleFIN asks for no more than about 24 a day).
@@ -317,7 +359,7 @@ function renderSimpleFIN(panel, state, where) {
     steps(
       ["Sign up at ", extLink(BRIDGE), " ($15 a year, or $1.50 a month, paid to SimpleFIN)."],
       ["Add your banks there. Check that yours are covered first: ", extLink(`${BRIDGE}/search-institutions`), "."],
-      "Create a setup token there and paste it here. It works once: the server trades it for an access address and seals it."),
+      "Create a setup token there and paste it here. A setup token works only once, so paste it here and nowhere else: the server trades it for an access address and seals it. If it's refused, make a new one there."),
     h("div", { class: "secret-row" }, input, button("Link", { kind: "primary", disabled: !state.ready, onclick: (e) => busy(e.currentTarget, "Linking…", async () => {
       const token = input.value.trim();
       if (!token) throw new Error("Paste the setup token first.");

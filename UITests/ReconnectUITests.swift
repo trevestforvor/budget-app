@@ -60,4 +60,23 @@ final class ReconnectUITests: XCTestCase {
         waitForExpectations(timeout: 10)
         XCTAssertTrue(app.buttons["Renew access"].exists, "the other link still offers renewal")
     }
+
+    /// A free Personal Team build (`-freeTeam` stands in for BUDGET_FREE_TEAM) has no Associated Domains, so even a
+    /// server that could repair from the phone gets the dashboard notice, with where the dashboard is since the server
+    /// didn't say.
+    func testFreeTeamBuildReconnectsOnTheDashboard() {
+        app = XCUIApplication()
+        app.launchArguments = DemoLaunch.arguments + ["-settings", "-reconnectStub", "-freeTeam"]
+        app.launch()
+        XCTAssertTrue(app.navigationBars["Settings"].waitForExistence(timeout: 15))
+        app.descendants(matching: .any)["settingsAccounts"].firstMatch.tap()
+
+        XCTAssertTrue(text(containing: "Tidewater needs you to sign in again").waitForExistence(timeout: 10))
+        XCTAssertTrue(text(containing: "on your Budget dashboard").exists)
+        XCTAssertTrue(text(containing: "http://budget.localhost:8081").exists, "no dead button: it says where the dashboard is")
+        XCTAssertFalse(app.buttons["Sign in again"].exists, "a free-team build can't be handed back by a bank's app")
+        XCTAssertFalse(app.buttons["Renew access"].exists)
+        XCTAssertFalse(app.buttons["Open dashboard"].exists)
+        snapshot("reconnect-free-team")
+    }
 }

@@ -59,7 +59,7 @@ struct FoundationWireTests {
         #expect(String(decoding: encoded, as: UTF8.self) == #"{"requestedByPerson":true}"#)
     }
 
-    @Test("Imports read back with what Undo may do; status reads 0.6.0")
+    @Test("Imports read back with what Undo may do; status reads this server's version")
     func annotatedImports() async throws {
         let (app, service) = try await TestServer.app(seedDemo: false, surface: .dashboard)
         let report = IngestReport(batchID: "b1", source: .fileImport)
@@ -71,7 +71,7 @@ struct FoundationWireTests {
             }
             try await client.execute(uri: "/v1/status", method: .get, headers: TestServer.dash) { response in
                 let status = try RemoteBudgetAPI.decoder.decode(ServerStatus.self, from: Data(response.body.readableBytesView))
-                #expect(status.version == "0.6.0")
+                #expect(status.version == BudgetServerVersion.current)
                 #expect(ServerStatus.version(status.version, isAtLeast: ServerStatus.connectionsSince))
             }
         }

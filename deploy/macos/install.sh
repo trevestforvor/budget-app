@@ -63,12 +63,21 @@ ENV="$BUDGET_HOME/budget.env"
 if [[ ! -f $ENV ]]; then
   echo "==> writing $ENV with new secrets"
   zone=$(readlink /etc/localtime | sed 's|.*/zoneinfo/||')
-  ( umask 077
-    sed -e "s|^BUDGET_API_TOKEN=.*|BUDGET_API_TOKEN=$(openssl rand -hex 32)|" \
-        -e "s|^BUDGET_TOKEN_KEY=.*|BUDGET_TOKEN_KEY=$(openssl rand -base64 32)|" \
-        -e "s|^BUDGET_TIMEZONE=.*|BUDGET_TIMEZONE=${zone:-America/New_York}|" \
-        "$REPO/deploy/macos/budget.env.example" > "$ENV" )
-  echo "    Save BUDGET_TOKEN_KEY from it in a password manager: without it, every bank must be linked again."
+  # Each value reaches awk through its environment, never an argument list (which other users can see).
+  set_value() {  # set_value KEY VALUE
+    local tmp; tmp=$(mktemp "$BUDGET_HOME/.env.XXXXXX")
+    SET_KEY=$1 SET_VALUE=$2 awk 'BEGIN { k = ENVIRON["SET_KEY"]; v = ENVIRON["SET_VALUE"] }
+      $0 ~ "^" k "=" && !done { print k "=" v; done = 1; next } { print } END { if (!done) print k "=" v }' "$ENV" > "$tmp"
+    chmod 600 "$tmp"; mv "$tmp" "$ENV"
+  }
+  ( umask 077; cp "$REPO/deploy/macos/budget.env.example" "$ENV" )
+  chmod 600 "$ENV"
+  secret=$(openssl rand -hex 32); set_value BUDGET_API_TOKEN "$secret"
+  secret=$(openssl rand -base64 32); set_value BUDGET_TOKEN_KEY "$secret"
+  unset secret
+  set_value BUDGET_TIMEZONE "${zone:-America/New_York}"
+  echo "    Keep a copy of BUDGET_TOKEN_KEY: without it, every bank must be linked again. ./setup.sh save-key puts it in"
+  echo "    your Keychain without showing it (or --clipboard, for a password manager)."
 else
   echo "==> keeping the existing $ENV"
 fi

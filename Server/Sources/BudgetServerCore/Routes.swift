@@ -434,7 +434,7 @@ func addLinkRoutes(_ router: Router<BasicRequestContext>, _ service: BudgetServi
     // MARK: - [lane P] Plaid link routes
     if surface == .dashboard {  // P0.2: linking a bank is the dashboard's
         router.post("/v1/links/plaid/token") { request, _ in
-            guard let plaid = try await service.providers.plaid() else { throw BudgetAPIError.rejected("Plaid isn't set up yet — add its keys on the dashboard (Connect a bank → Plaid).") }
+            guard let plaid = try await service.providers.plaid() else { throw BudgetAPIError.rejected("Plaid isn't set up yet. Add its keys on the dashboard (Connect a bank → Plaid).") }
             let body = (try? await HTTP.body(PlaidTokenBody.self, request)) ?? PlaidTokenBody(linkID: nil)
             if body.grantCardBills == true, body.linkID == nil { throw BudgetAPIError.rejected("Granting card-bill access needs the link it's for.") }
             var accessToken: String?
@@ -454,15 +454,23 @@ func addLinkRoutes(_ router: Router<BasicRequestContext>, _ service: BudgetServi
             }
             // WEBHOOK-002: a new Item takes this server's webhook URL from its link token.
             let webhook = await PlaidMaintenance.webhookURL(service.settings, sandbox: plaid.environment == .sandbox)
-            let token = try await PlaidSource.linkToken(environment: plaid.environment, credentials: .init(clientID: plaid.clientID, secret: plaid.secret),
+            // OAUTH-005: a return address, when one is set, goes on every link token, update mode included. None is set on a
+            // computer install: desktop Link opens OAuth banks in a pop-up without one (`PlaidRedirect`).
+            let token: String
+            do {
+                token = try await PlaidSource.linkToken(environment: plaid.environment, credentials: .init(clientID: plaid.clientID, secret: plaid.secret),
                                                         userID: "owner", investments: true, redirectURI: plaid.redirectURI,
                                                         accessToken: accessToken, grantLiabilities: body.grantCardBills == true,
                                                         webhook: webhook, reauthorization: renewal, transport: service.providers.transport)
+            } catch {
+                if let redirect = plaid.redirectURI, PlaidRedirect.refusedReturnAddress(error) { throw PlaidRedirect.unknownAddress(redirect) }
+                throw error
+            }
             return try HTTP.json(["linkToken": token])
         }
 
         router.post("/v1/links/plaid/exchange") { request, _ in
-            guard let plaid = try await service.providers.plaid() else { throw BudgetAPIError.rejected("Plaid isn't set up yet — add its keys on the dashboard.") }
+            guard let plaid = try await service.providers.plaid() else { throw BudgetAPIError.rejected("Plaid isn't set up yet. Add its keys on the dashboard.") }
             let body = try await HTTP.body(PlaidExchangeBody.self, request)
             let institutionID = StoredLink.institutionID(body.institutionID)
             // ITEM-011: one Item per bank, checked before the exchange, so a second Item never comes to exist on this server
@@ -529,10 +537,13 @@ func addLinkRoutes(_ router: Router<BasicRequestContext>, _ service: BudgetServi
     if surface == .dashboard {  // P0.2: linking a bank is the dashboard's
         router.post("/v1/links/simplefin") { request, _ in
             let body = try await HTTP.body(SimpleFINBody.self, request)
-            let accessURL = try await SimpleFINSync.claim(body.setupToken, transport: service.providers.transport)
+            // Checked before the claim: a setup token works once, so claiming it on a server that can't seal the access
+            // address would burn it and drop the address (the replace path and Plaid check first too).
+            let sealer = try requireSealer()
+            let accessURL = try await SimpleFINSync.claim(body.setupToken, throwaway: service.config.isThrowaway, transport: service.providers.transport)
             let id = "simplefin-" + UUID().uuidString.prefix(8)
             let link = StoredLink(id: id, provider: .simplefin, institution: "SimpleFIN Bridge", externalID: nil,
-                                  sealedToken: try requireSealer().seal(accessURL.absoluteString), cursor: nil, status: .connected,
+                                  sealedToken: try sealer.seal(accessURL.absoluteString), cursor: nil, status: .connected,
                                   lastSync: nil, lastError: nil, createdAt: Date())
             try await service.store.upsertLink(link)
             return try HTTP.json(try await service.sync.sync(linkID: id, trigger: .afterLink), status: .created)

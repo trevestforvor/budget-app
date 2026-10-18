@@ -14,7 +14,8 @@ struct BudgetApp: App {
         let defaults = UserDefaults.standard
         let args = ProcessInfo.processInfo.arguments
         // `-server URL [-token T]` is the same as entering them in Settings (saved, token in the
-        // Keychain), so Settings always shows what the app is actually talking to.
+        // Keychain), so Settings always shows what the app is actually talking to. The token can also come in the
+        // launch environment as BUDGET_TOKEN (./setup.sh app passes it that way, so it never shows in a process list).
         #if targetEnvironment(simulator)
         // `-resetSettings` (simulator only): start as a first run — no saved server, token, demo choice or pay.
         if args.contains("-resetSettings") {
@@ -29,7 +30,8 @@ struct BudgetApp: App {
         if let server {
             defaults.set(server, forKey: SettingsKeys.serverURL)
             defaults.set(false, forKey: SettingsKeys.useDemo)
-            if let token = Self.value(after: "-token", in: args) { Keychain.set(token, for: SettingsKeys.apiToken) }
+            let envToken = ProcessInfo.processInfo.environment["BUDGET_TOKEN"].flatMap { $0.isEmpty ? nil : $0 }
+            if let token = Self.value(after: "-token", in: args) ?? envToken { Keychain.set(token, for: SettingsKeys.apiToken) }
         }
         let demo = AppModel.demoAvailable && server == nil
             && ((defaults.object(forKey: SettingsKeys.useDemo) as? Bool ?? true) || args.contains("-demo"))

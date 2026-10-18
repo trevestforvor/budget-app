@@ -17,10 +17,11 @@ Packages/BudgetCore/
   Tests/                     Swift Testing: ledger math, review loop, ask routing, ingest, cache, contrast
 Server/                      Budget API: Swift + Hummingbird 2 + Postgres (macOS, Linux, or an Olares box)
 Config/                      Budget.xcconfig; your signing goes in Local.xcconfig (not checked in)
-setup.sh                     one-step setup: the server (Mac, Docker or Olares), the phone's HTTPS address
-                             (Tailscale, Caddy, Cloudflare Tunnel), the app (./setup.sh check)
+setup.sh                     one-step setup: the server (Mac or Docker), the phone's HTTPS address (Tailscale,
+                             Caddy, Cloudflare Tunnel), the app and its pairing, the bank steps, secrets that never
+                             show (./setup.sh check --json for where things stand)
 deploy/macos/                install.sh: the server as a launchd service on a Mac that stays on
-deploy/olares/               deploy script for a self-hosted Olares box
+deploy/olares/               deploy script for the owner's Olares box (its chart isn't in this repo)
 project.yml                  XcodeGen spec (the .xcodeproj is generated)
 ```
 

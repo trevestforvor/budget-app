@@ -31,7 +31,8 @@ public enum BudgetServerApp {
         // Before load(): only what the Olares app sets. prepare() applies the saved models.
         let (chat, routing) = models(await settings.modelSnapshot())
 
-        let plaid = plaidTransport ?? AHCTransport.shared
+        // A throwaway server also answers the test SimpleFIN bridge's made-up host in process (`TestSimpleFIN`).
+        let plaid = TestSimpleFIN.transport(wrapping: plaidTransport ?? AHCTransport.shared, config: config)
         let providers = Providers(config: config, store: store, sealer: sealer, transport: plaid)
         let deployment = DeploymentInfo(endpoint: config.publicURL ?? "budget-api", version: BudgetServerVersion.current, sources: await providers.sources(), institutions: [],
                                         dashboardURL: config.dashboardURL)

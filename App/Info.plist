@@ -8,6 +8,8 @@
 	</array>
 	<key>BudgetAPIHost</key>
 	<string>$(BUDGET_API_HOST)</string>
+	<key>BudgetFreeTeam</key>
+	<string>$(BUDGET_FREE_TEAM_FLAG)</string>
 	<key>CFBundleDevelopmentRegion</key>
 	<string>$(DEVELOPMENT_LANGUAGE)</string>
 	<key>CFBundleExecutable</key>

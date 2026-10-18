@@ -9,9 +9,27 @@ DEVELOPMENT_TEAM =
 // The host the phone reaches your server's API on (budget-api.example.com), for Plaid's sign-in to come back to the
 // app from a bank's own app (Associated Domains). Empty leaves the entitlement out.
 BUDGET_API_HOST =
+// YES for a free Personal Team. It can't sign push or Associated Domains, so the app is built without either: no
+// morning summary, no pace alerts and no signing in to a bank again from the phone. Reinstall every 7 days.
+BUDGET_FREE_TEAM = NO
 
 #include? "Local.xcconfig"
 
-// With a host, the entitlements that add applinks:$(BUDGET_API_HOST); without one, the plain ones.
+// Local.xcconfig is read above, so the choice below keys on its values instead of letting it set the file directly.
+// A paid team: with a host, the entitlements that add applinks:$(BUDGET_API_HOST); without one, the plain ones.
 BUDGET_ENTITLEMENTS_none = App/Budget.entitlements
-BUDGET_ENTITLEMENTS = $(BUDGET_ENTITLEMENTS_$(BUDGET_API_HOST:default=none):default=App/BudgetAppLinks.entitlements)
+BUDGET_ENTITLEMENTS_PAID = $(BUDGET_ENTITLEMENTS_$(BUDGET_API_HOST:default=none):default=App/BudgetAppLinks.entitlements)
+// BUDGET_FREE_TEAM as exactly YES or NO, so a hand-written yes, 1 or true counts too. Anything else is NO (paid). The
+// app reads the same flag (Info.plist BudgetFreeTeam), so the entitlements and the app always agree.
+BUDGET_FREE_TEAM_IS_YES = YES
+BUDGET_FREE_TEAM_IS_Yes = YES
+BUDGET_FREE_TEAM_IS_yes = YES
+BUDGET_FREE_TEAM_IS_1 = YES
+BUDGET_FREE_TEAM_IS_TRUE = YES
+BUDGET_FREE_TEAM_IS_True = YES
+BUDGET_FREE_TEAM_IS_true = YES
+BUDGET_FREE_TEAM_FLAG = $(BUDGET_FREE_TEAM_IS_$(BUDGET_FREE_TEAM:default=NO):default=NO)
+// A free team: the empty ones, whatever the host.
+BUDGET_ENTITLEMENTS_FREE_YES = App/BudgetFree.entitlements
+BUDGET_ENTITLEMENTS_FREE_NO = $(BUDGET_ENTITLEMENTS_PAID)
+BUDGET_ENTITLEMENTS = $(BUDGET_ENTITLEMENTS_FREE_$(BUDGET_FREE_TEAM_FLAG))

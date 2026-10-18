@@ -19,7 +19,7 @@ extension SyncService {
         }
         guard let sealer else { throw BudgetAPIError.rejected("Set BUDGET_TOKEN_KEY on the server before linking accounts.") }
         // Claimed before the link is touched: a refused token changes nothing.
-        let accessURL = try await SimpleFINSync.claim(setupToken, transport: providers.transport)
+        let accessURL = try await SimpleFINSync.claim(setupToken, throwaway: config.isThrowaway, transport: providers.transport)
         let sealed = try sealer.seal(accessURL.absoluteString)
         let before = Set(link.simplefin?.connections.values.flatMap(\.accountIDs) ?? [])
         try await updateLink(linkID) { link in
