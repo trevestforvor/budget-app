@@ -80,6 +80,12 @@ public struct DSEyebrow: View {
                 .dsFont(.eyebrow)
                 .foregroundStyle(Color.ds.inkSecondary)
         }
+        // The eyebrow style uppercases the text, and with the iOS 26 SDK in Xcode 27 that reaches the accessibility
+        // label too, even one set on the Text (it resolves inside the same text case). Set out here, the label keeps
+        // the words as written for VoiceOver and UI tests.
+        .accessibilityElement(children: .ignore)
+        .accessibilityLabel(text)
+        .accessibilityAddTraits(.isStaticText)
     }
 }
 
