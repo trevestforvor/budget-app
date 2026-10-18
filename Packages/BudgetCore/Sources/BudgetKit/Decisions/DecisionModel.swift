@@ -4,7 +4,7 @@ import FoundationNetworking // URLSession/URLRequest on Linux
 #endif
 
 // A decision model reads a state and answers typed questions with probabilities, without
-// writing text. Shapes follow the ones measured in ~/Developer/Olares/decision-bench:
+// writing text. Shapes follow the ones measured in a separate decision-model benchmark:
 // Jev / Laya / Clef `/v1/systemone`.
 
 public enum DecisionQuestion: Hashable, Sendable {
@@ -135,7 +135,7 @@ public struct SystemOneDecisionModel: DecisionModel {
 
     public let transport: Transport
     /// Requests in flight at once. The API takes one state per call, so backfills need parallelism;
-    /// decision-bench ran Jev at 4 concurrent (~21 decisions/s). Keep it modest for rate limits.
+    /// the benchmark ran Jev at 4 concurrent (~21 decisions/s). Keep it modest for rate limits.
     public let maxConcurrent: Int
     /// Extra top-level request fields for self-hosted engines, e.g. the jevshim's
     /// `"system2": "off"` (Jev itself has no such field, so these are never sent to Jev).

@@ -24,7 +24,8 @@ public struct ServerConfig: Sendable {
     /// A second listener for the browser dashboard. On the Olares it sits behind a `private`
     /// entrance (Olares login), so it takes no bearer token. Nil = no dashboard.
     public var dashboardPort: Int?
-    /// Required on every /v1 request as `Authorization: Bearer <token>`. Unset only for local dev.
+    /// Required on every /v1 request as `Authorization: Bearer <token>`. The server won't start the API without one
+    /// (`requireAPIToken`), except a throwaway demo server on loopback (`tokenlessAPIAllowed`).
     public var apiToken: String?
     /// Browser origins allowed to make state-changing requests (the iPhone app sends no Origin).
     public var allowedOrigins: [String] = []
@@ -42,7 +43,8 @@ public struct ServerConfig: Sendable {
     public var openRouterZeroRetention = false
     public var plaid: Plaid?
     public var syncIntervalHours = 6.0
-    public var timeZone = TimeZone(identifier: "America/Los_Angeles")!
+    /// Where months begin and end. The machine's own zone unless BUDGET_TIMEZONE says otherwise.
+    public var timeZone = TimeZone.current
     /// Seed the demo ledger when the database is empty — for testing the app against a real server.
     public var seedDemo = false
     /// Whether the demo ledger may be loaded at all (BUDGET_ALLOW_DEMO). Off on a real server: the demo
@@ -146,6 +148,28 @@ public struct ServerConfig: Sendable {
         c.iosAppID = value("BUDGET_IOS_APP_ID")
         c.testWebhookJWKFile = value("BUDGET_TEST_WEBHOOK_JWK_FILE")
         return c
+    }
+
+    /// A throwaway server: in memory and allowed the demo (`BUDGET_ALLOW_DEMO=1`, no `POSTGRES_HOST`), so it can never
+    /// hold a real ledger. The test hooks exist only here.
+    public var isThrowaway: Bool { allowDemo && database == nil }
+
+    /// Whether the API may answer without a bearer token: only a throwaway server listening on loopback, where nothing
+    /// but this machine can reach it and nothing in it is real. Anywhere else a missing token refuses to start
+    /// (`requireAPIToken`) and, as a second line, gets a 401 on every non-public request (`AuthMiddleware`).
+    public var tokenlessAPIAllowed: Bool { isThrowaway && Self.isLoopback(host) }
+
+    /// Exactly the loopback names, with no guessing about what a hostname resolves to.
+    static func isLoopback(_ host: String) -> Bool { ["127.0.0.1", "localhost"].contains(host.lowercased()) }
+
+    /// Throws unless the API listener can come up safely: a token, or the loopback demo carve-out. Run before the
+    /// listener starts, so a server that would take every request never does.
+    public func requireAPIToken() throws {
+        guard apiToken?.isEmpty == false || tokenlessAPIAllowed else {
+            throw ConfigError.invalid("BUDGET_API_TOKEN is missing or empty, so the API would accept every request. Set it in budget.env "
+                                      + "(openssl rand -hex 32). Only an in-memory demo server (BUDGET_ALLOW_DEMO=1, no POSTGRES_HOST) "
+                                      + "on 127.0.0.1 runs without one.")
+        }
     }
 
     static func withoutTrailingSlash(_ url: String) -> String {

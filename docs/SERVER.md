@@ -49,7 +49,7 @@ What stays environment-only: `HOST`, `PORT`, `DASHBOARD_PORT`, `BUDGET_API_TOKEN
 | Variable | Default | |
 |---|---|---|
 | `HOST`, `PORT` | `127.0.0.1`, `8080` | The chart sets `HOST=0.0.0.0` in its pod |
-| `BUDGET_API_TOKEN` | — | Bearer token for `/v1`. The chart generates one |
+| `BUDGET_API_TOKEN` | — | Bearer token for `/v1`. **Required**: the server refuses to start without one (an in-memory demo server on `127.0.0.1` is the one exception). The chart generates one |
 | `BUDGET_ALLOWED_ORIGINS` | none | Comma-separated origins allowed to write from a browser |
 | `POSTGRES_HOST` / `PORT` / `USER` / `PASSWORD` / `DB` | —, 5432, `budget`, —, `budget` | No host = in-memory |
 | `BUDGET_TOKEN_KEY` | — | Base64, 32 bytes. Seals provider access tokens (AES-GCM). No key = linking disabled. **Losing it means relinking every account** |
@@ -68,7 +68,7 @@ What stays environment-only: `HOST`, `PORT`, `DASHBOARD_PORT`, `BUDGET_API_TOKEN
 | `BUDGET_SIMPLEFIN_DAILY_PULLS` | 4 | How many times a day the server asks SimpleFIN on its own, 1–12 (anything else stops the server at start; the cap leaves room for repair and history windows and your own syncs). The server never goes past 20 requests in 24 hours, whatever this says |
 | `BUDGET_STATEMENT_ID_MIGRATION` | migrate | `audit` only for a dry run on a restored copy: the 0.6.0 start counts what the statement-id upgrade would rename (`GET /dash/maintenance/statement-ids`) but changes nothing and keeps OFX imports off. Any other value, or none, upgrades ([Deploy](#deploy)) |
 | `BUDGET_SYNC_INTERVAL_HOURS` | 6 | 0.25 to 24 (server 0.6.0; a larger value reads as 24). An account is stale after 2 days without a good pull, so a longer gap would make accounts read stale between syncs |
-| `BUDGET_TIMEZONE` | `America/Los_Angeles` | Month boundaries |
+| `BUDGET_TIMEZONE` | the server's own zone | Month boundaries, e.g. `America/New_York` |
 | `BUDGET_ALLOW_DEMO` | off | `1`: this is a test server and may hold the demo ledger. Never set on the Olares |
 | `BUDGET_SEED_DEMO` | off | `1`/`true`: a new ledger starts as the demo — only with `BUDGET_ALLOW_DEMO` |
 | `BUDGET_PUBLIC_URL` | — | The API's public https address (never the dashboard's). Shown under "Connect your phone"; from 0.6.0 also the base of Plaid's webhook URL (`/v1/plaid/webhook`), the phone's OAuth return (`/plaid/oauth-return`) and the AASA file. Without an https one, webhooks and the phone's reconnect are off (plain http only on a Plaid sandbox test server) |
@@ -267,7 +267,7 @@ After the first 0.6.0 start with all of this in place, the daily Item check move
 
 Measured on the Olares: Qwen `/v1/decision` batched runs at **15.6 decisions/s**. Merchant memory collapses repeats: the demo's 345 rows are 36 unique descriptors (10%); real households are likely higher, maybe 20–30% (an estimate). Two years at about 200 transactions a month is about 4,800 rows, or roughly 1,000–1,500 first decisions:
 - **Qwen:** about 1–2 minutes.
-- **Jev:** about a minute at 4 concurrent, about $0.05–0.07, using decision-bench's $0.044 per 1,000.
+- **Jev:** about a minute at 4 concurrent, about $0.05–0.07, using the benchmark's $0.044 per 1,000.
 
 What the pipeline does (`Categorizer`, built):
 1. **Decide per unique normalized descriptor, not per row.** It's about 5–10× fewer calls, it sends Jev far less, and every other row inherits the answer through merchant memory.

@@ -292,7 +292,7 @@ public actor ServerSettings {
               help: "How many times a day the server asks SimpleFIN Bridge on its own, up to 12 (SimpleFIN takes about 20 requests a day, and the rest are kept for your own syncs and filling gaps). Its banks update about once a day.",
               configValue: { String(Int($0.simplefinDailyPulls)) }, builtInDefault: "4", range: 1...Double(SimpleFINBudget.maxAutomaticPerDay)),
         .init(key: "timeZone", group: "Sync", label: "Time zone", kind: .timeZone, environmentVariable: "BUDGET_TIMEZONE",
-              help: "Where months begin and end (e.g. America/Los_Angeles).", configValue: { $0.timeZone.identifier }, builtInDefault: "America/Los_Angeles"),
+              help: "Where months begin and end (e.g. America/New_York). Without one, the server's own zone.", configValue: { $0.timeZone.identifier }, builtInDefault: TimeZone.current.identifier),
         .init(key: "publicURL", group: "Phone", label: "Server URL for the phone", kind: .url, environmentVariable: "BUDGET_PUBLIC_URL",
               help: "What \"Connect your phone\" shows. Usually set at install (BUDGET_PUBLIC_URL).", configValue: { $0.publicURL }, builtInDefault: nil),
         .init(key: "dashboardURL", group: "Phone", label: "Dashboard URL for the phone", kind: .url, environmentVariable: "BUDGET_DASHBOARD_URL",

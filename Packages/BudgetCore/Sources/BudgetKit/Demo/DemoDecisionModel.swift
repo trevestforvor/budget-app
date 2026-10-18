@@ -27,7 +27,7 @@ struct DemoDecisionModel: DecisionModel {
         ("WITHDRAWAL", ["transfer": 0.62, "housing": 0.21, "shopping": 0.17]),
     ]
 
-    /// Jev's answers on the rows the local model was least sure of — mirrors decision-bench,
+    /// Jev's answers on the rows the local model was least sure of — mirrors the benchmark,
     /// where Jev led on intent-style label sets.
     static let jevTable: [(match: String, distribution: [String: Double])] = [
         ("CASA TACO", ["dining": 0.94, "groceries": 0.04, "shopping": 0.02]),

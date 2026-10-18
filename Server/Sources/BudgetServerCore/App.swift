@@ -114,8 +114,11 @@ public enum BudgetServerApp {
     }
 
     public static func run(config: ServerConfig) async throws {
+        // Before anything else: an API with no token would take every request, so it never gets a listener.
+        try config.requireAPIToken()
         var logger = Logger(label: "budget-api")
         logger.logLevel = .info
+        if config.apiToken?.isEmpty != false { logger.warning("No BUDGET_API_TOKEN: a demo server on loopback, so the API takes requests without one.") }
         let (service, postgres) = try await makeService(config: config, logger: logger)
         let router = buildRouter(service)
         var app = Application(router: router, configuration: .init(address: .hostname(config.host, port: config.port), serverName: "budget-api"),

@@ -43,9 +43,10 @@ enum TestServer {
         return c
     }
 
-    static func app(seedDemo: Bool = true, plaid: (any HTTPTransport)? = nil, surface: Surface = .api) async throws -> (some ApplicationProtocol, BudgetService) {
-        let store = MemoryStore(ledger: seedDemo ? LedgerBudgetAPI.demoState(now: Date(), calendar: config().calendar) : nil)
-        let (service, _) = try await BudgetServerApp.makeService(config: config(), store: store, logger: Logger(label: "test"), plaidTransport: plaid)
+    static func app(seedDemo: Bool = true, plaid: (any HTTPTransport)? = nil, surface: Surface = .api,
+                    config: ServerConfig = TestServer.config()) async throws -> (some ApplicationProtocol, BudgetService) {
+        let store = MemoryStore(ledger: seedDemo ? LedgerBudgetAPI.demoState(now: Date(), calendar: config.calendar) : nil)
+        let (service, _) = try await BudgetServerApp.makeService(config: config, store: store, logger: Logger(label: "test"), plaidTransport: plaid)
         try await BudgetServerApp.prepare(service)
         return (Application(router: buildRouter(service, surface: surface)), service)
     }
@@ -807,5 +808,92 @@ struct DoubleSlashGuardTests {
             }
         }
         #expect(await service.api.state.transactions.count == before)
+    }
+}
+
+/// No BUDGET_API_TOKEN is never an open API: the server refuses to start, and should one run anyway, the middleware
+/// answers 401. The one exception is a throwaway demo server (in memory, BUDGET_ALLOW_DEMO=1) on loopback.
+@Suite("The API token is required")
+struct APITokenRequiredTests {
+    @Test("A server without a token refuses to start unless it's a loopback demo server")
+    func refusesToStart() throws {
+        var config = TestServer.config()
+        config.apiToken = nil
+        // The carve-out: in memory, demo allowed, loopback.
+        #expect(config.tokenlessAPIAllowed)
+        try config.requireAPIToken()
+        config.host = "localhost"
+        try config.requireAPIToken()
+        // Any other host, a database, or a real server (no demo allowance): refused, naming the variable and the file.
+        let elsewhere: [(inout ServerConfig) -> Void] = [
+            { $0.host = "0.0.0.0" }, { $0.host = "192.168.1.20" }, { $0.allowDemo = false },
+            { $0.database = .init(host: "db", port: 5432, username: "budget", password: nil, database: "budget") },
+        ]
+        for change in elsewhere {
+            var c = config
+            change(&c)
+            #expect(!c.tokenlessAPIAllowed)
+            do {
+                try c.requireAPIToken()
+                Issue.record("started without a token: host \(c.host), demo \(c.allowDemo), database \(c.database != nil)")
+            } catch {
+                let message = String(describing: error)
+                #expect(message.contains("BUDGET_API_TOKEN") && message.contains("budget.env"))
+            }
+            // With a token it starts anywhere; a blank one counts as none (Config reads it as unset too).
+            c.apiToken = TestServer.token
+            try c.requireAPIToken()
+            c.apiToken = ""
+            #expect(throws: ServerConfig.ConfigError.self) { try c.requireAPIToken() }
+        }
+        #expect(try ServerConfig.fromEnvironment(["BUDGET_API_TOKEN": "   "]).apiToken == nil)
+        #expect(throws: ServerConfig.ConfigError.self) { try ServerConfig.fromEnvironment(["HOST": "0.0.0.0"]).requireAPIToken() }
+    }
+
+    @Test("Without a token, a real server answers 401 to everything but the public routes")
+    func deniesWithoutToken() async throws {
+        var config = TestServer.config()
+        config.apiToken = nil
+        config.allowDemo = false
+        let (app, _) = try await TestServer.app(seedDemo: false, config: config)
+        try await app.test(.router) { client in
+            try await client.execute(uri: "/v1/overview", method: .get) { response in
+                #expect(response.status == .unauthorized)
+                #expect(String(buffer: response.body).contains("BUDGET_API_TOKEN"))
+            }
+            // No token to match means no token matches.
+            try await client.execute(uri: "/v1/overview", method: .get, headers: TestServer.auth) { #expect($0.status == .unauthorized) }
+            try await client.execute(uri: "/v1/overview", method: .get, headers: [.authorization: "Bearer "]) { #expect($0.status == .unauthorized) }
+            try await client.execute(uri: "/v1/admin/reset", method: .post, headers: [.contentType: "application/json"],
+                                     body: TestServer.body(#"{"confirm":"erase my ledger"}"#)) { #expect($0.status == .unauthorized) }
+            // The public routes don't need one.
+            try await client.execute(uri: "/health", method: .get) { #expect($0.status == .ok) }
+            try await client.execute(uri: "/v1/plaid/webhook", method: .post, headers: [.contentType: "application/json"], body: TestServer.body("{}")) {
+                #expect($0.status == .badRequest)  // reached the route, which refuses a request without Plaid's JWT
+            }
+        }
+        // An empty token is the same as none.
+        config.apiToken = ""
+        let (blank, _) = try await TestServer.app(seedDemo: false, config: config)
+        try await blank.test(.router) { client in
+            try await client.execute(uri: "/v1/overview", method: .get, headers: [.authorization: "Bearer "]) { #expect($0.status == .unauthorized) }
+            try await client.execute(uri: "/v1/overview", method: .get) { #expect($0.status == .unauthorized) }
+        }
+    }
+
+    @Test("A loopback demo server is the one place the API answers without a token")
+    func loopbackDemoCarveOut() async throws {
+        var config = TestServer.config()
+        config.apiToken = nil
+        let (app, _) = try await TestServer.app(config: config)
+        try await app.test(.router) { client in
+            try await client.execute(uri: "/v1/overview", method: .get) { #expect($0.status == .ok) }
+        }
+        // The same server bound anywhere else is closed again.
+        config.host = "0.0.0.0"
+        let (exposed, _) = try await TestServer.app(config: config)
+        try await exposed.test(.router) { client in
+            try await client.execute(uri: "/v1/overview", method: .get) { #expect($0.status == .unauthorized) }
+        }
     }
 }

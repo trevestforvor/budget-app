@@ -12,7 +12,7 @@
 ## What it says
 
 - **Every path is accurate on this set and none filed a wrong answer at 80%.** 98% vs 100% is a single item (Petco, which direct `/v1/decision` scored health at 59%: below the threshold, so it would have gone to review).
-- **Jev is the fastest** (28.7/s at 4 concurrent; about $0.003 for this run at decision-bench's measured $0.044 per 1,000) and is calibrated like Qwen. But it barely separates ambiguous from clear descriptors (93% vs 94%). Qwen direct does separate them (87% vs 95%), which matters because those are the items review exists for.
+- **Jev is the fastest** (28.7/s at 4 concurrent; about $0.003 for this run at the benchmark's measured $0.044 per 1,000) and is calibrated like Qwen. But it barely separates ambiguous from clear descriptors (93% vs 94%). Qwen direct does separate them (87% vs 95%), which matters because those are the items review exists for.
 - **The shim's system-2 pass is what makes it different.** Below 0.8 top probability, it has the chat model write a short worked analysis ending in "Answer: X", then re-scores with that analysis in the context. The second score mostly measures agreement with its own conclusion. That helps where reasoning adds information (dates and arithmetic, the JevBench hard tier it was tuned on). For categorization the missing information is simply absent (PayPal hides the merchant), so reasoning only commits: ambiguous items go from 88% to 98%, and at 80% nothing reaches review. With `system2: off`, the shim matches direct `/v1/decision`. `DecisionModels.make(.localDecide, …)` now sends `system2: off` through the shim.
 
 ## Caveats

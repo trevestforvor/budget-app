@@ -4,7 +4,7 @@ public enum DecisionProvider: String, Hashable, Sendable, Codable, CaseIterable 
     case off
     /// The self-hosted decision server on the Olares: Cloudflare Clef, POST /v1/systemone.
     case localDecide
-    /// Laya on the Olares, /v1/systemone. Weak past ~20 options (see decision-bench).
+    /// Laya on the Olares, /v1/systemone. Weak past ~20 options (measured in the benchmark).
     case laya
     /// Jev 1.13 via OpenRouter or TypeSafe. Cloud: descriptors leave the Olares.
     case jev

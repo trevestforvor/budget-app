@@ -10,7 +10,7 @@ import Logging
 ///   `Server/Scripts/sign-test-webhook.swift`;
 /// - `POST /dash/debug/plaid/check/:linkID`: the daily Item check, run now.
 enum TestHooks {
-    static func enabled(_ config: ServerConfig) -> Bool { config.allowDemo && config.database == nil }
+    static func enabled(_ config: ServerConfig) -> Bool { config.isThrowaway }
 
     /// The JWK set's P-256 keys by `kid`, when the file is set and allowed here; nil (with a warning when it was set but
     /// isn't allowed or can't be read) otherwise.

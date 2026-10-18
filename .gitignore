@@ -10,6 +10,8 @@ TemporaryDirectory.*
 .DS_Store
 # Your own signing and deploy target (see Config/Local.xcconfig.example and docs/SETUP.md)
 Config/Local.xcconfig
+# The owner's private notes, deploy manifests and the leak-guard denylist
+owner/
 deploy/olares/budgetapi/deploy.env
 deploy/docker/budget.env
 deploy/docker/Caddyfile

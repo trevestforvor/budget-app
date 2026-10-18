@@ -141,6 +141,9 @@ struct AuthMiddleware<Context: RequestContext>: RouterMiddleware {
     let surface: Surface
     let token: String?
     let allowedOrigins: [String]
+    /// Without a token the API refuses every non-public request, unless the server is the loopback demo carve-out
+    /// (`ServerConfig.tokenlessAPIAllowed`). The start check already refuses such a server; this is the second line.
+    var tokenlessDemo = false
 
     /// Routes on the API surface that take no bearer token and no Origin check, as "METHOD /path". Plaid's webhook
     /// carries its own auth (a signed JWT the route verifies); the rest are a health probe and the phone's Universal
@@ -173,8 +176,11 @@ struct AuthMiddleware<Context: RequestContext>: RouterMiddleware {
         switch surface {
         case .api:
             if Self.isPublic(request) { return try await next(request, context) }
-            if let token {
+            if let token, !token.isEmpty {
                 guard request.headers[.authorization] == "Bearer \(token)" else { return HTTP.error(.unauthorized, "Missing or wrong API token.") }
+            } else if !tokenlessDemo {
+                // Nothing to check against is a closed door, not an open one.
+                return HTTP.error(.unauthorized, "This server has no API token: set BUDGET_API_TOKEN in budget.env and restart it.")
             }
             if isWrite, let origin = request.headers[.origin], !allowedOrigins.contains(origin) {
                 return HTTP.error(.forbidden, "Cross-origin writes aren't allowed.")
@@ -296,7 +302,8 @@ enum ItemRemoval {
 public func buildRouter(_ service: BudgetService, surface: Surface = .api) -> Router<BasicRequestContext> {
     let router = Router()
     router.add(middleware: ErrorMiddleware(logger: service.logger))
-    router.add(middleware: AuthMiddleware(surface: surface, token: service.config.apiToken, allowedOrigins: service.config.allowedOrigins))
+    router.add(middleware: AuthMiddleware(surface: surface, token: service.config.apiToken, allowedOrigins: service.config.allowedOrigins,
+                                          tokenlessDemo: service.config.tokenlessAPIAllowed))
     if surface == .dashboard {
         addDashboardRoutes(router, service)
         TestHooks.addRoutes(router, service)

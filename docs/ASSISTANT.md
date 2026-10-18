@@ -60,7 +60,7 @@ Every question is kept in chat history (`ChatSessionStore`: Postgres on the serv
 
 A decision model reads a state and answers typed questions with probabilities, without writing text (`choice`, `noul` = yes/no, `score`).
 
-**One pathway: Jev's `/v1/systemone`.** The self-hosted decision server on the Olares (Cloudflare Clef, the `llamacppqwen3827bdecide` app) serves it natively, as does Laya. So Jev, Clef and Laya differ only by base URL, model and key. `DecisionModels.make(provider, endpoints)` builds the client. The server ignores the `model` field (the app sends `clef`), answers all of a request's questions jointly in one pass, takes one state per call (the client runs several in parallel), and rejects input over about 4096 tokens with a 413, which the client marks as a failed item rather than stopping the batch. The old `/v1/decision` endpoint is gone; saved addresses ending in `/v1/decision` or `/v1` are normalized to the server root.
+**One pathway: Jev's `/v1/systemone`.** The self-hosted decision server on the Olares (Cloudflare Clef, a llama.cpp app) serves it natively, as does Laya. So Jev, Clef and Laya differ only by base URL, model and key. `DecisionModels.make(provider, endpoints)` builds the client. The server ignores the `model` field (the app sends `clef`), answers all of a request's questions jointly in one pass, takes one state per call (the client runs several in parallel), and rejects input over about 4096 tokens with a 413, which the client marks as a failed item rather than stopping the batch. The old `/v1/decision` endpoint is gone; saved addresses ending in `/v1/decision` or `/v1` are normalized to the server root.
 
 Wire formats, as measured in a separate decision-model benchmark:
 
