@@ -76,6 +76,12 @@ public struct DecisionResponse: Hashable, Sendable {
     /// Set when the model rejected this one request (a 400 about its content, an answer that didn't parse) while the
     /// rest of the batch went through. An outage doesn't come back this way: `decide` throws.
     public var failure: String? = nil
+
+    public init(answers: [String: DecisionAnswer], model: String, failure: String? = nil) {
+        self.answers = answers
+        self.model = model
+        self.failure = failure
+    }
 }
 
 public protocol DecisionModel: Sendable {

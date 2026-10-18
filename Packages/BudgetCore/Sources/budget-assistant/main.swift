@@ -6,6 +6,8 @@ import Foundation
 //   swift run budget-assistant ask "What's my DoorDash budget?" [--think] [--base URL]
 //   swift run budget-assistant decide [--base URL | --shim URL] [--percent N]   (review queue through the decision model)
 //   swift run budget-assistant eval [--provider qwen|jev|<shim URL>] [--repeat N]  (labeled categorization eval)
+//   swift run budget-assistant eval --provider openrouter:<model> [--confidence logprobs|verbalized] [--providers a,b]
+//   swift run budget-assistant ask-eval --model <openrouter model> [--providers a,b] [--reasoning low] [--max-tokens N] [--repeat N]
 //   swift run budget-assistant backlog                                             (rows vs unique descriptors)
 let args = Array(CommandLine.arguments.dropFirst())
 func option(_ name: String) -> String? { args.firstIndex(of: name).flatMap { args.indices.contains($0 + 1) ? args[$0 + 1] : nil } }
@@ -77,6 +79,13 @@ case "eval":
             print("Set OPENROUTER_API_KEY or TYPESAFE_API_KEY to evaluate Jev."); exit(2)
         }
     case "qwen": model = SystemOneDecisionModel(transport: .selfHosted(baseURL: base, model: "clef", apiKey: nil))
+    case let p where p.hasPrefix("openrouter:"):
+        // A chat model on OpenRouter answering the same question (eval only; see ChatDecisionModel).
+        guard let key = ProcessInfo.processInfo.environment["OPENROUTER_API_KEY"], !key.isEmpty else { print("Set OPENROUTER_API_KEY."); exit(2) }
+        model = ChatDecisionModel(model: String(p.dropFirst("openrouter:".count)), apiKey: key,
+                                  confidence: ChatDecisionModel.Confidence(rawValue: option("--confidence") ?? "logprobs") ?? .logprobs,
+                                  providers: option("--providers")?.split(separator: ",").map(String.init) ?? [],
+                                  maxConcurrent: Int(option("--concurrency") ?? "8") ?? 8)
     default:
         guard let url = URL(string: provider) else { print("unknown provider"); exit(2) }
         // --system2 off|auto|always is the jevshim's per-request switch for its think-then-rescore pass.
@@ -86,6 +95,33 @@ case "eval":
     }
     print("Eval \(CategorizeEval.version)")
     print(CategorizeEval.markdown(try await CategorizeEval.run(model, categories: categories, repeatCount: Int(option("--repeat") ?? "1") ?? 1)))
+    if model is ChatDecisionModel {
+        let t = ChatDecisionModel.totals
+        print("Cost $\(String(format: "%.4f", t.cost)), \(t.prompt) prompt and \(t.completion) completion tokens, providers \(t.provider ?? "?"), reasoning-off fallbacks \(ChatDecisionModel.fallbacks), failed requests \(ChatDecisionModel.failures.count).")
+        for f in ChatDecisionModel.failures.prefix(5) { print("   failed: \(f.prefix(300))") }
+    }
+case "ask-eval":
+    // Ask scenarios on the demo ledger through a model on OpenRouter, with the app's own agent loop and client.
+    guard let key = ProcessInfo.processInfo.environment["OPENROUTER_API_KEY"], !key.isEmpty else { print("Set OPENROUTER_API_KEY."); exit(2) }
+    guard let modelID = option("--model") else { print("usage: ask-eval --model <id>"); exit(2) }
+    var inject: [String: JSONValue] = ["usage": .object(["include": .bool(true)])]
+    var settings = ["default routing"]
+    if let providers = option("--providers")?.split(separator: ",").map(String.init) {
+        inject["provider"] = .object(["order": .array(providers.map(JSONValue.string)), "allow_fallbacks": .bool(false)])
+        settings = ["providers \(providers.joined(separator: ">"))"]
+    }
+    if let effort = option("--reasoning") {
+        inject["reasoning"] = .object(["effort": .string(effort)])
+        settings.append("reasoning \(effort)")
+    } else {
+        settings.append("model's default reasoning")
+    }
+    EvalTransport.inject = inject
+    if let max = option("--max-tokens").flatMap(Int.init) { EvalTransport.maxTokens = max; settings.append("max_tokens \(max)") } else { settings.append("app's max_tokens") }
+    let runs = await AskEval.run(model: modelID, apiKey: key, repeats: Int(option("--repeat") ?? "1") ?? 1,
+                                 concurrency: Int(option("--concurrency") ?? "6") ?? 6, only: option("--only").map { Set($0.split(separator: ",").map(String.init)) })
+    print(AskEval.markdown(model: modelID, settings: settings.joined(separator: ", "), runs))
+    if let out = option("--jsonl") { try AskEval.jsonl(model: modelID, runs).write(toFile: out, atomically: true, encoding: .utf8) }
 case "backlog":
     // How much of a history needs a model at all: merchant memory resolves repeats of a descriptor.
     let rows = try await offline.transactions(TransactionFilter(limit: 100_000))
