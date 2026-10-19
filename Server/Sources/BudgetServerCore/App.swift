@@ -52,9 +52,10 @@ public enum BudgetServerApp {
         let reconnects = ReconnectSessions(store: store, sync: sync, providers: providers, sealer: sealer, settings: settings, logger: logger, clock: clock)
         let maintenance = PlaidMaintenance(api: api, store: store, sync: sync, providers: providers, sealer: sealer, settings: settings,
                                            logger: logger, clock: clock)
+        let access = AccessWatch(store: store, morning: morning, push: push, logger: logger, clock: clock)
         return (BudgetService(api: api, store: store, sync: sync, morning: morning, pace: pace, config: config, sealer: sealer, providers: providers,
                               settings: settings, logger: logger, alerts: alerts, reconnects: reconnects, plaidMaintenance: maintenance,
-                              statementIDs: StatementIDKeys.make(sealer: sealer, persistent: config.database != nil)), postgres)
+                              statementIDs: StatementIDKeys.make(sealer: sealer, persistent: config.database != nil), access: access), postgres)
     }
 
     /// The chat model and decision providers one snapshot of the settings describes.
@@ -140,6 +141,7 @@ public enum BudgetServerApp {
             // After prepare, so the ledger migrations have run first.
             Task { await service.alerts.runScheduler() }
             Task { await service.plaidMaintenance.runScheduler() }
+            Task { await service.access.runScheduler() }
         }
         try await app.runService()
     }

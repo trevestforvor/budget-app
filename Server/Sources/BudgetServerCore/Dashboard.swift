@@ -158,6 +158,9 @@ func addDashboardRoutes(_ router: Router<BasicRequestContext>, _ service: Budget
     /// default). Secrets report only whether they're set. The models have their own calls (`/dash/models…`).
     router.get("/dash/settings") { _, _ in try HTTP.json(await service.settings.fields()) }
 
+    /// API requests turned away for their token over the last 14 days (`AccessWatch.Log`).
+    router.get("/dash/access") { _, _ in try HTTP.json(await service.access.snapshot()) }
+
     /// `{"changes": {"key": "value" | null}}` — a value sets it here, null resets it to the environment or
     /// default, "" turns it off. Applied immediately. Jev's key can't go while the saved policy uses Jev.
     router.patch("/dash/settings") { request, _ in

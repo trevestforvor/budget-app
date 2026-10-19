@@ -822,6 +822,39 @@ function paceAlerts() {
     region];
 }
 
+/// API requests the token check turned away in the last 14 days (`GET /dash/access`). No token is what scanners send to
+/// every address on the internet; a wrong token is worth a look, and the phones get a push about it.
+function accessWatch() {
+  const region = h("div", { class: "rows" });
+  loadInto(region, () => api("/dash/access"), (log) => {
+    const days = log.days || [];
+    const none = days.reduce((n, d) => n + d.noToken, 0), wrong = days.reduce((n, d) => n + d.wrongToken, 0);
+    if (!none && !wrong) return [h("p", { class: "t-callout muted" }, "Nothing was turned away in the last 14 days.")];
+    // Each address once, its counts over the days kept, most recent first.
+    const byAddress = new Map();
+    for (const s of days.flatMap((d) => d.sources)) {
+      const a = byAddress.get(s.address) || { address: s.address, noToken: 0, wrongToken: 0, lastSeen: s.lastSeen, lastPath: s.lastPath };
+      a.noToken += s.noToken; a.wrongToken += s.wrongToken;
+      if (s.lastSeen > a.lastSeen) { a.lastSeen = s.lastSeen; a.lastPath = s.lastPath; }
+      byAddress.set(s.address, a);
+    }
+    const sources = [...byAddress.values()].sort((x, y) => (y.wrongToken > 0) - (x.wrongToken > 0) || (x.lastSeen < y.lastSeen ? 1 : -1));
+    const rows = [h("div", { class: "row" }, dot(wrong ? "act" : "ok"),
+      h("div", { class: "grow" }, h("div", { class: "title" }, wrong ? `${plural(wrong, "request")} with a wrong token` : "No wrong tokens"),
+        h("div", { class: "sub wrap" }, `${plural(none, "request")} with no token${wrong ? "" : ", which is scanners"}.${log.lastAlertAt ? ` Last push ${ago(log.lastAlertAt)}.` : ""}`)))];
+    for (const s of sources.slice(0, 10)) {
+      const counts = [s.wrongToken && `${plural(s.wrongToken, "wrong token")}`, s.noToken && `${plural(s.noToken, "with no token", "with no token")}`].filter(Boolean).join(", ");
+      rows.push(h("div", { class: "row" }, dot(s.wrongToken ? "act" : "watch"),
+        h("div", { class: "grow" }, h("div", { class: "title" }, s.address === "others" ? "Other addresses" : s.address),
+          h("div", { class: "sub wrap" }, `${counts} · last ${dateTime(s.lastSeen)} on ${s.lastPath}`))));
+    }
+    if (wrong) rows.push(h("p", { class: "t-callout muted" }, "If those weren't your own devices (an old phone, an old copy of the app), change the API token and pair the phone again."));
+    return rows;
+  });
+  return [h("p", { class: "t-callout muted" }, "Requests to the phone's API that didn't carry its token, by the address the proxy in front reported. There's no lockout: the token can't be guessed, and a lockout would let anyone shut the phone out."),
+    region];
+}
+
 function copyButton(getText, label = "Copy") {
   const b = button(label, { compact: true, onclick: async () => {
     const value = getText();
@@ -1016,6 +1049,7 @@ export default {
             h("p", { class: "t-callout muted" }, "The morning summary (yesterday's spending at 9:30 wherever the phone is) and pace alerts. Turn them on in the phone's Settings; they need an APNs key here to send."),
             ...take("apnsKey", "apnsKeyID", "apnsTeamID", "apnsTopic"), ...rest("notifications"))),
         section("pace", "Pace alerts right now", ...paceAlerts()),
+        section("access", "Turned-away requests", ...accessWatch()),
         settingControls.some((c) => !placed.has(c.key)) ? section("other", "More", ...settingControls.filter((c) => !placed.has(c.key)).map((c) => c.el)) : null,
         removeDataSection(),
         this.bar));

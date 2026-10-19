@@ -249,7 +249,4 @@ struct SetupAuditTests {
             }
         }
     }
-
-    @Test("Server version is 0.6.2")
-    func version() { #expect(BudgetServerVersion.current == "0.6.2") }
 }

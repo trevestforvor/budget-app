@@ -192,7 +192,13 @@ mode_of() { if [[ $OS == Darwin ]]; then stat -f %Lp "$1"; else stat -c %a "$1";
 api_port()  { local p=''; [[ $KIND == mac ]] && p=$(env_get PORT); echo "${p:-8080}"; }
 dash_port() { local p=''; [[ $KIND == mac ]] && p=$(env_get DASHBOARD_PORT); echo "${p:-8081}"; }
 healthy()   { curl -fsS --max-time "${2:-3}" "$1/health" 2>/dev/null | grep -q '"ok"'; }
-version_at() { curl -fsS --max-time 3 "$1/health" 2>/dev/null | sed -n 's/.*"version":"\([^"]*\)".*/\1/p'; }
+# /health tells the version only to a request with the token, which goes to curl as a file so it never shows in ps.
+version_at() {
+  local v
+  v=$(curl -fsS --max-time 3 -H @<(printf 'Authorization: Bearer %s\n' "$(env_get BUDGET_API_TOKEN)") "$1/health" 2>/dev/null |
+    sed -n 's/.*"version":"\([^"]*\)".*/\1/p')
+  echo "${v:-version hidden: no token here}"
+}
 url_host()  { local h=${1#*://}; h=${h%%/*}; echo "${h%%:*}"; }
 docker_ready() { command -v docker >/dev/null && docker compose version >/dev/null 2>&1; }
 # Compose, with the caddy profile on once ./setup.sh address caddy has written its Caddyfile.

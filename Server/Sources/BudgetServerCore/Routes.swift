@@ -29,6 +29,8 @@ public struct BudgetService: Sendable {
     public let plaidMaintenance: PlaidMaintenance
     /// How statement ids are made unreadable; nil until that's built, or without BUDGET_TOKEN_KEY.
     public let statementIDs: StatementIDs?
+    /// API requests turned away for their token, per day and address, and a push when one carried a wrong token.
+    public let access: AccessWatch
     /// Swaps the models in as settings change, never an older snapshot over a newer one (`BudgetServerApp.apply`).
     let modelApplier = ModelApplier()
 
@@ -144,6 +146,8 @@ struct AuthMiddleware<Context: RequestContext>: RouterMiddleware {
     /// Without a token the API refuses every non-public request, unless the server is the loopback demo carve-out
     /// (`ServerConfig.tokenlessAPIAllowed`). The start check already refuses such a server; this is the second line.
     var tokenlessDemo = false
+    /// Counts the requests the token check turns away (the API surface only).
+    var access: AccessWatch? = nil
 
     /// Routes on the API surface that take no bearer token and no Origin check, as "METHOD /path". Plaid's webhook
     /// carries its own auth (a signed JWT the route verifies); the rest are a health probe and the phone's Universal
@@ -169,6 +173,13 @@ struct AuthMiddleware<Context: RequestContext>: RouterMiddleware {
         !path.hasPrefix("/") || path.contains("//")
     }
 
+    /// The request carries exactly this token, compared in constant time so the answer's timing says nothing about how
+    /// much of a guess was right.
+    static func carries(_ token: String, _ headers: HTTPFields) -> Bool {
+        guard let sent = headers[.authorization] else { return false }
+        return PlaidWebhookVerifier.constantTimeEqual(sent, "Bearer \(token)")
+    }
+
     func handle(_ request: Request, context: Context, next: (Request, Context) async throws -> Response) async throws -> Response {
         let path = request.uri.path
         if Self.isMalformed(path) { return HTTP.error(.badRequest, "That path isn't well formed.") }
@@ -177,7 +188,10 @@ struct AuthMiddleware<Context: RequestContext>: RouterMiddleware {
         case .api:
             if Self.isPublic(request) { return try await next(request, context) }
             if let token, !token.isEmpty {
-                guard request.headers[.authorization] == "Bearer \(token)" else { return HTTP.error(.unauthorized, "Missing or wrong API token.") }
+                guard Self.carries(token, request.headers) else {
+                    await access?.record(AccessWatch.kind(request.headers), address: AccessWatch.clientAddress(request.headers), path: path)
+                    return HTTP.error(.unauthorized, "Missing or wrong API token.")
+                }
             } else if !tokenlessDemo {
                 // Nothing to check against is a closed door, not an open one.
                 return HTTP.error(.unauthorized, "This server has no API token: set BUDGET_API_TOKEN in budget.env and restart it.")
@@ -303,15 +317,18 @@ public func buildRouter(_ service: BudgetService, surface: Surface = .api) -> Ro
     let router = Router()
     router.add(middleware: ErrorMiddleware(logger: service.logger))
     router.add(middleware: AuthMiddleware(surface: surface, token: service.config.apiToken, allowedOrigins: service.config.allowedOrigins,
-                                          tokenlessDemo: service.config.tokenlessAPIAllowed))
+                                          tokenlessDemo: service.config.tokenlessAPIAllowed, access: surface == .api ? service.access : nil))
     if surface == .dashboard {
         addDashboardRoutes(router, service)
         TestHooks.addRoutes(router, service)
     }
     let api = service.api
 
-    router.get("/health") { _, _ in
-        try HTTP.json(["status": "ok", "version": BudgetServerVersion.current])
+    // The version only to the dashboard and to a request with the token: to anyone else it says which release to try.
+    let token = service.config.apiToken
+    router.get("/health") { request, _ in
+        let known = surface == .dashboard || token?.isEmpty != false || AuthMiddleware<BasicRequestContext>.carries(token!, request.headers)
+        return try HTTP.json(known ? ["status": "ok", "version": BudgetServerVersion.current] : ["status": "ok"])
     }
 
     // The contract in docs/API.md — same shapes RemoteBudgetAPI decodes.
