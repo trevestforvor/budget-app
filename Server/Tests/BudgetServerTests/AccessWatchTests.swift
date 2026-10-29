@@ -162,5 +162,5 @@ struct AccessWatchTests {
     }
 
     @Test("Server version is 0.6.3")
-    func version() { #expect(BudgetServerVersion.current == "0.6.3") }
+    func version() { #expect(BudgetServerVersion.current == "0.6.4") }
 }
