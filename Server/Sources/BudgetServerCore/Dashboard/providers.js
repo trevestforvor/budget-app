@@ -169,7 +169,11 @@ export async function linkPlaid({ resume = false, update = null, grant = false, 
     if (resume) grant = sessionStorage.getItem("plaidGrant") === "1";
     token = resume ? sessionStorage.getItem("plaidLinkToken")
       : (await api("/v1/links/plaid/token", { method: "POST", body: linkID ? (grant ? { linkID, grantCardBills: true } : { linkID }) : {} })).linkToken;
-  } catch (error) { reportError(error, where); return; }
+  } catch (error) {
+    // A refused grant may have corrected an old consent status to unsupported. Redraw from the saved decision.
+    if (grant && linkID) await afterWrite();
+    reportError(error, where); return;
+  }
   finally { store.pending--; }
   const clean = () => {
     sessionStorage.removeItem("plaidLinkToken");

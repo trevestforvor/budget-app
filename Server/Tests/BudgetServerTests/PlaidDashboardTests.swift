@@ -19,6 +19,8 @@ struct PlaidDashboardTests {
             exchangePath: [PlaidScript.exchange],
             "/transactions/sync": [PlaidScript.page("c1")],
             "/accounts/get": [PlaidScript.balances],
+            "/item/get": [LiabilitiesScript.item],
+            "/institutions/get_by_id": [LiabilitiesScript.institution(id: "ins_1")],
             "/link/token/create": [(200, #"{"link_token": "link-update-1"}"#)],
         ])
     }

@@ -84,7 +84,9 @@ function reconnectHelp(g) {
 /// What the last card-bill check said about a Plaid link, as a status line (tone, words, when).
 const CARD_BILLS = {
   ok: (c) => ({ tone: "ok", label: "Card bills on", detail: [plural(c.cards || 0, "card"), `checked ${dateTime(c.checkedAt)}`] }),
-  needsConsent: () => ({ tone: "watch", label: "Card bills need your OK", detail: ["linked before card bills"] }),
+  needsConsent: (c) => c.supportConfirmed === true
+    ? { tone: "watch", label: "Card bills need your OK", detail: ["linked before card bills"] }
+    : { tone: "neutral", label: "Card-bill availability not checked", detail: ["checked at the next sync"] },
   notSupported: () => ({ tone: "neutral", label: "No card bills from this bank", detail: ["it doesn't offer them through Plaid"] }),
   noCreditAccounts: () => ({ tone: "neutral", label: "No card bills", detail: ["no credit card at this bank"] }),
   notReady: (c) => ({ tone: "neutral", label: "Card bills on the way", detail: ["Plaid is still gathering them", `asked ${dateTime(c.checkedAt)}`] }),
@@ -99,8 +101,8 @@ function cardBillsPanel(link) {
   const check = link.cardBills;
   const state = check ? (CARD_BILLS[check.access] || CARD_BILLS.failed)(check) : { tone: "neutral", label: "Card bills on", detail: ["checked at the next sync"] };
   const line = statusLine(state);
-  if (!check || check.access !== "needsConsent") {
-    return h("div", { class: "card-bills" }, line, check && check.access === "failed" && check.message ? details("What Plaid said", check.message) : null);
+  if (!check || check.access !== "needsConsent" || check.supportConfirmed !== true) {
+    return h("div", { class: "card-bills" }, line, check && check.access === "failed" && check.message ? details("Details", check.message) : null);
   }
   return h("div", { class: "card-bills" }, line, callout({ tone: "watch", title: `Grant card-bill access for ${link.institution}`,
     body: "This bank was linked before card bills. Sign in once to add access to the same connection: nothing is relinked, your history stays, and Plaid starts billing for card bills on this bank.",

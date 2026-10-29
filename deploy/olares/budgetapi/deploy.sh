@@ -12,7 +12,7 @@
 # --check works in its own folders (~/budget-build/check-src on the host, /work/check in the pod), so it
 # never replaces the sources or binary a deploy is using, and it exits non-zero if a test or the build fails.
 #
-# Before installing, a deploy takes a pg_dump of the ledger into ~/budget-backups on the host (checked readable with
+# Before installing, a deploy stops budgetapi and takes a private pg_dump into ~/budget-backups on the host (checked readable with
 # pg_restore --list) and keeps the running binary as bin/budget-api.prev. A new server can rewrite rows on its first
 # start in a form an older one can't read, so rolling back is: restore that dump, put budget-api.prev back as
 # budget-api, restart (docs/SERVER.md, "Roll back"). A failed backup stops the deploy.
@@ -79,7 +79,7 @@ if [[ $CHECK_ONLY == 1 ]]; then
   exit 0
 fi
 
-# Stop budgetapi before the backup and before the binary changes, unless the strategy is Recreate. Under a RollingUpdate
+# Stop budgetapi before the backup and before the binary changes, regardless of the deployment strategy. Under a RollingUpdate
 # (Kubernetes' default) the old pod keeps serving and syncing while the new one starts, so two servers write the ledger at
 # once. Server 0.6.0 rewrites statement ids on its first start, and each of the old pod's syncs would write the old ids
 # back. Any later release that rewrites something at start has the same problem, so this runs on every deploy, not just
@@ -89,26 +89,25 @@ STRATEGY=$(kubectl -n "$APP_NS" get deploy budgetapi -o jsonpath='{.spec.strateg
 SCALED_DOWN=0
 # budgetapi's own pods (budgetapi-<replicaset>-<id>), not budgetapidb's.
 api_pods() { kubectl -n "$APP_NS" get pods -o name | grep -E '^pod/budgetapi-[a-z0-9]+-[a-z0-9]+$' || true; }
-if [[ $STRATEGY != Recreate ]]; then
-  REPLICAS=$(kubectl -n "$APP_NS" get deploy budgetapi -o jsonpath='{.spec.replicas}')
-  REPLICAS=${REPLICAS:-1}; [[ $REPLICAS -ge 1 ]] || REPLICAS=1
-  echo "==> stopping budgetapi before the backup and the new server (strategy ${STRATEGY:-RollingUpdate})"
-  # However this script ends from here on, budgetapi is started again (with the old binary if the install failed).
-  trap 'if [[ $SCALED_DOWN == 1 ]]; then kubectl -n "$APP_NS" scale deploy/budgetapi --replicas="$REPLICAS" >/dev/null; fi' EXIT
-  SCALED_DOWN=1
-  kubectl -n "$APP_NS" scale deploy/budgetapi --replicas=0 >/dev/null
-  for _ in $(seq 1 60); do
-    [[ -z $(api_pods) ]] && break
-    sleep 2
-  done
-  if [[ -n $(api_pods) ]]; then
-    echo "budgetapi's pod didn't stop within 2 minutes (if Olares scaled it back up, deploy with the strategy set to Recreate); nothing was installed" >&2
-    exit 1
-  fi
+REPLICAS=$(kubectl -n "$APP_NS" get deploy budgetapi -o jsonpath='{.spec.replicas}')
+REPLICAS=${REPLICAS:-1}
+echo "==> stopping budgetapi before the backup and the new server (strategy ${STRATEGY:-RollingUpdate})"
+# However this script ends from here on, the previous replica count is restored (with the old binary if the install failed).
+trap 'if [[ $SCALED_DOWN == 1 ]]; then kubectl -n "$APP_NS" scale deploy/budgetapi --replicas="$REPLICAS" >/dev/null; fi' EXIT
+SCALED_DOWN=1
+kubectl -n "$APP_NS" scale deploy/budgetapi --replicas=0 >/dev/null
+for _ in $(seq 1 60); do
+  [[ -z $(api_pods) ]] && break
+  sleep 2
+done
+if [[ -n $(api_pods) ]]; then
+  echo "budgetapi's pod didn't stop within 2 minutes (Olares may have restarted it); nothing was installed" >&2
+  exit 1
 fi
 
 echo "==> backing up the ledger"
 if kubectl -n "$APP_NS" get deploy budgetapidb >/dev/null 2>&1; then
+  umask 077
   mkdir -p ~/budget-backups
   DUMP=~/budget-backups/budget-$(date +%Y%m%d-%H%M%S).dump
   kubectl -n "$APP_NS" exec deploy/budgetapidb -- pg_dump -U budgetapi -d budgetapi --format=custom > "$DUMP"
