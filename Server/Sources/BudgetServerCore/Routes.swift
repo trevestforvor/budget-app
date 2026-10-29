@@ -464,7 +464,35 @@ func addLinkRoutes(_ router: Router<BasicRequestContext>, _ service: BudgetServi
                 guard link.provider == .plaid else { throw BudgetAPIError.rejected("\(link.institution) connects through \(link.provider.displayName), not Plaid.") }
                 // Update mode needs a live Item; one Plaid deleted can only be linked again.
                 guard link.hasLiveItem else { throw BudgetAPIError.rejected(SyncService.itemGoneMessage(link)) }
-                accessToken = try requireSealer().open(link.sealedToken)
+                let sealer = try requireSealer()
+                if body.grantCardBills == true {
+                    // A consent error alone doesn't establish support. Recheck at the click as well, so old dashboards
+                    // and changed institution coverage can't open an impossible grant. Persist before rejecting: throwing
+                    // inside updateLink would discard the corrected status. Its queue also prevents a sync overwriting it.
+                    let (check, token) = try await service.sync.updateLink(linkID) { latest in
+                        guard latest.hasLiveItem else { throw BudgetAPIError.rejected(SyncService.itemGoneMessage(latest)) }
+                        // Another tab or sync may already have finished the grant. Product metadata cannot downgrade
+                        // a successful bill read to "needs consent", or justify opening a second grant.
+                        if let current = latest.cardBills, current.access == .ok { return (current, "") }
+                        let token = try sealer.open(latest.sealedToken)
+                        let source = PlaidSource(environment: plaid.environment,
+                                                 credentials: .init(clientID: plaid.clientID, secret: plaid.secret),
+                                                 accessToken: token, institution: latest.institution, transport: service.providers.transport)
+                        let check = await CardBillSync.consentCheck(source: source, institutionID: latest.plaid?.institutionID,
+                                                                   previous: latest.cardBills, now: Date(), logger: service.logger)
+                        latest.cardBills = check
+                        return (check, token)
+                    }
+                    if check.access == .ok { throw BudgetAPIError.rejected("Card bills are already on for this bank. Refresh Accounts to see the latest status.") }
+                    guard check.access == .needsConsent, check.supportConfirmed == true else {
+                        throw BudgetAPIError.rejected(check.access == .notSupported
+                            ? "This bank doesn't offer card bills through Plaid. Your accounts and transactions will keep syncing."
+                            : CardBillSync.supportUnavailableMessage)
+                    }
+                    accessToken = token
+                } else {
+                    accessToken = try sealer.open(link.sealedToken)
+                }
                 // A working link opened in update mode is "Renew access": Plaid's reauthorization renews the bank's consent
                 // (as the phone's renewal does); without it Link would find nothing to fix.
                 renewal = body.grantCardBills != true && !LinkHealthBook.waitsForPerson(link)
@@ -480,6 +508,17 @@ func addLinkRoutes(_ router: Router<BasicRequestContext>, _ service: BudgetServi
                                                         accessToken: accessToken, grantLiabilities: body.grantCardBills == true,
                                                         webhook: webhook, reauthorization: renewal, transport: service.providers.transport)
             } catch {
+                if body.grantCardBills == true, let linkID = body.linkID, let refused = PlaidErrors.plaidError(error),
+                   CardBillAccess.from(errorCode: refused.errorCode) == .notSupported {
+                    // An institution can support Liabilities while this Plaid client cannot use it. Only explicit product
+                    // refusals establish that; INVALID_FIELD also covers unrelated request and redirect problems.
+                    try await service.sync.updateLink(linkID) { latest in
+                        if latest.hasLiveItem, latest.cardBills?.access != .ok {
+                            latest.cardBills = CardBillCheck(access: .notSupported, checkedAt: Date(),
+                                                            requestID: refused.requestID, supportConfirmed: false)
+                        }
+                    }
+                }
                 if let redirect = plaid.redirectURI, PlaidRedirect.refusedReturnAddress(error) { throw PlaidRedirect.unknownAddress(redirect) }
                 throw error
             }

@@ -1,6 +1,9 @@
 import BudgetKit
 @testable import BudgetServerCore
 import Foundation
+#if canImport(FoundationNetworking)
+import FoundationNetworking
+#endif
 import Hummingbird
 import HummingbirdTesting
 import HTTPTypes
@@ -10,6 +13,13 @@ import Testing
 
 /// Plaid answers for an Item with a checking account and a credit card. Everything is scripted: nothing reaches Plaid.
 enum LiabilitiesScript {
+    static let item = (200, #"{"item":{"item_id":"item-1","institution_id":"ins_card","billed_products":["transactions"],"available_products":[]},"request_id":"req-item"}"#)
+
+    static func institution(products: [String]? = ["transactions", "liabilities"], id: String = "ins_card") -> (Int, String) {
+        let productField = products.map { ",\"products\":[" + $0.map { "\"\($0)\"" }.joined(separator: ",") + "]" } ?? ""
+        return (200, #"{"institution":{"institution_id":"\#(id)","name":"Test Bank"\#(productField)},"request_id":"req-institution"}"#)
+    }
+
     static let balances = (200, #"""
     {"accounts": [
       {"account_id": "chk", "balances": {"current": 5000, "iso_currency_code": "USD"}, "name": "Checking", "type": "depository", "subtype": "checking"},
@@ -37,13 +47,18 @@ enum LiabilitiesScript {
         (400, #"{"error_type": "ITEM_ERROR", "error_code": "\#(code)", "error_message": "said its own way", "display_message": null, "request_id": "req-\#(code)"}"#)
     }
 
-    static func provider(liabilities: [(Int, String)], balances: (Int, String) = balances) -> ScriptedProvider {
+    static func provider(liabilities: [(Int, String)], balances: (Int, String) = balances,
+                         items: [(Int, String)] = [item],
+                         institutions: [(Int, String)] = [institution()],
+                         tokens: [(Int, String)] = [(200, #"{"link_token":"link-grant-1"}"#)]) -> ScriptedProvider {
         ScriptedProvider([
             "/item/public_token/exchange": [PlaidScript.exchange],
             "/transactions/sync": [PlaidScript.page("cursor-1")],
             "/accounts/get": [balances], "/accounts/balance/get": [balances],
             "/liabilities/get": liabilities,
-            "/link/token/create": [(200, #"{"link_token": "link-grant-1"}"#)],
+            "/item/get": items,
+            "/institutions/get_by_id": institutions,
+            "/link/token/create": tokens,
         ])
     }
 
@@ -63,6 +78,18 @@ enum LiabilitiesScript {
     static func turnOn(_ service: BudgetService) async throws { try await service.settings.update(["cardBills": "true"]) }
 
     static func check(_ service: BudgetService) async throws -> CardBillCheck? { try await service.store.links().first?.cardBills }
+}
+
+/// The scripted request is recorded first; a simulated connection failure never reaches any real provider.
+private struct CardBillGrantFailureTransport: HTTPTransport {
+    let script: ScriptedProvider
+    let failsAsNetwork: Bool
+
+    func send(_ request: URLRequest) async throws -> (Data, HTTPURLResponse) {
+        let response = try await script.send(request)
+        if failsAsNetwork, request.url?.path == "/link/token/create" { throw URLError(.notConnectedToInternet) }
+        return response
+    }
 }
 
 @Suite("Card bills (Plaid Liabilities) on the server")
@@ -124,6 +151,7 @@ struct CardBillsServerTests {
         let first = await service.sync.syncAll()
         #expect(first.map(\.ok) == [true])
         #expect(try await LiabilitiesScript.check(service)?.access == .needsConsent)
+        #expect(try await LiabilitiesScript.check(service)?.supportConfirmed == true)
         #expect(try await LiabilitiesScript.check(service)?.requestID == "req-ADDITIONAL_CONSENT_REQUIRED")
         // The schedule doesn't keep asking.
         _ = await service.sync.syncAll()
@@ -152,6 +180,202 @@ struct CardBillsServerTests {
         #expect(plaid.count("/item/remove") == 0)
         #expect(plaid.count("/item/access_token/invalidate") == 0)
         #expect(try await service.store.links().map(\.id) == ["plaid-item-1"])
+    }
+
+    @Test("A consent error at an institution without Liabilities does not offer a grant or stop transactions")
+    func unsupportedInstitutionDoesNotNeedConsent() async throws {
+        let plaid = LiabilitiesScript.provider(
+            liabilities: [LiabilitiesScript.error("ADDITIONAL_CONSENT_REQUIRED")],
+            institutions: [LiabilitiesScript.institution(products: ["transactions"])])
+        let (_, service) = try await TestServer.app(seedDemo: false, plaid: plaid)
+        try await LiabilitiesScript.turnOn(service)
+        try await LiabilitiesScript.link(service)
+        let before = try #require(try await service.store.links().first)
+
+        #expect(await service.sync.syncAll().map(\.ok) == [true])
+
+        let after = try #require(try await service.store.links().first)
+        #expect(after.cardBills?.access == .notSupported)
+        #expect(after.cardBills?.supportConfirmed != true)
+        #expect(after.status == .connected)
+        #expect(after.cursor == "cursor-1")
+        #expect(after.sealedToken == before.sealedToken)
+        #expect(after.id == before.id && after.externalID == before.externalID)
+        #expect(plaid.count("/institutions/get_by_id") == 1)
+        #expect(plaid.count("/link/token/create") == 0)
+        #expect(plaid.count("/item/public_token/exchange") == 0)
+        #expect(plaid.count("/item/remove") == 0)
+    }
+
+    @Test("An unverified legacy consent state is checked immediately instead of waiting a day")
+    func legacyConsentIsVerifiedOnNextSync() async throws {
+        let plaid = LiabilitiesScript.provider(
+            liabilities: [LiabilitiesScript.error("ADDITIONAL_CONSENT_REQUIRED")],
+            institutions: [LiabilitiesScript.institution(products: ["transactions"])])
+        let (_, service) = try await TestServer.app(seedDemo: false, plaid: plaid)
+        try await LiabilitiesScript.turnOn(service)
+        try await LiabilitiesScript.link(service)
+        try await service.sync.updateLink("plaid-item-1") {
+            $0.cardBills = CardBillCheck(access: .needsConsent, checkedAt: Date())
+        }
+
+        #expect(await service.sync.syncAll().map(\.ok) == [true])
+        #expect(try await LiabilitiesScript.check(service)?.access == .notSupported)
+        #expect(plaid.count("/liabilities/get") == 1)
+        _ = await service.sync.syncAll()
+        #expect(plaid.count("/liabilities/get") == 1)
+    }
+
+    @Test("A refused legacy grant persists capability state before returning its error", arguments: [false, true])
+    func legacyGrantPersistsRefusal(metadataFails: Bool) async throws {
+        let unavailable = (503, #"{"error_type":"API_ERROR","error_code":"INTERNAL_SERVER_ERROR","request_id":"req-metadata"}"#)
+        let plaid = LiabilitiesScript.provider(
+            liabilities: [LiabilitiesScript.error("ADDITIONAL_CONSENT_REQUIRED")],
+            items: metadataFails ? [unavailable] : [LiabilitiesScript.item],
+            institutions: [LiabilitiesScript.institution(products: ["transactions"])])
+        let (dash, service) = try await TestServer.app(seedDemo: false, plaid: plaid, surface: .dashboard)
+        try await LiabilitiesScript.link(service)
+        try await service.sync.updateLink("plaid-item-1") {
+            $0.cardBills = CardBillCheck(access: .needsConsent, checkedAt: Date())
+        }
+        let before = try #require(try await service.store.links().first)
+        let expected: CardBillAccess = metadataFails ? .failed : .notSupported
+
+        try await dash.test(.router) { client in
+            try await client.execute(uri: "/v1/links/plaid/token", method: .post, headers: SyncRouteTests.write,
+                                     body: TestServer.body(#"{"linkID":"plaid-item-1","grantCardBills":true}"#)) { response in
+                #expect(response.status == .unprocessableContent)
+            }
+            // A new read must carry the correction, even though the grant POST failed.
+            try await client.execute(uri: "/v1/links", method: .get) { response in
+                #expect(response.status == .ok)
+                let links = try RemoteBudgetAPI.decoder.decode([LinkSummary].self, from: Data(response.body.readableBytesView))
+                #expect(links.first?.cardBills?.access == expected)
+                #expect(links.first?.cardBills?.supportConfirmed != true)
+            }
+        }
+
+        let after = try #require(try await service.store.links().first)
+        #expect(after.cardBills?.access == expected)
+        #expect(after.cardBills?.supportConfirmed != true)
+        #expect(after.sealedToken == before.sealedToken && after.cursor == before.cursor)
+        #expect(after.status == before.status && after.lastSync == before.lastSync)
+        #expect(after.lastError == before.lastError && after.errorKind == before.errorKind)
+        #expect(after.id == before.id && after.externalID == before.externalID)
+        let restored = try JSONDecoder().decode(StoredLink.self, from: JSONEncoder().encode(after))
+        #expect(restored.cardBills == after.cardBills)
+        #expect(plaid.count("/link/token/create") == 0)
+        #expect(plaid.count("/transactions/sync") == 0)
+        #expect(plaid.count("/liabilities/get") == 0)
+        #expect(plaid.count("/item/public_token/exchange") == 0)
+        #expect(plaid.count("/item/remove") == 0)
+    }
+
+    @Test("A stale grant click cannot replace a successful card-bill check or open another consent session")
+    func staleGrantPreservesEnabledBills() async throws {
+        let plaid = LiabilitiesScript.provider(liabilities: [LiabilitiesScript.bills])
+        let (dash, service) = try await TestServer.app(seedDemo: false, plaid: plaid, surface: .dashboard)
+        try await LiabilitiesScript.link(service)
+        let successful = CardBillCheck(access: .ok, checkedAt: Date(), cards: 1, requestID: "req-already-on")
+        try await service.sync.updateLink("plaid-item-1") { $0.cardBills = successful }
+        let before = try #require(try await service.store.links().first)
+
+        try await dash.test(.router) { client in
+            try await client.execute(uri: "/v1/links/plaid/token", method: .post, headers: SyncRouteTests.write,
+                                     body: TestServer.body(#"{"linkID":"plaid-item-1","grantCardBills":true}"#)) { response in
+                #expect(response.status == .unprocessableContent)
+                #expect(String(buffer: response.body).contains("already on"))
+            }
+        }
+
+        let after = try #require(try await service.store.links().first)
+        #expect(after == before)
+        #expect(after.cardBills == successful)
+        #expect(plaid.requests.isEmpty)
+    }
+
+    @Test("Only definitive product refusals change confirmed grant eligibility",
+          arguments: ["INVALID_PRODUCT", "PRODUCTS_NOT_SUPPORTED", "INVALID_FIELD", "INTERNAL_SERVER_ERROR", "network"])
+    func grantFailurePreservesOrRevokesSupport(code: String) async throws {
+        let definitive = ["INVALID_PRODUCT", "PRODUCTS_NOT_SUPPORTED"].contains(code)
+        let refusal = (code == "INTERNAL_SERVER_ERROR" ? 503 : 400,
+                       #"{"error_type":"INVALID_REQUEST","error_code":"\#(code)","error_message":"The test grant request was refused.","request_id":"req-grant-refused"}"#)
+        let plaid = LiabilitiesScript.provider(liabilities: [LiabilitiesScript.bills], tokens: [refusal])
+        let transport = CardBillGrantFailureTransport(script: plaid, failsAsNetwork: code == "network")
+        let (dash, service) = try await TestServer.app(seedDemo: false, plaid: transport, surface: .dashboard)
+        try await LiabilitiesScript.link(service)
+        try await service.sync.updateLink("plaid-item-1") {
+            $0.cardBills = CardBillCheck(access: .needsConsent, checkedAt: Date())
+        }
+        let before = try #require(try await service.store.links().first)
+
+        try await dash.test(.router) { client in
+            try await client.execute(uri: "/v1/links/plaid/token", method: .post, headers: SyncRouteTests.write,
+                                     body: TestServer.body(#"{"linkID":"plaid-item-1","grantCardBills":true}"#)) { response in
+                #expect(response.status != .ok)
+            }
+        }
+
+        let after = try #require(try await service.store.links().first)
+        #expect(after.cardBills?.access == (definitive ? .notSupported : .needsConsent))
+        #expect(after.cardBills?.supportConfirmed == !definitive)
+        #expect(after.sealedToken == before.sealedToken && after.cursor == before.cursor)
+        #expect(after.status == before.status && after.lastSync == before.lastSync)
+        #expect(after.lastError == before.lastError && after.errorKind == before.errorKind)
+        #expect(plaid.count("/link/token/create") == 1)
+        #expect(plaid.count("/institutions/get_by_id") == 1)
+        #expect(plaid.count("/transactions/sync") == 0)
+        #expect(plaid.count("/item/public_token/exchange") == 0)
+        #expect(plaid.count("/item/remove") == 0)
+    }
+
+    @Test("Unknown capability can recover on the person's next one-link sync", arguments: [false, true])
+    func unknownSupportRecoversOnManualRetry(metadataFails: Bool) async throws {
+        let unavailable = (503, #"{"error_type":"API_ERROR","error_code":"INTERNAL_SERVER_ERROR","request_id":"req-metadata"}"#)
+        let plaid = LiabilitiesScript.provider(
+            liabilities: [LiabilitiesScript.error("ADDITIONAL_CONSENT_REQUIRED")],
+            institutions: [metadataFails ? unavailable : LiabilitiesScript.institution(products: nil), LiabilitiesScript.institution()])
+        let (_, service) = try await TestServer.app(seedDemo: false, plaid: plaid)
+        try await LiabilitiesScript.turnOn(service)
+        try await LiabilitiesScript.link(service)
+
+        #expect(await service.sync.syncAll().map(\.ok) == [true])
+        let failed = try #require(try await LiabilitiesScript.check(service))
+        #expect(failed.access == .failed && failed.supportConfirmed != true)
+        #expect(failed.message?.isEmpty == false)
+        #expect(plaid.count("/liabilities/get") == 1)
+        _ = await service.sync.syncAll()
+        #expect(plaid.count("/liabilities/get") == 1)
+
+        #expect(try await service.sync.sync(linkID: "plaid-item-1").ok)
+        let confirmed = try #require(try await LiabilitiesScript.check(service))
+        #expect(confirmed.access == .needsConsent && confirmed.supportConfirmed == true)
+        #expect(plaid.count("/liabilities/get") == 2)
+        #expect(plaid.count("/link/token/create") == 0)
+    }
+
+    @Test("A known unsupported institution does not regain a grant after an unverified consent error")
+    func unsupportedSurvivesUnverifiedRecheck() async throws {
+        let unavailable = (503, #"{"error_type":"API_ERROR","error_code":"INTERNAL_SERVER_ERROR","request_id":"req-metadata"}"#)
+        let plaid = LiabilitiesScript.provider(
+            liabilities: [LiabilitiesScript.error("ADDITIONAL_CONSENT_REQUIRED")],
+            institutions: [LiabilitiesScript.institution(products: ["transactions"]), unavailable])
+        let (_, service) = try await TestServer.app(seedDemo: false, plaid: plaid)
+        try await LiabilitiesScript.turnOn(service)
+        try await LiabilitiesScript.link(service)
+        _ = await service.sync.syncAll()
+        #expect(try await LiabilitiesScript.check(service)?.access == .notSupported)
+        try await service.sync.updateLink("plaid-item-1") {
+            $0.cardBills?.checkedAt = Date().addingTimeInterval(-25 * 3600)
+        }
+
+        #expect(await service.sync.syncAll().map(\.ok) == [true])
+        let check = try #require(try await LiabilitiesScript.check(service))
+        #expect(check.access == .notSupported && check.supportConfirmed != true)
+        #expect(plaid.count("/liabilities/get") == 2)
+        #expect(plaid.count("/link/token/create") == 0)
+        #expect(plaid.count("/item/public_token/exchange") == 0)
+        #expect(plaid.count("/item/remove") == 0)
     }
 
     @Test("Each \"not available\" answer is kept on the link, and none fails the sync", arguments: [
@@ -189,6 +413,8 @@ struct CardBillsServerTests {
         #expect(link.cardBills == nil)
         let check = #"{"access":"somethingLater","checkedAt":0}"#
         #expect(try JSONDecoder().decode(CardBillCheck.self, from: Data(check.utf8)).access == .failed)
+        let legacyConsent = try JSONDecoder().decode(CardBillCheck.self, from: Data(#"{"access":"needsConsent","checkedAt":0}"#.utf8))
+        #expect(legacyConsent.access == .needsConsent && legacyConsent.supportConfirmed == nil)
     }
 
     @Test("Due: never asked, a day old, or waiting on the person who just asked")
@@ -199,9 +425,13 @@ struct CardBillsServerTests {
         #expect(!CardBillSync.isDue(fresh, now: now, requestedByPerson: false))
         #expect(!CardBillSync.isDue(fresh, now: now, requestedByPerson: true))
         #expect(CardBillSync.isDue(CardBillCheck(access: .ok, checkedAt: now.addingTimeInterval(-24 * 3600)), now: now, requestedByPerson: false))
-        let waiting = CardBillCheck(access: .needsConsent, checkedAt: now.addingTimeInterval(-60))
+        let waiting = CardBillCheck(access: .needsConsent, checkedAt: now.addingTimeInterval(-60), supportConfirmed: true)
         #expect(!CardBillSync.isDue(waiting, now: now, requestedByPerson: false))
         #expect(CardBillSync.isDue(waiting, now: now, requestedByPerson: true))
+        #expect(CardBillSync.isDue(CardBillCheck(access: .needsConsent, checkedAt: now), now: now, requestedByPerson: false))
+        let failed = CardBillCheck(access: .failed, checkedAt: now)
+        #expect(!CardBillSync.isDue(failed, now: now, requestedByPerson: false))
+        #expect(CardBillSync.isDue(failed, now: now, requestedByPerson: true))
         #expect(!CardBillSync.isDue(CardBillCheck(access: .notSupported, checkedAt: now), now: now, requestedByPerson: true))
     }
 

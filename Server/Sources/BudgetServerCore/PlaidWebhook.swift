@@ -572,8 +572,8 @@ actor PlaidWebhookQueue {
             }
             // Not due by the daily rule: the webhook says they changed.
             link.cardBills = await CardBillSync.refresh(enabled: true, source: source, snapshot: snapshot,
-                                                        previous: nil, requestedByPerson: false, api: service.api, now: now,
-                                                        institution: link.institution, logger: service.logger)
+                                                        previous: link.cardBills, requestedByPerson: false, api: service.api, now: now,
+                                                        institution: link.institution, logger: service.logger, institutionID: link.plaid?.institutionID, force: true)
         }
     }
 }

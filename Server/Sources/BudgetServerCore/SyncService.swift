@@ -298,7 +298,7 @@ public actor SyncService {
         // out reconnects and new links); it's what gates a live balance call, not this.
         link.cardBills = await CardBillSync.refresh(enabled: await settings.cardBillsEnabled, source: source, snapshot: snapshot,
                                                     previous: link.cardBills, requestedByPerson: trigger.retriesSignIn, api: api, now: Date(),
-                                                    institution: link.institution, logger: logger)
+                                                    institution: link.institution, logger: logger, institutionID: link.plaid?.institutionID)
         // Holdings come from the daily Item check and HOLDINGS webhooks, never a routine sync. The one exception is the
         // person's retry, on the same syncs that retry card bills: after Plaid wasn't ready, wanted consent or failed,
         // one link's sync or a reconnect asks again (`HoldingsSync.isDue`), under the same `auto` rule as the daily check
